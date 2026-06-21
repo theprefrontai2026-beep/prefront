@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "G--FgEZdfvnphoyOUdq17"
+uri = "file://docs/backend-integration.md"
+type = "text"
+title = "Prefront AI — UI ↔ Backend Integration Guide"

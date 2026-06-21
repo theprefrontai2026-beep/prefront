@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Prefront AI"
+version = "1.0.0"
+id = "artifacts/prefront-app"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25338
+
+[services.development]
+run = "pnpm --filter @workspace/prefront-app run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/prefront-app", "run", "build" ]
+publicDir = "artifacts/prefront-app/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25338"
+BASE_PATH = "/"

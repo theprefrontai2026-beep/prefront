@@ -1,0 +1,1 @@
+- [Prefront AI UI](prefront-ui.md) — full architecture, CSS tokens, component map, WS collaboration, audit log, and DB schema decisions.
