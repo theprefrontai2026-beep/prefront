@@ -1,0 +1,27 @@
+# Prefront API server — the new UI's Node/Express companion service.
+# Powers the persistent audit log (GET/POST /api/audit) and the collaborative
+# review websocket (/api/ws/review). Talks to Postgres via Drizzle.
+#
+# Build context is the whole pnpm workspace (prefront-ui/).
+#
+# This stays a single stage on purpose: drizzle-kit (a devDependency) is needed
+# at container start to push the rule_audit_log table into the database before
+# the server boots.
+FROM node:24-slim AS build
+WORKDIR /workspace
+
+RUN npm install -g pnpm@10
+
+COPY . .
+RUN pnpm install --frozen-lockfile
+
+# esbuild bundle -> artifacts/api-server/dist/index.mjs
+RUN pnpm --filter @workspace/api-server run build
+
+ENV PORT=8080
+ENV NODE_ENV=production
+EXPOSE 8080
+
+# Ensure the schema exists (idempotent), then start the server.
+# DATABASE_URL is injected by docker-compose.
+CMD ["sh", "-c", "pnpm --filter @workspace/db run push-force && node --enable-source-maps artifacts/api-server/dist/index.mjs"]

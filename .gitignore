@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local state / databases
+*.db
+
+# Generated Skill Builder output (artifacts produced by pipeline runs)
+skills/
+skill-builder/skills/
+skill-builder-data/
+
+# Generated Semantic Layer output (Core 6 YAML artifacts)
+semantic-layer/out/
+
+# docker env (contains LLM keys)
+.env
+
+# Claude Code local settings (may contain secrets)
+.claude/
+
+# Node / Vite build output
+node_modules/
+dist/

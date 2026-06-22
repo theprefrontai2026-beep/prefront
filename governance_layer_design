@@ -1,0 +1,79 @@
+Governance Layer — Modular Design (v2)
+
+Scope
+
+In: enforce the approved business rules (block / approval-required / allow / field-masking) on every MCP tool call, with decision traces.
+Explicitly out (for now): token validation / authN, OPA or any external policy engine, persisted approval workflow. The design leaves sockets for all three.
+
+Architecture — a governance pipeline inside semantic-mcp-server
+
+Each stage is a small module with one job and a uniform contract: it receives a GovernanceContext (mutable per-call state) and either enriches it or short-circuits with a decision. Future modules are just new stages.
+
+call_tool(name, args)
+   │
+   ▼
+┌──────────────────────── governance pipeline ────────────────────────┐
+│  ctx = GovernanceContext(tool, intent, args)                        │
+│                                                                     │
+│  1. identity.py    resolve caller → {role, region}   [swap: authN]  │
+│  2. authz.py       role ∈ tool.allowed_roles?                       │
+│  3. facts.py       precheck row ∪ args ∪ caller ∪ metrics           │
+│  4. rules.py       evaluate business rules → fired[] [swap: OPA]    │
+│  5. decide.py      precedence: block > approval > allow             │
+│  6. masking.py     restricted-field masking for reads               │
+│  7. trace.py       append decision trace (always runs)              │
+└─────────────────────────────────────────────────────────────────────┘
+   │ allowed → execute template (reads; writes behind --enable-writes)
+   │ approval_required → return approver_roles + reasons (decision-only)
+   │ blocked → return reasons
+
+Module contracts (the modularity)
+
+@dataclass
+class GovernanceContext:
+    intent: str
+    args: dict            # agent-supplied params only
+    caller: Caller | None # set by identity stage
+    facts: dict           # built up by facts stage
+    evaluated: list[RuleOutcome]   # every rule + fired? + why
+    decision: Decision | None      # set once; later stages respect it
+
+class Stage(Protocol):
+    def run(self, ctx: GovernanceContext) -> GovernanceContext: ...
+
+The pipeline is an ordered list of Stages — adding token validation later = insert an authn stage at position 0; switching to OPA later = replace rules.py with an adapter implementing the same Stage protocol. Nothing else changes.
+
+┌─────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────┐
+│   Module    │                                                                           Responsibility                                                                            │       Future swap-in       │
+├─────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────────────────────────┤
+│ identity.py │ act-as a sales_reps row (--act-as) → trusted {role, region}; injected as :caller_*, removed from agent input schema                                                 │ per-session authN/tokens   │
+├─────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────────────────────────┤
+│ authz.py    │ caller role vs the tool's allowed_roles                                                                                                                             │ RBAC service               │
+├─────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────────────────────────┤
+│ facts.py    │ run the intent's precheck template → row; merge args + caller + metrics (available_credit = credit_limit − current_balance)                                         │ feature store              │
+├─────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────────────────────────┤
+│ rules.py    │ evaluate each approved rule's conditions (== != > < >= <= in not_in, case-insensitive roles, safe-ast arithmetic like credit_limit < current_balance + order_value) │ OPA/Rego adapter           │
+├─────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────────────────────────┤
+│ decide.py   │ aggregate: any block → blocked; else any approval → approval_required (collect approvers+reasons); else allowed                                                     │ custom precedence policies │
+├─────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────────────────────────┤
+│ masking.py  │ drop/mask restricted_fields from read rows by role                                                                                                                  │ column-level DB grants     │
+├─────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────────────────────────┤
+│ trace.py    │ append {trace_id, intent, caller, params, fired_rules, reasons, decision, execution_status, ts} to /data/traces.jsonl; echoed in the response                       │ trace DB / context graph   │
+└─────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴────────────────────────────┘
+
+Policy bundle — how approved rules reach the runtime
+
+Same pattern as templates: Publish policy writes the approved rules to /artifacts/commercerisk/policy.yaml (skill-builder gets the artifacts mount + a publish endpoint; a button in Policy Studio). The runtime live-reloads it by mtime — no restart, and only approved rules are ever enforced.
+
+Concrete behavior (CR-FIN rules on create_order)
+
+- credit_status == hold → blocked (hold_order_block)
+- credit_limit < current_balance + order_value → blocked (over-limit, via safe arithmetic)
+- risk_rating == high AND order_value > 50000 → blocked
+- credit_status == watch AND available_credit > 0 → approval_required → Regional Sales Manager
+- clean account → allowed; write executes only with --enable-writes, else returns the would-be INSERT
+- reads (find_customers, get_customer_credit) as a rep → rows masked of credit_limit/current_balance/credit_status per sales_staff_modify_restriction-style field rules
+
+Verification plan
+
+Seed is tuned so each rule trips: run each scenario via MCP-over-HTTP and assert decision + fired rules + trace; confirm caller_region no longer appears in tool input schemas; confirm writes don't mutate without the flag.

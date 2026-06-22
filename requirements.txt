@@ -1,0 +1,12 @@
+# Prefront — design-time Skill Builder
+openai>=1.0          # OpenAI-compatible client (NVIDIA / DeepSeek / OpenAI)
+pydantic>=2.0        # rule-schema validation
+pyyaml>=6.0          # reviewable YAML output
+fastapi>=0.110       # design-time REST service
+uvicorn>=0.29        # ASGI server for the service
+python-multipart>=0.0.9  # file uploads for the upload endpoint
+mcp>=1.0             # semantic-layer: runnable MCP tool server (serve)
+
+# Optional document extractors (install only if you need these formats):
+#   python-docx>=1.1   # .docx extraction
+#   pypdf>=4.0         # text-based .pdf extraction (scanned PDFs need OCR — out of scope)
