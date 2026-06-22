@@ -9,7 +9,7 @@ import ReactFlow, {
   useEdgesState,
 } from "reactflow";
 import dagre from "dagre";
-import { getPolicy } from "../api";
+import { getPolicy, analyzePii } from "../api";
 
 // ── Data Graph: live database relationships + clickable node detail ──────────
 // Nodes/edges come from the connected catalog (App's `schema.catalog`); applied
@@ -45,7 +45,11 @@ interface Column {
   sensitive?: boolean;
   gov?: boolean;
   restriction?: string; // derived from applied policies touching this column
+  pii?: { label: string; score: number }; // Presidio PII guess (name-based)
 }
+
+// Map "table.col" -> PII guess, from the Presidio analyzer.
+type PiiIndex = Map<string, { label: string; score: number }>;
 
 interface AppliedPolicy {
   rule_key: string;
@@ -196,7 +200,7 @@ function shortType(t: string) {
   return String(t || "").replace(/character varying/i, "varchar").replace(/\(.*\)/, "").trim().slice(0, 10);
 }
 
-function buildFromCatalog(catalog: any, policyIndex: Map<string, AppliedPolicy[]>) {
+function buildFromCatalog(catalog: any, policyIndex: Map<string, AppliedPolicy[]>, pii: PiiIndex) {
   const tables: any[] = catalog?.tables || [];
   // table.col -> target table (FK)
   const fkByCol: Record<string, string> = {};
@@ -227,6 +231,7 @@ function buildFromCatalog(catalog: any, policyIndex: Map<string, AppliedPolicy[]
         sensitive: markers.includes("SENSITIVE"),
         gov: markers.includes("GOVERNED"),
         restriction: restr && restr.size ? Array.from(restr).join(" · ") : undefined,
+        pii: pii.get(`${t.name}.${c.name}`),
       };
     });
     const hasSens = columns.some((c) => c.sensitive);
@@ -320,6 +325,7 @@ function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
               {col.pk ? "🔑" : col.fk ? "↗" : col.sensitive ? "⚠" : col.gov ? "⚙" : "○"}
             </span>
             <span className="dg-col-name">{col.name}</span>
+            {col.pii && <span className="dg-col-pii" title={`Likely PII: ${col.pii.label}`}>PII</span>}
             <span className="dg-col-type">{shortType(col.type)}</span>
           </div>
         ))}
@@ -358,6 +364,7 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
   const color = CATEGORY_COLOR[table.category] || CATEGORY_COLOR._default;
   const sensitive = table.columns.filter((c) => c.sensitive);
   const fks = table.columns.filter((c) => c.fk);
+  const piiCols = table.columns.filter((c) => c.pii);
 
   return (
     <div className="dg-detail">
@@ -396,6 +403,7 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
                 <td>
                   {col.sensitive && <span className="dg-flag sens">SENSITIVE</span>}
                   {col.gov && !col.sensitive && <span className="dg-flag gov">GOV</span>}
+                  {col.pii && <span className="dg-flag pii" title={`${col.pii.label} · ${Math.round(col.pii.score * 100)}% confidence`}>PII: {col.pii.label}</span>}
                   {col.restriction && (
                     <span className="dg-restriction" title={col.restriction}>⚠ {col.restriction}</span>
                   )}
@@ -430,6 +438,21 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
             <div key={col.name} className="dg-sensitive-row">
               <span className="dg-sensitive-name">{col.name}</span>
               {col.restriction && <span className="dg-sensitive-note">{col.restriction}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Detected PII (Presidio, name-based guess) */}
+      {piiCols.length > 0 && (
+        <div className="dg-detail-section">
+          <div className="dg-detail-section-title">
+            <span style={{ color: "var(--amber, #d97706)" }}>◆</span> Detected PII ({piiCols.length})
+          </div>
+          {piiCols.map((col) => (
+            <div key={col.name} className="dg-sensitive-row">
+              <span className="dg-sensitive-name">{col.name}</span>
+              <span className="dg-sensitive-note">{col.pii!.label} · {Math.round(col.pii!.score * 100)}%</span>
             </div>
           ))}
         </div>
@@ -478,11 +501,13 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
 
 // ── Stats bar ─────────────────────────────────────────────────────────────────
 
-function StatsBar({ defs, datasourceId }: { defs: TableDef[]; datasourceId?: string }) {
+function StatsBar({ defs, datasourceId, onDetectPii, piiBusy, piiRan, piiError }:
+  { defs: TableDef[]; datasourceId?: string; onDetectPii: () => void; piiBusy: boolean; piiRan: boolean; piiError: string }) {
   const totalTables = defs.length;
   const totalCols = defs.reduce((s, t) => s + t.columns.length, 0);
   const sensitiveCols = defs.reduce((s, t) => s + t.columns.filter((c) => c.sensitive).length, 0);
   const totalPolicies = new Set(defs.flatMap((t) => t.policies.map((p) => p.rule_key))).size;
+  const piiCols = defs.reduce((s, t) => s + t.columns.filter((c) => c.pii).length, 0);
 
   return (
     <div className="dg-stats-bar">
@@ -493,8 +518,17 @@ function StatsBar({ defs, datasourceId }: { defs: TableDef[]; datasourceId?: str
       <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--red)" }}>{sensitiveCols}</span><span className="dg-stat-label">Sensitive</span></div>
       <div className="dg-stat-sep" />
       <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--blue)" }}>{totalPolicies}</span><span className="dg-stat-label">Policy Rules</span></div>
+      {piiRan && (<>
+        <div className="dg-stat-sep" />
+        <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--amber, #d97706)" }}>{piiCols}</span><span className="dg-stat-label">Likely PII</span></div>
+      </>)}
       <div style={{ flex: 1 }} />
-      {datasourceId && <span className="dg-source-badge">{datasourceId}</span>}
+      {piiError && <span className="pf-error" style={{ marginRight: 10 }}>{piiError}</span>}
+      <button className="pf-btn sm" onClick={onDetectPii} disabled={piiBusy}
+        title="Run Presidio over the column names to guess which fields are PII">
+        {piiBusy ? "Detecting…" : piiRan ? "Re-detect PII" : "Detect PII"}
+      </button>
+      {datasourceId && <span className="dg-source-badge" style={{ marginLeft: 10 }}>{datasourceId}</span>}
     </div>
   );
 }
@@ -523,11 +557,16 @@ interface Props {
 export default function DataGraph({ catalog, datasourceId, rules = [] }: Props) {
   const [bound, setBound] = useState<any>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pii, setPii] = useState<PiiIndex>(new Map());
+  const [piiBusy, setPiiBusy] = useState(false);
+  const [piiRan, setPiiRan] = useState(false);
+  const [piiError, setPiiError] = useState("");
 
   // Fetch the authoritative bound policy bundle for this datasource (best-effort).
   useEffect(() => {
     let live = true;
     setBound(null);
+    setPii(new Map()); setPiiRan(false); setPiiError("");  // stale PII is per-datasource
     if (!datasourceId) return;
     getPolicy(datasourceId)
       .then((r) => { if (live) setBound(r?.policy_bundle || null); })
@@ -537,14 +576,29 @@ export default function DataGraph({ catalog, datasourceId, rules = [] }: Props) 
 
   const hasCatalog = !!(catalog && (catalog.tables?.length ?? 0) > 0);
 
+  const handleDetectPii = useCallback(() => {
+    if (!hasCatalog) return;
+    const fields = (catalog.tables || []).flatMap((t: any) =>
+      (t.columns || []).map((c: any) => ({ table: t.name, column: c.name, type: c.type })));
+    setPiiBusy(true); setPiiError("");
+    analyzePii(fields)
+      .then((r) => {
+        const m: PiiIndex = new Map();
+        for (const x of r?.results || []) m.set(`${x.table}.${x.column}`, { label: x.label, score: x.score });
+        setPii(m); setPiiRan(true);
+      })
+      .catch((e) => setPiiError(`PII scan failed: ${String(e.message || e)}`))
+      .finally(() => setPiiBusy(false));
+  }, [hasCatalog, catalog]);
+
   const policyIndex = useMemo(
     () => buildPolicyIndex(catalog, rules, bound),
     [catalog, rules, bound]
   );
 
   const built = useMemo(
-    () => (hasCatalog ? buildFromCatalog(catalog, policyIndex) : { nodes: [], edges: [], defs: [] as TableDef[] }),
-    [catalog, policyIndex, hasCatalog]
+    () => (hasCatalog ? buildFromCatalog(catalog, policyIndex, pii) : { nodes: [], edges: [], defs: [] as TableDef[] }),
+    [catalog, policyIndex, pii, hasCatalog]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
@@ -591,7 +645,8 @@ export default function DataGraph({ catalog, datasourceId, rules = [] }: Props) 
 
   return (
     <div className="dg-shell">
-      <StatsBar defs={built.defs} datasourceId={datasourceId} />
+      <StatsBar defs={built.defs} datasourceId={datasourceId}
+        onDetectPii={handleDetectPii} piiBusy={piiBusy} piiRan={piiRan} piiError={piiError} />
 
       <div className="dg-workspace">
         <div className="dg-canvas">

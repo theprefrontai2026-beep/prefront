@@ -239,6 +239,16 @@ export function listTemplates(semanticModelId?: string) {
   return fetch(`/design/semantic/templates${q}`).then(jsonOrThrow);
 }
 
+/** Guess which schema fields are PII (Presidio, name-based). Send the column
+ *  list; get back a best-guess entity + label + score per detected column. */
+export function analyzePii(fields: { table?: string; column: string; type?: string }[]) {
+  return fetch("/pii/analyze", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fields }),
+  }).then(jsonOrThrow);
+}
+
 /** Fetch the published, bound policy bundle for a datasource (authoritative
  *  rule->column bindings). Returns { policy_bundle: {} } if nothing published. */
 export function getPolicy(datasourceId?: string) {

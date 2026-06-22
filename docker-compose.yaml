@@ -160,6 +160,12 @@ services:
       api-db:
         condition: service_healthy
 
+  # ---- PII analyzer (Presidio): guesses which schema fields are PII ---------
+  # Design-time only, name-based — the Data Graph's "Detect PII" calls it.
+  pii-analyzer:
+    build: ./pii-analyzer
+    ports: ["8020:8020"]
+
   # ---- service 4: UI (new workflow-v1 front-end, nginx) --------------------
   ui:
     build:
@@ -170,6 +176,7 @@ services:
       - skill-builder
       - semantic-layer-api
       - api-server
+      - pii-analyzer
 
   # ==========================================================================
   # SecureBank demo (moved in-repo under ./securebank-demo) — the active

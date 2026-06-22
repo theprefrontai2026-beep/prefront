@@ -1,0 +1,4 @@
+presidio-analyzer==2.2.355
+spacy>=3.7,<3.9
+fastapi==0.115.6
+uvicorn[standard]==0.34.0

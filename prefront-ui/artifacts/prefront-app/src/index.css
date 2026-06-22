@@ -931,7 +931,15 @@ select { cursor: pointer; }
 .dg-flag.fk   { background: var(--blue-light);  color: var(--blue); }
 .dg-flag.sens { background: var(--red-light);   color: var(--red); }
 .dg-flag.gov  { background: var(--teal-light);  color: var(--teal); }
+.dg-flag.pii  { background: var(--amber-light); color: var(--amber); }
 .dg-restriction { font-size: 10px; color: var(--amber); white-space: normal; }
+
+/* PII micro-badge on a node column row */
+.dg-col-pii {
+  font-size: 8px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 0 3px; border-radius: 3px; flex-shrink: 0;
+  background: var(--amber-light); color: var(--amber);
+}
 
 /* FK rows */
 .dg-fk-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
