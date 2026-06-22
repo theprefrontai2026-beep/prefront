@@ -31,7 +31,7 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
     if (!window.confirm(
       "Disconnect and forget everything?\n\n" +
       "This clears the connected datasource and its generated query templates " +
-      "on the server (the bundled securebank/commercerisk demos are kept), and " +
+      "on the server (the bundled securebank demo is kept), and " +
       "clears the schema cached in this browser. This cannot be undone."
     )) return;
     setError(""); setStatus(""); setBusy(true);

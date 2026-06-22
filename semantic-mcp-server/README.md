@@ -2,7 +2,7 @@
 
 A thin **runtime** that exposes the design-time `query_templates.yaml` (produced by
 `semantic-layer/`) over MCP. Each template becomes one MCP tool; calling the tool
-runs the template's parameterized SQL against the CommerceRisk Postgres and returns
+runs the template's parameterized SQL against the SecureBank Postgres and returns
 the rows. The agent only ever sees the available queries as typed tools — the server
 is a function wrapper around each approved query.
 
@@ -13,7 +13,7 @@ is a function wrapper around each approved query.
 
 ```bash
 # 1. Start the datasource (Postgres 16 + schema + seed)
-cd ../commercerisk-demo && docker compose up -d
+cd ../securebank-demo && docker compose up -d
 
 # 2. Install deps into this package's venv (uv)
 cd ../semantic-mcp-server
@@ -21,7 +21,7 @@ VIRTUAL_ENV=.venv uv venv && VIRTUAL_ENV=.venv uv pip install -r requirements.tx
 ```
 
 DB connection comes from `--database-url`, else `$DATABASE_URL`, else the demo DSN
-`postgresql://commercerisk:commercerisk@localhost:5432/commercerisk`.
+`postgresql://securebank:securebank@localhost:5432/securebank`.
 
 ## Use
 
@@ -30,12 +30,12 @@ DB connection comes from `--database-url`, else `$DATABASE_URL`, else the demo D
 python -m semanticmcp doctor
 
 # Run one query directly (no MCP client needed)
-python -m semanticmcp call get_customer_credit \
-  --args '{"customer_id": 4, "caller_region": "EMEA"}'
+python -m semanticmcp call get_account \
+  --args '{"account_id": 4, "caller_role": "teller"}'
 
 # Serve all templates as an MCP server (stdio)
 python -m semanticmcp serve \
-  --templates ../semantic-layer/out/commercerisk/query_templates.yaml
+  --templates ../semantic-layer/out/securebank-demo/query_templates.yaml
 ```
 
 Each tool's inputs are exactly the `:placeholders` its SQL needs (including
@@ -47,29 +47,29 @@ Each tool's inputs are exactly the `:placeholders` its SQL needs (including
 The server speaks MCP over **stdio**: a client launches `python -m semanticmcp serve`
 as a subprocess and exchanges JSON-RPC over stdin/stdout. You don't run `serve`
 yourself for the MCP options below — they spawn it. Postgres must be up first
-(`cd ../commercerisk-demo && docker compose up -d`). Global flags
+(`cd ../securebank-demo && docker compose up -d`). Global flags
 (`--templates`, `--database-url`) go **before** the subcommand.
 
 ### 1. Direct CLI — no MCP protocol (fastest for testing)
 Bypasses MCP entirely and runs a template against the DB.
 ```bash
-python -m semanticmcp call find_customers --args '{"caller_region":"EMEA"}'
-python -m semanticmcp call get_customer_credit --args '{"customer_id":1,"caller_region":"NA"}'
+python -m semanticmcp call find_accounts --args '{"caller_role":"teller"}'
+python -m semanticmcp call get_account --args '{"account_id":1,"caller_role":"teller"}'
 ```
 
 ### 2. Client script — real MCP stdio round-trip
 `scripts/try_mcp.py` spawns the server, lists tools, and calls one.
 ```bash
 python scripts/try_mcp.py                                        # list + demo call
-python scripts/try_mcp.py find_customers '{"caller_region":"APAC"}'
-python scripts/try_mcp.py get_customer_credit '{"customer_id":1,"caller_region":"NA"}'
+python scripts/try_mcp.py find_accounts '{"caller_role":"teller"}'
+python scripts/try_mcp.py get_account '{"account_id":1,"caller_role":"teller"}'
 ```
 
 ### 3. MCP Inspector — visual UI (requires Node/`npx`)
 ```bash
 PYTHONPATH=. npx @modelcontextprotocol/inspector \
   .venv/bin/python -m semanticmcp \
-  --templates ../semantic-layer/out/commercerisk/query_templates.yaml serve
+  --templates ../semantic-layer/out/securebank-demo/query_templates.yaml serve
 ```
 Pick a tool, fill the form, see the rows in the browser.
 
@@ -78,7 +78,7 @@ Claude Code:
 ```bash
 claude mcp add prefront-sql -- \
   /home/sachi/prefront/prefront/semantic-mcp-server/.venv/bin/python -m semanticmcp \
-  --templates /home/sachi/prefront/prefront/semantic-layer/out/commercerisk/query_templates.yaml serve
+  --templates /home/sachi/prefront/prefront/semantic-layer/out/securebank-demo/query_templates.yaml serve
 ```
 Claude Desktop (`claude_desktop_config.json`):
 ```json
@@ -87,9 +87,9 @@ Claude Desktop (`claude_desktop_config.json`):
     "prefront-sql": {
       "command": "/home/sachi/prefront/prefront/semantic-mcp-server/.venv/bin/python",
       "args": ["-m", "semanticmcp",
-               "--templates", "/home/sachi/prefront/prefront/semantic-layer/out/commercerisk/query_templates.yaml",
+               "--templates", "/home/sachi/prefront/prefront/semantic-layer/out/securebank-demo/query_templates.yaml",
                "serve"],
-      "env": { "DATABASE_URL": "postgresql://commercerisk:commercerisk@localhost:5432/commercerisk" }
+      "env": { "DATABASE_URL": "postgresql://securebank:securebank@localhost:5432/securebank" }
     }
   }
 }

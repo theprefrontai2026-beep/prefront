@@ -6,49 +6,47 @@
 #   scripts/run_policy.sh <document> [domain] [skill_id] [version] [ddl_file]
 #
 # Example:
-#   scripts/run_policy.sh \
-#     ../../commercerisk-demo/business-docs/CR-FIN-001-credit-and-collections-policy.md \
-#     credit_collections cr_fin_001 3.2 ../../commercerisk-demo/db/schema.sql
+#   scripts/run_policy.sh ./my-policy.md my_domain my_skill 1.0 ./my-schema.sql
 #
 # The optional <ddl_file> is the datasource schema (.sql). When given, it is
 # attached at upload so the Skill Builder derives a column-only default domain
 # pack from it — grounding extraction/validation in vocabulary the binder can
-# actually resolve. Defaults to $SCHEMA (the bundled CommerceRisk schema).
+# actually resolve. Defaults to $SCHEMA (the bundled SecureBank schema).
 #
 # Env overrides:
 #   SB      skill-builder base URL   (default http://localhost:8000)
 #   SL      semantic-layer base URL  (default http://localhost:8010)
 #   SCHEMA  datasource schema .sql for grounding + the binder round-trip
-#           (default ../../commercerisk-demo/db/schema.sql; steps skipped if missing)
+#           (default ../../securebank-demo/db/schema.sql; steps skipped if missing)
 #   APPROVE if "0", do not auto-approve / publish / bind (inspect only)
 set -euo pipefail
 
 DOC="${1:?usage: run_policy.sh <document> [domain] [skill_id] [version] [ddl_file]}"
 DOMAIN="${2:-credit_collections}"
-SKILL_ID="${3:-cr_fin_001}"
+SKILL_ID="${3:-my_skill}"
 VERSION="${4:-1.0}"
 
 SB="${SB:-http://localhost:8000}"
 SL="${SL:-http://localhost:8010}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# default: the bundled CommerceRisk schema, two repos over from skill-builder/
-SCHEMA="${SCHEMA:-$SCRIPT_DIR/../../../commercerisk-demo/db/schema.sql}"
+# default: the bundled SecureBank schema, at the repo root under securebank-demo/
+SCHEMA="${SCHEMA:-$SCRIPT_DIR/../../securebank-demo/db/schema.sql}"
 # 5th positional arg overrides the DDL used for grounding at upload; falls back
 # to $SCHEMA so the binder round-trip and grounding share one schema by default.
 DDL_FILE="${5:-$SCHEMA}"
 APPROVE="${APPROVE:-1}"
 
 # Step 7 (binder round-trip) publishes to the bundled semantic-layer at $SL,
-# which writes ONE deployment's bundle (the bundled CommerceRisk one:
-# /artifacts/commercerisk/policy.yaml). Running it for an unrelated domain would
-# overwrite that bundle. So it's gated:
+# which writes ONE deployment's bundle per datasource id
+# (/artifacts/<datasource_id>/policy.yaml). Running it for an unrelated domain
+# would overwrite that bundle. So it's gated:
 #   BIND=auto (default) -> run only when $DOMAIN is in $BIND_DOMAINS
 #   BIND=1              -> always run (you accept it writes the $SL deployment)
 #   BIND=0              -> never run
 # DATASOURCE_ID / METRICS are no longer hardcoded — override per datasource.
 BIND="${BIND:-auto}"
-BIND_DOMAINS="${BIND_DOMAINS:-credit_collections commercerisk}"
-DATASOURCE_ID="${DATASOURCE_ID:-commercerisk_postgres}"
+BIND_DOMAINS="${BIND_DOMAINS:-credit_collections}"
+DATASOURCE_ID="${DATASOURCE_ID:-securebank}"
 METRICS="${METRICS:-{\"available_credit\":\"credit_limit - current_balance\"}}"
 
 [ -f "$DOC" ] || { echo "document not found: $DOC" >&2; exit 1; }

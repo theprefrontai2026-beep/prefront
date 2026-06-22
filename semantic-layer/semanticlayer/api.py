@@ -48,15 +48,14 @@ _ARTIFACTS_ROOT = os.environ.get("SEMANTICLAYER_ARTIFACTS_ROOT") or str(
 _store: Optional[Store] = None
 
 # Demo baseline artifact dirs kept on reset, so a UI "disconnect / forget
-# everything" leaves the bundled demos working. These are the dirs the demo MCP
-# servers actually serve (securebank-mcp -> /artifacts/securebank-demo,
-# commercerisk -> /artifacts/commercerisk). NB: the default datasource id
-# "securebank" writes to /artifacts/securebank — a USER connection, not a
-# baseline, so it is intentionally NOT kept. Override with a space-separated
-# env list; empty wipes the baselines too.
+# everything" leaves the bundled demo working. This is the dir the demo MCP
+# server actually serves (securebank-mcp -> /artifacts/securebank-demo). NB: the
+# default datasource id "securebank" writes to /artifacts/securebank — a USER
+# connection, not a baseline, so it is intentionally NOT kept. Override with a
+# space-separated env list; empty wipes the baselines too.
 _KEEP_DATASOURCES = [
     s for s in os.environ.get(
-        "SEMANTICLAYER_KEEP_DATASOURCES", "securebank-demo commercerisk"
+        "SEMANTICLAYER_KEEP_DATASOURCES", "securebank-demo"
     ).split() if s
 ]
 
@@ -701,7 +700,7 @@ def introspect(body: IntrospectBody):
 
 
 class ResetBody(BaseModel):
-    # Keep the demo baselines (securebank/commercerisk) by default.
+    # Keep the demo baseline (securebank-demo) by default.
     keep_baselines: bool = True
     # Explicit override of which datasource ids to preserve (wins over keep_baselines).
     keep_datasource_ids: Optional[list[str]] = None
@@ -710,8 +709,8 @@ class ResetBody(BaseModel):
 @app.post("/design/semantic/reset")
 def reset(body: Optional[ResetBody] = None):
     """Forget connected datasources: clear the datasource/function/query-template
-    store and remove published per-datasource artifact dirs. Demo baselines
-    (securebank/commercerisk) are preserved unless ``keep_baselines`` is false."""
+    store and remove published per-datasource artifact dirs. The demo baseline
+    (securebank-demo) is preserved unless ``keep_baselines`` is false."""
     body = body or ResetBody()
     keep = (body.keep_datasource_ids if body.keep_datasource_ids is not None
             else (_KEEP_DATASOURCES if body.keep_baselines else []))

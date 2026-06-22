@@ -5,7 +5,7 @@ A design-time **agentic program** that turns two reviewed inputs into a governed
 
 | Input | Source | Role |
 |-------|--------|------|
-| Governed DB schema (DDL) | `commercerisk-demo/db/schema.sql` | the physical data source Prefront governs |
+| Governed DB schema (DDL) | `securebank-demo/db/schema.sql` | the physical data source Prefront governs |
 | Approved policy rules | `skill-builder/skills/<id>/v<ver>/` (skill-builder output) | intents, sensitivity, approval thresholds |
 
 It is the third design-time component alongside `skill-builder/` (policy →
@@ -50,16 +50,16 @@ Set a provider API key (mapper is LLM-only): `GROQ_API_KEY`, `NVIDIA_API_KEY`,
 ```bash
 # 1. Build the semantic layer
 python -m semanticlayer build \
-    --schema ../commercerisk-demo/db/schema.sql \
-    --rules  skill-builder/skills/cr_fin_001/v3.2 \
-    --model-id commercerisk_semantic_model --domain commercerisk \
-    --out semantic-layer/out/commercerisk --provider groq
+    --schema ./securebank-demo/db/schema.sql \
+    --rules  skill-builder/skills/<skill_id>/v<ver> \
+    --model-id securebank_semantic_model --domain securebank \
+    --out semantic-layer/out/securebank --provider groq
 
 # 2. Re-run the publish-time validator (design §19) over the generated set
-python -m semanticlayer validate --in semantic-layer/out/commercerisk
+python -m semanticlayer validate --in semantic-layer/out/securebank
 
 # 3. Serve the generated tool contracts as an MCP server (stdio)
-python -m semanticlayer serve --in semantic-layer/out/commercerisk
+python -m semanticlayer serve --in semantic-layer/out/securebank
 ```
 
 ### Ingesting a customer-supplied dbt semantic model
@@ -71,11 +71,11 @@ to the *same* publish-time gate (design §19/§23) as the generated path.
 
 ```bash
 python -m semanticlayer import-dbt \
-    --dbt     tests/fixtures/commercerisk_dbt_semantic_models.yaml \
-    --overlay tests/fixtures/commercerisk_overlay.yaml \
-    --schema  ../commercerisk-demo/db/schema.sql \
-    --model-id commercerisk_semantic_model --domain commercerisk \
-    --out semantic-layer/out/commercerisk
+    --dbt     tests/fixtures/<dbt_semantic_models>.yaml \
+    --overlay tests/fixtures/<overlay>.yaml \
+    --schema  ./securebank-demo/db/schema.sql \
+    --model-id securebank_semantic_model --domain securebank \
+    --out semantic-layer/out/securebank
 ```
 
 The split follows what each format can express:

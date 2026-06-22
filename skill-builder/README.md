@@ -154,17 +154,17 @@ binder (`semantic-layer-api`) on `:8010`. No `jq` needed — pretty-print with
 
 ```bash
 SB=http://localhost:8000
-DOCS=/home/sachi/prefront/commercerisk-demo/business-docs
+DOCS=./examples
 
 # 1. upload a policy and capture its id
-DID=$(curl -s -F "file=@$DOCS/CR-FIN-001-credit-and-collections-policy.md" \
-        -F domain=credit_collections -F version=3.2 \
+DID=$(curl -s -F "file=@$DOCS/discount_policy.md" \
+        -F domain=credit_collections -F version=1 \
         $SB/design/skills/documents/upload | sed -E 's/.*"document_id":"([^"]+)".*/\1/')
 
 # 2. run the whole pipeline (profile → classify → atoms → rules → validate)
 curl -s -X POST $SB/design/skills/documents/$DID/run-full-extraction \
   -H 'content-type: application/json' \
-  -d '{"pack":"credit_collections","skill_id":"cr_fin_001"}' | python3 -m json.tool
+  -d '{"pack":"credit_collections","skill_id":"my_skill"}' | python3 -m json.tool
 
 # 3. inspect
 curl -s "$SB/design/skills/candidate-rules?document_id=$DID" | python3 -m json.tool
@@ -176,9 +176,9 @@ curl -s  $SB/design/skills/documents/$DID/clause-ledger      | python3 -m json.t
 for CRID in $(curl -s "$SB/design/skills/candidate-rules?document_id=$DID" \
               | grep -oE '"candidate_rule_id":"[^"]+"' | cut -d'"' -f4); do
   curl -s -X POST $SB/design/skills/candidate-rules/$CRID/approve \
-    -H 'content-type: application/json' -d '{"approved_by":"me","version":"3.2"}' >/dev/null
+    -H 'content-type: application/json' -d '{"approved_by":"me","version":"1"}' >/dev/null
 done
-curl -s -X POST $SB/design/skills/cr_fin_001/publish -H 'content-type: application/json' \
+curl -s -X POST $SB/design/skills/my_skill/publish -H 'content-type: application/json' \
   -d "{\"document_id\":\"$DID\",\"domain\":\"credit_collections\",\"approved_only\":true}" \
   | python3 -m json.tool
 ```
@@ -190,15 +190,17 @@ run-full-extraction → validation/unresolved/ledger → approve → publish →
 round-trip) for one document:
 
 ```bash
-# scripts/run_policy.sh <document> [domain] [skill_id] [version]
+# scripts/run_policy.sh <document> [domain] [skill_id] [version] [ddl_file]
 scripts/run_policy.sh \
-  ../../commercerisk-demo/business-docs/CR-FIN-001-credit-and-collections-policy.md \
-  credit_collections cr_fin_001 3.2
+  examples/discount_policy.md \
+  credit_collections my_skill 1
 ```
 
-Env overrides: `SB` / `SL` (service URLs), `SCHEMA` (datasource `.sql` for the
-binder step; defaults to the bundled CommerceRisk schema), `APPROVE=0` (stop
-after inspection — no approve/publish/bind).
+Defaults: `DOMAIN=credit_collections`, `SKILL_ID=my_skill`,
+`DATASOURCE_ID=securebank`, and `SCHEMA` (datasource `.sql` for the binder step)
+defaults to the in-repo `securebank-demo/db/schema.sql`. Env overrides:
+`SB` / `SL` (service URLs), `SCHEMA`, `APPROVE=0` (stop after inspection — no
+approve/publish/bind).
 
 ## Hard rules (enforced)
 

@@ -4,8 +4,8 @@
 #     and delete generated artifact files (/data/skills/*).
 #   • Semantic layer — clear the functions / datasources / query_templates store
 #     and remove published per-datasource artifacts (/artifacts/<id>/), KEEPING
-#     the demo baselines (securebank, commercerisk) unless WIPE_ALL=1.
-# The datasource databases (securebank / commercerisk Postgres) are NOT touched.
+#     the demo baseline (securebank-demo) unless WIPE_ALL=1.
+# The datasource databases (the SecureBank Postgres) are NOT touched.
 #
 # NOTE: the UI's "connected datasource" is browser-only state (localStorage keys
 # prefront.schema / prefront.intents) — there is no server record to clear, so
@@ -22,7 +22,7 @@
 #   DB_SVC       design-time Postgres service name (default: skill-builder-db)
 #   DB_USER/DB_NAME  Postgres creds (default: skillbuilder/skillbuilder)
 #   SL_SVC       semantic-layer-api service name (default: semantic-layer-api)
-#   KEEP_ARTIFACTS  artifact dirs to preserve (default: "securebank commercerisk")
+#   KEEP_ARTIFACTS  artifact dirs to preserve (default: "securebank-demo")
 #   WIPE_ALL=1   also remove the kept baselines (a full /artifacts wipe)
 set -euo pipefail
 
@@ -33,7 +33,7 @@ DB_SVC="${DB_SVC:-skill-builder-db}"
 DB_USER="${DB_USER:-skillbuilder}"
 DB_NAME="${DB_NAME:-skillbuilder}"
 SL_SVC="${SL_SVC:-semantic-layer-api}"
-KEEP_ARTIFACTS="${KEEP_ARTIFACTS:-securebank commercerisk}"
+KEEP_ARTIFACTS="${KEEP_ARTIFACTS:-securebank-demo}"
 [ "${WIPE_ALL:-0}" = "1" ] && KEEP_ARTIFACTS=""
 
 # Python that clears the semantic-layer SQLite store (keeps the table schema).

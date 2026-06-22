@@ -4,7 +4,7 @@ Spawns `python -m semanticlayer serve --in <dir>`, lists the tools, and calls a
 couple of them — printing the decision-trace stubs. No API key needed (serving
 reads the already-generated artifacts; it does not call the LLM).
 
-    python scripts/try_mcp.py [artifact_dir]   # default: out/commercerisk
+    python scripts/try_mcp.py [artifact_dir]   # default: out/example
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-ARTIFACTS = sys.argv[1] if len(sys.argv) > 1 else "out/commercerisk"
+ARTIFACTS = sys.argv[1] if len(sys.argv) > 1 else "out/example"
 ROOT = Path(__file__).resolve().parent.parent  # semantic-layer/
 
 

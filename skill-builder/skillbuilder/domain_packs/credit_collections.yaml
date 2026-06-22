@@ -32,7 +32,7 @@ fields:
     type: string
     binds_to: column
     aliases: [region, territory]
-  # Order/line values — real columns in the CommerceRisk datasource. Naming the
+  # Order/line values — real columns in the datasource. Naming the
   # canonical field after the actual column (order_total, not order_value) makes
   # the LLM ground rules in vocabulary the runtime binder can resolve.
   order_total:

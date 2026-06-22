@@ -1,10 +1,10 @@
 """Talk to the semantic-mcp-server over stdio (a minimal MCP client).
 
 Spawns `python -m semanticmcp serve`, lists the tools, and calls one — printing
-the rows. Requires the CommerceRisk Postgres to be up (docker compose up -d).
+the rows. Requires the datasource Postgres to be up (docker compose up -d).
 
     python scripts/try_mcp.py                      # list tools + demo call
-    python scripts/try_mcp.py find_customers '{"caller_region":"APAC"}'
+    python scripts/try_mcp.py find_accounts '{"caller_role":"teller"}'
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 ROOT = Path(__file__).resolve().parent.parent  # semantic-mcp-server/
-TEMPLATES = ROOT.parent / "semantic-layer/out/commercerisk/query_templates.yaml"
+TEMPLATES = ROOT.parent / "semantic-layer/out/example/query_templates.yaml"
 
-TOOL = sys.argv[1] if len(sys.argv) > 1 else "find_customers"
-ARGS = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {"caller_region": "EMEA"}
+TOOL = sys.argv[1] if len(sys.argv) > 1 else "find_accounts"
+ARGS = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {"caller_role": "teller"}
 
 
 async def main() -> None:

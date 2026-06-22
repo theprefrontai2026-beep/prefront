@@ -19,9 +19,9 @@ Anything an LLM emits is a **candidate** that must pass schema validation + huma
 
 ## Domain independence (this repo's defining principle)
 
-The engine names **no table, column, policy, or tenant** — it is pure mechanism (README §"domain independence"). All application vocabulary lives in the published artifacts/config, not in code: `grep -rin commercerisk` over the Python/JS finds hits only in `docker-compose.yaml` (the bundled example's build args / DSN) and generated `semantic-layer/out/…` artifacts, never in engine code. Keep it that way — do not hardcode a domain's tables, roles, or thresholds into any service.
+The engine names **no table, column, policy, or tenant** — it is pure mechanism (README §"domain independence"). All application vocabulary lives in the published artifacts/config, not in code: `grep -rin securebank` over the Python/JS finds hits only in `docker-compose.yaml` (the bundled example's DSN / artifact paths) and the demo's published `securebank-demo/policy/` artifacts, never in engine code. Keep it that way — do not hardcode a domain's tables, roles, or thresholds into any service.
 
-The bundled `docker-compose.yaml` wires **CommerceRisk as the example deployment**: build args `--domain=commercerisk`, output path `/artifacts/commercerisk`, and a Postgres at host `:5433` whose schema/seed come from a **separate repo, `commercerisk-demo`** (`BuildSachin/commercerisk-demo`). That repo holds the example data + the before/after test harness; this repo is just the engine.
+The bundled `docker-compose.yaml` wires **SecureBank as the example deployment** (see `securebank-demo/`, in-repo): the runtime `semantic-mcp-server` serves `/artifacts/securebank-demo/` against the SecureBank Postgres (in this compose at `:5434`). The demo ships curated artifacts (`securebank-demo/policy/`) seeded into the shared `artifacts` volume; this repo is the engine plus that one worked example.
 
 ## Services (`docker-compose.yaml`)
 
@@ -29,16 +29,14 @@ The bundled `docker-compose.yaml` wires **CommerceRisk as the example deployment
 |---|---|---|---|
 | skill-builder | `skill-builder/skillbuilder` | 8000 | **policy compiler**: policy doc → clauses → LLM candidate rules → human review → published skill (FastAPI) |
 | semantic-layer-api | `semantic-layer/semanticlayer` | 8010 | design-time API: schema introspect/parse, build/publish templates, bind+publish policy |
-| semantic-layer (build job) | `semantic-layer/semanticlayer` | — | **one-shot**: schema + approved rules → semantic model, query templates, bound policy bundle → `artifacts` volume. Shows `Exited (0)` — that's normal; `docker compose up semantic-layer` re-runs it |
-| semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call |
+| semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call. Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`) + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080 |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
 - `api-db` — Drizzle, `rule_audit_log` only (`:5432` inside Docker, different named volume)
-- External **CommerceRisk** Postgres on host `:5433` — the runtime datasource (from `commercerisk-demo` repo; not managed here)
-- **SecureBank** Postgres inside Docker at `:5434` — the in-repo demo datasource (`securebank-demo/db/`)
+- **SecureBank** Postgres inside Docker at `:5434` — the in-repo runtime/demo datasource (`securebank-demo/db/`)
 
 The `semantic-layer` LLM mapper is the **only** agentic step; everything it emits is candidate output gated by schema validation + human approval. The runtime loads only published YAML.
 
@@ -130,4 +128,4 @@ Artifacts reach the runtime by HTTP, then land in the shared `artifacts` volume 
 4. Bind + publish the enforceable bundle: `POST :8010/design/semantic/publish-policy` → `policy.yaml`. Rules whose symbols don't resolve are **rejected here**, not shipped.
 
 ## Where to read more
-`design.md` (positioning + the LLM-at-design-time-only principle), `prefront_semantic_layer_design.md` (the semantic-contract artifact set), and each service's `README.md`. For a concrete end-to-end domain + a before/after governed-vs-ungoverned harness, see the separate `commercerisk-demo` repo.
+`design.md` (positioning + the LLM-at-design-time-only principle), `prefront_semantic_layer_design.md` (the semantic-contract artifact set), and each service's `README.md`. For a concrete end-to-end domain + a before/after governed-vs-ungoverned harness, see the in-repo `securebank-demo/` example.

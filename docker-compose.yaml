@@ -1,11 +1,13 @@
 # Prefront — full design-time + runtime stack.
 #
-#   (CommerceRisk Postgres is EXTERNAL — on the host at :5433, not in this compose)
 #   skill-builder        docs -> rules        (FastAPI)         :8000
-#   semantic-layer       rules+schema -> templates (one-shot build job -> artifacts volume)
+#   semantic-layer-api   schema introspection / build (design-time API) :8010
 #   semantic-mcp-server  templates -> live MCP query tools (HTTP/SSE) :8090
 #   api-server           UI companion: audit log + review websocket (Express) :8080
 #   ui                   Prefront front-end (React/Vite -> nginx) :5173
+#
+# The bundled example datasource is SecureBank (see ./securebank-demo), wired in
+# below; the engine itself is domain-independent.
 #
 # The ui (nginx) reverse-proxies /design -> skill-builder, /design/semantic ->
 # semantic-layer-api, and /api (+ /api/ws) -> api-server, so the SPA stays
@@ -29,14 +31,10 @@ x-llm-env: &llm-env
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
 services:
-  # The CommerceRisk Postgres is an EXTERNAL datasource on the host at :5433,
-  # not managed by this compose. Containers reach it via host.docker.internal
-  # (see extra_hosts on the services that query it).
-
   # ---- skill builder's own design-time database ----------------------------
   # Dedicated Postgres for design-time state (documents, clauses, candidate
   # rules, atoms, unresolved items). Separate from the tenant's runtime
-  # datasource (the external CommerceRisk Postgres on :5433) by design.
+  # datasource by design.
   skill-builder-db:
     image: postgres:16
     environment:
@@ -94,33 +92,6 @@ services:
       skill-builder-db:
         condition: service_healthy
 
-  # ---- service 2: semantic layer (rules + schema -> templates) -------------
-  # One-shot build job: compiles artifacts into the shared `artifacts` volume,
-  # then exits. The MCP server waits for it to finish.
-  semantic-layer:
-    build: ./semantic-layer
-    command:
-      - build
-      - --schema=/inputs/schema.sql
-      - --rules=/inputs/skills/cr_fin_001/v3.2
-      - --model-id=commercerisk_semantic_model
-      - --domain=commercerisk
-      - --datasource-id=commercerisk_postgres
-      - --out=/artifacts/commercerisk
-      - --provider=${LLM_PROVIDER:-groq}
-      # Application inputs (vocabulary), not Prefront code:
-      - --caller-scope=region=region_id
-      - --caller-scope=rep_id=rep_id
-      - --metric=available_credit=credit_limit - current_balance
-      - --metric=credit_utilization_pct=current_balance / credit_limit * 100
-    environment:
-      <<: *llm-env
-    volumes:
-      - artifacts:/artifacts
-      - ../commercerisk-demo/db/schema.sql:/inputs/schema.sql:ro
-      - ./skill-builder/skills:/inputs/skills:ro
-    restart: "no"
-
   # ---- semantic-layer design-time API (Data Connector: schema introspection)
   # Same image as the build job, but long-running: parses uploaded DDL and
   # introspects live databases for the UI's Data Connector tab.
@@ -130,46 +101,45 @@ services:
     environment:
       <<: *llm-env       # the /build endpoint runs the LLM semantic mapper
       SEMANTICLAYER_DB: /data/semanticlayer.db   # persisted templates + approvals
-      SEMANTICLAYER_PUBLISH_PATH: /artifacts/commercerisk/query_templates.yaml
-      SEMANTICLAYER_POLICY_PUBLISH_PATH: /artifacts/commercerisk/policy.yaml
+      # Legacy single-publish-path default; per-datasource publishing writes to
+      # /artifacts/<datasource_id>/ under this path's grandparent (/artifacts).
+      SEMANTICLAYER_PUBLISH_PATH: /artifacts/example/query_templates.yaml
+      SEMANTICLAYER_POLICY_PUBLISH_PATH: /artifacts/example/policy.yaml
     volumes:
       - semanticlayer_data:/data
       - artifacts:/artifacts          # publish writes the approved templates here
     ports: ["8010:8010"]
     extra_hosts:
-      - "host.docker.internal:host-gateway"   # reach the host's :5433 Postgres
+      - "host.docker.internal:host-gateway"   # reach a Postgres on the host
 
   # ---- service 3: semantic MCP server (templates -> live query tools) ------
+  # The engine runtime, serving the bundled SecureBank example artifacts.
   semantic-mcp-server:
     build: ./semantic-mcp-server
     command:
-      - --templates=/artifacts/commercerisk/query_templates.yaml
+      - --templates=/artifacts/securebank-demo/query_templates.yaml
       - serve
       - --http
       - --host=0.0.0.0
       - --port=8090
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://commercerisk:commercerisk@host.docker.internal:5433/commercerisk}
-      # Governance: enforce the published policy bundle as this caller identity.
-      # IDENTITY_QUERY is the DEPLOYMENT's mapping of an identity to caller
-      # attributes — it aliases the app schema onto the contract names
-      # (role/region); Prefront itself assumes no identity table.
-      POLICY_PATH: /artifacts/commercerisk/policy.yaml
-      ACT_AS: ${ACT_AS:-alice.chen@commercerisk.example}
-      IDENTITY_QUERY: >-
-        SELECT rep_id, name, region_id AS region, role
-        FROM sales_reps
-        WHERE email = :who OR CAST(rep_id AS TEXT) = :who
+      DATABASE_URL: ${DATABASE_URL:-postgresql://securebank:securebank@securebank-db:5432/securebank}
+      # Governance: enforce the published policy bundle. IDENTITY_QUERY is the
+      # DEPLOYMENT's mapping of an identity to caller attributes — it aliases the
+      # app schema onto the contract names; Prefront itself assumes no identity
+      # table. Identity is resolved per-connection (X-Prefront-Act-As header).
+      POLICY_PATH: /artifacts/securebank-demo/policy.yaml
+      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       ENABLE_WRITES: ${ENABLE_WRITES:-0}
       TRACE_PATH: /data/traces.jsonl
     volumes:
       - artifacts:/artifacts:ro
       - mcp_data:/data                # decision traces
     ports: ["8090:8090"]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # reach the host's :5433 Postgres
     depends_on:
-      semantic-layer:
+      securebank-db:
+        condition: service_healthy
+      securebank-seed:
         condition: service_completed_successfully
 
   # ---- api server (new UI companion: audit log + review websocket) ---------

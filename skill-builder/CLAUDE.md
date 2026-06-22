@@ -75,12 +75,12 @@ becomes an `ApprovedRule` after human approval, and only approved rules publish.
 
 Publish writes `skills/<skill_id>/v<version>/extracted_rules.yaml` (active rules
 only) to the registry (`SKILLBUILDER_REGISTRY`, default `/data/skills`,
-bind-mounted to `skill-builder-data/` on the host). The **semantic-layer build**
-mounts `./skill-builder/skills` and reads `cr_fin_001/v3.2/extracted_rules.yaml`
-— those fixtures are **tracked despite `skill-builder/skills/` being gitignored**
-(force-added) so the bundled build succeeds on a clean checkout. If the build
-exits 1 with `FileNotFoundError: …/extracted_rules.yaml`, the gitignored skill
-inputs are missing.
+bind-mounted to `skill-builder-data/` on the host). The **`semantic-layer build`
+CLI** can consume those published rules, but there is no longer a bundled
+compose build-job wiring a specific skill — point the build at whichever
+`skills/<skill_id>/v<version>/extracted_rules.yaml` you published. If the build
+exits 1 with `FileNotFoundError: …/extracted_rules.yaml`, the skill inputs
+weren't published (or the path/version is wrong).
 
 ## Commands
 
@@ -97,8 +97,8 @@ VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q -k executability
 
 # CLI: compile a doc to artifacts. --dry-run = segment only (no LLM); -v/-vv = debug logs
 python -m skillbuilder build examples/discount_policy.md --doc-id D --version 1 --dry-run
-python -m skillbuilder -vv build examples/discount_policy.md --doc-id CR-FIN-001 \
-  --version 3.2 --domain credit_collections --provider openai --out ./skills
+python -m skillbuilder -vv build examples/discount_policy.md --doc-id DISC-001 \
+  --version 1 --domain credit_collections --provider openai --out ./skills
 
 # Service (whole stack runs from the PARENT dir, not here)
 cd .. && docker compose up --build skill-builder   # FastAPI on :8000; alembic upgrade runs on boot
@@ -131,9 +131,9 @@ code (the runtime is debugged from container/CLI logs).
 ## Gotchas
 
 - **`run_policy.sh` step 7 (binder round-trip)** publishes to the bundled
-  semantic-layer, which writes ONE deployment's bundle. It's gated by `BIND`
+  semantic-layer, which writes ONE deployment's bundle per datasource id at
+  `/artifacts/<datasource_id>/policy.yaml`. It's gated by `BIND`
   (`auto`/`1`/`0`) + `BIND_DOMAINS`; `DATASOURCE_ID`/`METRICS` are env-config.
-  Running it for a non-commercerisk domain without gating would overwrite
-  `/artifacts/commercerisk/policy.yaml`.
+  Running it without gating could overwrite another datasource's bundle.
 - **The artifacts volume is shared** with the semantic-layer/MCP services; a
   publish/bind for one domain can clobber another's bundle there.

@@ -2,9 +2,9 @@
 
 A **retail-banking** example data source for Prefront, with a before/after test
 harness that fires the **same requests** at an ungoverned agent and (Phase 2) at
-the governed Prefront runtime — to show the difference. It is the banking
-counterpart to `commercerisk-demo`, and exists to demonstrate that the Prefront
-engine is **domain-neutral**: same engine, a completely different domain.
+the governed Prefront runtime — to show the difference. It exists to demonstrate
+that the Prefront engine is **domain-neutral**: the same engine governs any
+domain purely through published artifacts + config, with no code changes.
 
 The engine lives in the sibling repo `../prefront` (`BuildSachin/prefront`). This
 repo is "the database Prefront is pointed at" + the demo scenarios. Vocabulary

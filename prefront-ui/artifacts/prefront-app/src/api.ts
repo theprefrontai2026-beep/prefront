@@ -194,7 +194,7 @@ export function parseSchema(ddl: string, datasourceId: string) {
 
 /** Forget all connected datasources server-side: clears the semantic-layer
  *  datasource/function/query-template store and removes published artifact dirs
- *  (demo baselines securebank/commercerisk are kept). */
+ *  (the securebank-demo baseline is kept). */
 export function resetDatasources() {
   return fetch("/design/semantic/reset", {
     method: "POST",
