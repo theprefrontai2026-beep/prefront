@@ -180,7 +180,10 @@ export default function App() {
   }
 
   useEffect(() => {
-    try { localStorage.setItem(INTENTS_KEY, intents); } catch { /* quota */ }
+    try {
+      if (intents) localStorage.setItem(INTENTS_KEY, intents);
+      else localStorage.removeItem(INTENTS_KEY);
+    } catch { /* quota */ }
   }, [intents]);
 
   const completedTabs = new Set<string>();
