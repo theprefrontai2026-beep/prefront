@@ -214,3 +214,30 @@ class Store:
                 "SELECT datasource_id, ddl, dsn, owner_column FROM datasources WHERE datasource_id=?",
                 (datasource_id,)).fetchone()
         return dict(row) if row else None
+
+    def list_datasource_ids(self) -> list[str]:
+        with self._lock:
+            return [r[0] for r in self._conn.execute(
+                "SELECT datasource_id FROM datasources ORDER BY datasource_id")]
+
+    def clear(self, keep_datasource_ids: Optional[list[str]] = None) -> dict[str, int]:
+        """Wipe the datasource/function/template store. Rows for datasource ids in
+        ``keep_datasource_ids`` are preserved (used to keep demo baselines).
+        Returns a per-table count of deleted rows."""
+        keep = tuple(keep_datasource_ids or ())
+        deleted: dict[str, int] = {}
+        with self._tx() as c:
+            if keep:
+                marks = ",".join("?" * len(keep))
+                deleted["functions"] = c.execute(
+                    f"DELETE FROM functions WHERE datasource_id NOT IN ({marks})", keep).rowcount
+                deleted["datasources"] = c.execute(
+                    f"DELETE FROM datasources WHERE datasource_id NOT IN ({marks})", keep).rowcount
+                deleted["query_templates"] = c.execute(
+                    f"DELETE FROM query_templates WHERE datasource_id IS NULL "
+                    f"OR datasource_id NOT IN ({marks})", keep).rowcount
+            else:
+                deleted["functions"] = c.execute("DELETE FROM functions").rowcount
+                deleted["datasources"] = c.execute("DELETE FROM datasources").rowcount
+                deleted["query_templates"] = c.execute("DELETE FROM query_templates").rowcount
+        return {k: max(v, 0) for k, v in deleted.items()}

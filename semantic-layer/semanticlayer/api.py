@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -46,11 +47,28 @@ _ARTIFACTS_ROOT = os.environ.get("SEMANTICLAYER_ARTIFACTS_ROOT") or str(
 )
 _store: Optional[Store] = None
 
+# Demo baseline artifact dirs kept on reset, so a UI "disconnect / forget
+# everything" leaves the bundled demos working. These are the dirs the demo MCP
+# servers actually serve (securebank-mcp -> /artifacts/securebank-demo,
+# commercerisk -> /artifacts/commercerisk). NB: the default datasource id
+# "securebank" writes to /artifacts/securebank — a USER connection, not a
+# baseline, so it is intentionally NOT kept. Override with a space-separated
+# env list; empty wipes the baselines too.
+_KEEP_DATASOURCES = [
+    s for s in os.environ.get(
+        "SEMANTICLAYER_KEEP_DATASOURCES", "securebank-demo commercerisk"
+    ).split() if s
+]
+
+
+def _safe_seg(datasource_id: str) -> str:
+    """Filesystem-safe artifact-dir segment for a datasource id."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", datasource_id or "datasource").strip("._") or "datasource"
+
 
 def _functions_artifact_path(datasource_id: str) -> Path:
     """Per-datasource template artifact: <root>/<safe id>/query_templates.yaml."""
-    seg = re.sub(r"[^A-Za-z0-9_.-]", "_", datasource_id or "datasource").strip("._") or "datasource"
-    return Path(_ARTIFACTS_ROOT) / seg / "query_templates.yaml"
+    return Path(_ARTIFACTS_ROOT) / _safe_seg(datasource_id) / "query_templates.yaml"
 
 
 def store() -> Store:
@@ -680,3 +698,34 @@ def introspect(body: IntrospectBody):
     if not catalog.tables:
         raise HTTPException(422, f"no tables found in schema '{body.schema_}'")
     return _catalog_payload(catalog)
+
+
+class ResetBody(BaseModel):
+    # Keep the demo baselines (securebank/commercerisk) by default.
+    keep_baselines: bool = True
+    # Explicit override of which datasource ids to preserve (wins over keep_baselines).
+    keep_datasource_ids: Optional[list[str]] = None
+
+
+@app.post("/design/semantic/reset")
+def reset(body: Optional[ResetBody] = None):
+    """Forget connected datasources: clear the datasource/function/query-template
+    store and remove published per-datasource artifact dirs. Demo baselines
+    (securebank/commercerisk) are preserved unless ``keep_baselines`` is false."""
+    body = body or ResetBody()
+    keep = (body.keep_datasource_ids if body.keep_datasource_ids is not None
+            else (_KEEP_DATASOURCES if body.keep_baselines else []))
+    keep_segs = {_safe_seg(k) for k in keep}
+
+    cleared = store().clear(keep_datasource_ids=keep)
+
+    removed_dirs: list[str] = []
+    root = Path(_ARTIFACTS_ROOT)
+    if root.is_dir():
+        for d in sorted(root.iterdir()):
+            if d.is_dir() and d.name not in keep_segs:
+                shutil.rmtree(d, ignore_errors=True)
+                removed_dirs.append(d.name)
+    log.info("reset: cleared store=%s removed artifact dirs=%s kept=%s",
+             cleared, removed_dirs, sorted(keep_segs))
+    return {"cleared": cleared, "removed_artifact_dirs": removed_dirs, "kept": sorted(keep_segs)}

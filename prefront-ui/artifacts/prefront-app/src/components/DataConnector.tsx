@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { introspect, parseSchema } from "../api";
+import { introspect, parseSchema, resetDatasources } from "../api";
 import SchemaDiagram from "./SchemaDiagram";
 
 interface Props {
@@ -27,12 +27,30 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
   const [dragOver, setDragOver] = useState(false);
   const sqlInputRef = useRef<HTMLInputElement>(null);
 
-  function handleDisconnect() {
-    setCatalog(null);
-    setResultId("");
-    setStatus("");
-    setError("");
-    onDisconnect();
+  async function handleDisconnect() {
+    if (!window.confirm(
+      "Disconnect and forget everything?\n\n" +
+      "This clears the connected datasource and its generated query templates " +
+      "on the server (the bundled securebank/commercerisk demos are kept), and " +
+      "clears the schema cached in this browser. This cannot be undone."
+    )) return;
+    setError(""); setStatus(""); setBusy(true);
+    try {
+      const r = await resetDatasources();
+      const n = (r?.cleared?.datasources ?? 0) + (r?.cleared?.query_templates ?? 0);
+      setCatalog(null);
+      setResultId("");
+      onDisconnect();
+      setStatus(`Disconnected — forgot ${n} server record${n !== 1 ? "s" : ""}; browser cache cleared`);
+    } catch (e: any) {
+      // Server wipe failed — still clear the browser so the UI reflects "disconnected".
+      setCatalog(null);
+      setResultId("");
+      onDisconnect();
+      setError(`Browser cache cleared, but server reset failed: ${String(e.message || e)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function readSqlFile(file: File) {
@@ -225,8 +243,9 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
         <div className="pf-panel">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <h2 style={{ margin: 0 }}>Schema — <code style={{ fontSize: 15, fontWeight: 500 }}>{resultId}</code></h2>
-            <button className="pf-btn" onClick={handleDisconnect} title="Clear the connected datasource (browser-only state)">
-              Disconnect
+            <button className="pf-btn reject" onClick={handleDisconnect} disabled={busy}
+              title="Forget everything: clear this datasource + its query templates on the server, and the browser cache">
+              {busy ? "Disconnecting…" : "Disconnect"}
             </button>
           </div>
           <div className="pf-readiness" style={{ marginBottom: 16 }}>

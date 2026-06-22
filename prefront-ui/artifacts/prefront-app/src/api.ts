@@ -192,6 +192,17 @@ export function parseSchema(ddl: string, datasourceId: string) {
   }).then(jsonOrThrow);
 }
 
+/** Forget all connected datasources server-side: clears the semantic-layer
+ *  datasource/function/query-template store and removes published artifact dirs
+ *  (demo baselines securebank/commercerisk are kept). */
+export function resetDatasources() {
+  return fetch("/design/semantic/reset", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ keep_baselines: true }),
+  }).then(jsonOrThrow);
+}
+
 export function introspect(dsn: string, { datasourceId, schema }: any = {}) {
   return fetch("/design/semantic/catalog/introspect", {
     method: "POST",
