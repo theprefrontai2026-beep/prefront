@@ -1,0 +1,25 @@
+# Prefront UI (new workflow-v1 app) — build the React/Vite app inside the pnpm
+# workspace, then serve the static bundle with nginx (which also reverse-proxies
+# /design, /design/semantic and /api to the backend services).
+#
+# Build context is the whole pnpm workspace (prefront-ui/), because the app
+# resolves `catalog:` / `workspace:*` deps from the workspace root.
+FROM node:24-slim AS build
+WORKDIR /workspace
+
+# pnpm 10 (lockfile v9 + minimumReleaseAge are pnpm-10 features).
+RUN npm install -g pnpm@10
+
+COPY . .
+# Full install incl. devDependencies — vite + plugins live there.
+RUN pnpm install --frozen-lockfile
+
+# vite.config.ts requires PORT and BASE_PATH to be present at build time.
+# PORT is irrelevant for a static build; BASE_PATH=/ serves the app at root.
+RUN PORT=5173 BASE_PATH=/ pnpm --filter @workspace/prefront-app run build
+
+# ---- runtime: static files behind nginx -----------------------------------
+FROM nginx:alpine
+COPY --from=build /workspace/artifacts/prefront-app/dist/public /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80

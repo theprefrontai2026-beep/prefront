@@ -1,0 +1,56 @@
+# The Prefront governance overlay paired with the dbt model. dbt has no concept
+# of an operation, a caller, or a restricted field — all of that lives here, in
+# the same shape skill-builder emits.
+overlay_version: "1"
+domain: commercerisk
+
+# Operations to expose as governed MCP tools.
+intents:
+  - find_customers
+  - get_customer_credit
+  - create_order
+
+# Governance rules (skill-builder extracted-rule shape).
+rules:
+  - rule_key: credit_hold_block
+    rule_type: restriction
+    applies_to_intents: [create_order]
+    conditions:
+      - field: credit_status
+        operator: "=="
+        value: hold
+    effect:
+      decision: block
+      message: "Orders are blocked for customers on credit hold."
+
+  - rule_key: tax_id_manager_only
+    rule_type: data_access
+    applies_to_intents: [find_customers, get_customer_credit]
+    conditions:
+      - field: caller.role
+        operator: "=="
+        value: manager
+    effect:
+      decision: allow
+      restricted_fields: [tax_id]
+      message: "tax_id is visible to managers only."
+
+# Explicit per-attribute sensitivity (merged with schema [SENSITIVE] markers and
+# rule-derived restricted fields). Keys accept Entity.attr or table.column.
+sensitivity:
+  - column: customers.credit_limit
+    classification: financial_sensitive
+    sensitivity_level: restricted
+    allowed_roles: [manager]
+  - column: customers.current_balance
+    classification: financial_sensitive
+    sensitivity_level: restricted
+    allowed_roles: [manager]
+
+# Application vocabulary (never hardcoded in Prefront).
+metrics:
+  available_credit: "credit_limit - current_balance"
+
+caller_context:
+  region: region_id
+  rep_id: rep_id

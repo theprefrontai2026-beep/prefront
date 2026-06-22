@@ -1,0 +1,78 @@
+# Example domain pack (CONFIG, not engine code) — SecureBank retail banking.
+#
+# Supplies the vocabulary a datasource schema cannot: roles, actions->intents,
+# and business aliases — layered OVER the column-only pack derived from the DDL.
+# The schema gives columns (user_id, role, balance, ssn, …); this pack names the
+# roles and intents the policy's permission/ownership rules need to ground.
+# Requires SKILLBUILDER_NAMED_PACKS=1 to take effect.
+schema_version: prefront.domain_pack.v1
+domain: securebank
+version: "1.0"
+status: active
+
+fields:
+  # Identity / ownership (real columns in securebank-database.sql).
+  user_id:
+    type: string
+    binds_to: column
+    aliases: [user, owner, account owner, own data, own records]
+  role:
+    type: enum
+    binds_to: column
+    allowed_values: [Account Holder, Bank Teller, Bank Manager, System Admin]
+    aliases: [user role, access level]
+  status:
+    type: enum
+    binds_to: column
+    allowed_values: [active, inactive, suspended]
+    aliases: [account status, user status]
+  clearance_level:
+    type: number
+    binds_to: column
+    aliases: [clearance, authorization level]
+  # Account / risk columns.
+  account_type:
+    type: string
+    binds_to: column
+    aliases: [type of account]
+  balance:
+    type: money
+    binds_to: column
+    aliases: [account balance]
+  risk_rating:
+    type: enum
+    binds_to: column
+    allowed_values: [low, medium, high]
+    aliases: [risk]
+  credit_score:
+    type: number
+    binds_to: column
+    aliases: [credit rating]
+  # Sensitive PII (policy: SSN is Bank Manager only).
+  ssn:
+    type: string
+    binds_to: column
+    aliases: [social security number, social security]
+
+roles:
+  account_holder: {aliases: [Account Holder, customer, accountholder]}
+  bank_teller: {aliases: [Bank Teller, Teller]}
+  bank_manager: {aliases: [Bank Manager, Manager]}
+  system_admin: {aliases: [System Admin, Administrator, admin]}
+
+# Actions map to INTENTS (the applies_to_intents axis) — never a separate axis.
+actions:
+  view_accounts: {intent: view_accounts, aliases: [view own accounts, view accounts, see accounts]}
+  view_transactions: {intent: view_transactions, aliases: [view transactions]}
+  view_loans: {intent: view_loans, aliases: [view loans]}
+  view_users: {intent: view_users, aliases: [view customers, view users, access /users]}
+  initiate_transfer: {intent: initiate_transfer, aliases: [transfer, initiate transfer, move funds]}
+  apply_loan: {intent: apply_loan, aliases: [apply for loan, apply for loans, loan application]}
+  decide_loan: {intent: decide_loan, aliases: [approve loan, reject loan, counter-offer, loan decisioning]}
+  delete_record: {intent: delete_record, aliases: [delete, remove record]}
+  manage_staff: {intent: manage_staff, aliases: [add teller, edit manager, staff management]}
+
+reason_codes:
+  ROLE_NOT_PERMITTED: {message: "Caller role is not permitted for this resource."}
+  OWN_DATA_ONLY: {message: "Account holders may access only their own records."}
+  MANAGER_ONLY_FIELD: {message: "Field is restricted to Bank Managers."}

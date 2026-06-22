@@ -1,0 +1,11 @@
+# Prefront — Semantic Layer builder + design-time API
+openai>=1.0
+pydantic>=2.0
+pyyaml>=6.0
+mcp>=1.0
+sqlglot>=25.0          # design-time SQL §14 validation (AST checks)
+# Data Connector API (catalog parse / live introspection)
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
+psycopg[binary]>=3.2

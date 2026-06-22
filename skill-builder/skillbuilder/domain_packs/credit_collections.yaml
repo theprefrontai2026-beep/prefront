@@ -1,0 +1,84 @@
+# Example domain pack (CONFIG, not engine code) — Credit & Collections.
+#
+# A design-time vocabulary + alias map that mirrors the four runtime binding
+# namespaces so the validators can predict, before publish, whether a rule's
+# symbols will bind at `semantic-layer publish-policy`. The catalog/templates/
+# metrics remain the binding AUTHORITY; this pack is only a pre-check.
+schema_version: prefront.domain_pack.v1
+domain: credit_collections
+version: "1.0"
+status: active
+
+fields:
+  credit_status:
+    type: enum
+    binds_to: column
+    allowed_values: [good, watch, hold]
+    aliases: [credit status, account standing]
+  credit_limit:
+    type: money
+    binds_to: column
+    aliases: [credit limit]
+  current_balance:
+    type: money
+    binds_to: column
+    aliases: [current balance, outstanding balance, open exposure]
+  risk_rating:
+    type: enum
+    binds_to: column
+    allowed_values: [low, medium, high]
+    aliases: [risk rating]
+  region_id:
+    type: string
+    binds_to: column
+    aliases: [region, territory]
+  # Order/line values — real columns in the CommerceRisk datasource. Naming the
+  # canonical field after the actual column (order_total, not order_value) makes
+  # the LLM ground rules in vocabulary the runtime binder can resolve.
+  order_total:
+    type: money
+    binds_to: column
+    aliases: [order value, net order value, order total, order_value]
+  discount_pct:
+    type: number
+    binds_to: column
+    aliases: [discount, discount percent, discount %, discount percentage, discount_percentage]
+  requested_fields:
+    type: list
+    binds_to: request_param
+    aliases: [requested columns]
+  # Derived values the application defines (see docker-compose --metric flags).
+  available_credit:
+    type: money
+    binds_to: metric
+    aliases: [available credit, headroom]
+  credit_utilization_pct:
+    type: number
+    binds_to: metric
+    aliases: [credit utilization, utilization]
+
+roles:
+  rep: {aliases: [sales rep, sales representative, sales staff]}
+  senior_rep: {aliases: [senior rep]}
+  manager: {aliases: [Manager]}
+  regional_sales_manager: {aliases: [Regional Sales Manager, RSM]}
+  credit_analyst: {aliases: [Credit Analyst]}
+  vp_sales: {aliases: [VP Sales, VP of Sales]}
+  director_credit_collections:
+    aliases: [Director Credit & Collections, "Director, Credit & Collections"]
+  finance: {aliases: [Finance, Finance team]}
+
+# Actions map to INTENTS (the applies_to_intents axis) — never a separate axis.
+actions:
+  create_order: {intent: create_order, aliases: [new order, accept order, order creation]}
+  convert_quotation: {intent: create_order, aliases: [quotation conversion, convert quote]}
+  release_shipment: {intent: create_order, aliases: [shipment release, accept shipment]}
+  find_customers: {intent: find_customers, aliases: [search customers, list customers]}
+  read_credit: {intent: get_customer_credit, aliases: [read credit standing, view credit]}
+
+# Reason codes are a design-time catalog that renders into effect.message.
+reason_codes:
+  CUSTOMER_ON_CREDIT_HOLD: {message: "Customer is on credit hold."}
+  ORDER_EXCEEDS_AVAILABLE_CREDIT: {message: "Order exceeds available credit."}
+  APPROVAL_REQUIRED_WATCH_ACCOUNT:
+    message: "Watch account requires approval and an available-credit check."

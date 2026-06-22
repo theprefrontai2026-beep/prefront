@@ -1,0 +1,209 @@
+# Prefront — full design-time + runtime stack.
+#
+#   (CommerceRisk Postgres is EXTERNAL — on the host at :5433, not in this compose)
+#   skill-builder        docs -> rules        (FastAPI)         :8000
+#   semantic-layer       rules+schema -> templates (one-shot build job -> artifacts volume)
+#   semantic-mcp-server  templates -> live MCP query tools (HTTP/SSE) :8090
+#   api-server           UI companion: audit log + review websocket (Express) :8080
+#   ui                   Prefront front-end (React/Vite -> nginx) :5173
+#
+# The ui (nginx) reverse-proxies /design -> skill-builder, /design/semantic ->
+# semantic-layer-api, and /api (+ /api/ws) -> api-server, so the SPA stays
+# same-origin (no CORS).
+#
+# Quick start:
+#   cp .env.example .env   # put your LLM key in it (GROQ_API_KEY=...)
+#   docker compose up --build
+#
+# The LLM key is needed by skill-builder (extract-rules) and semantic-layer (mapper).
+
+name: prefront
+
+# Shared LLM credentials/provider, injected into the services that call an LLM.
+x-llm-env: &llm-env
+  LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+  SKILLBUILDER_PROVIDER: ${LLM_PROVIDER:-groq}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+
+services:
+  # The CommerceRisk Postgres is an EXTERNAL datasource on the host at :5433,
+  # not managed by this compose. Containers reach it via host.docker.internal
+  # (see extra_hosts on the services that query it).
+
+  # ---- skill builder's own design-time database ----------------------------
+  # Dedicated Postgres for design-time state (documents, clauses, candidate
+  # rules, atoms, unresolved items). Separate from the tenant's runtime
+  # datasource (the external CommerceRisk Postgres on :5433) by design.
+  skill-builder-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: skillbuilder
+      POSTGRES_PASSWORD: skillbuilder
+      POSTGRES_DB: skillbuilder
+    volumes:
+      - skillbuilder_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skillbuilder"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---- api-server's own database (audit log) -------------------------------
+  # Dedicated Postgres so the api-server's drizzle-kit push owns the whole
+  # schema (it only manages rule_audit_log) and never touches skill-builder's
+  # tables. Kept separate from skill-builder-db by design.
+  api-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: prefront
+      POSTGRES_PASSWORD: prefront
+      POSTGRES_DB: prefront_audit
+    volumes:
+      - api_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefront -d prefront_audit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---- service 1: skill builder (docs -> rules) ----------------------------
+  skill-builder:
+    build: ./skill-builder
+    environment:
+      <<: *llm-env
+      # SQLAlchemy DSN for the design-time Postgres above (psycopg3 driver).
+      SKILLBUILDER_DB: postgresql+psycopg://skillbuilder:skillbuilder@skill-builder-db:5432/skillbuilder
+      SKILLBUILDER_REGISTRY: /data/skills
+      # Always run in debug: stage + per-clause LLM trace to the container logs.
+      # Override per-run with `SKILLBUILDER_LOG_LEVEL=INFO docker compose up`.
+      SKILLBUILDER_LOG_LEVEL: ${SKILLBUILDER_LOG_LEVEL:-DEBUG}
+      # Named (curated) domain packs overlay the DDL-derived schema pack: they
+      # supply roles/intents/aliases the schema can't. Set to 0 to ground from
+      # the DDL only.
+      SKILLBUILDER_NAMED_PACKS: ${SKILLBUILDER_NAMED_PACKS:-1}
+    volumes:
+      # Bind-mount the artifact registry to the host so generated skill files
+      # (skills/<id>/v<ver>/extracted_rules.yaml, per-run artifacts, …) are
+      # browsable directly on disk instead of living in a Docker named volume.
+      - ./skill-builder-data:/data
+    ports: ["8000:8000"]
+    depends_on:
+      skill-builder-db:
+        condition: service_healthy
+
+  # ---- service 2: semantic layer (rules + schema -> templates) -------------
+  # One-shot build job: compiles artifacts into the shared `artifacts` volume,
+  # then exits. The MCP server waits for it to finish.
+  semantic-layer:
+    build: ./semantic-layer
+    command:
+      - build
+      - --schema=/inputs/schema.sql
+      - --rules=/inputs/skills/cr_fin_001/v3.2
+      - --model-id=commercerisk_semantic_model
+      - --domain=commercerisk
+      - --datasource-id=commercerisk_postgres
+      - --out=/artifacts/commercerisk
+      - --provider=${LLM_PROVIDER:-groq}
+      # Application inputs (vocabulary), not Prefront code:
+      - --caller-scope=region=region_id
+      - --caller-scope=rep_id=rep_id
+      - --metric=available_credit=credit_limit - current_balance
+      - --metric=credit_utilization_pct=current_balance / credit_limit * 100
+    environment:
+      <<: *llm-env
+    volumes:
+      - artifacts:/artifacts
+      - ../commercerisk-demo/db/schema.sql:/inputs/schema.sql:ro
+      - ./skill-builder/skills:/inputs/skills:ro
+    restart: "no"
+
+  # ---- semantic-layer design-time API (Data Connector: schema introspection)
+  # Same image as the build job, but long-running: parses uploaded DDL and
+  # introspects live databases for the UI's Data Connector tab.
+  semantic-layer-api:
+    build: ./semantic-layer
+    command: ["api", "--host", "0.0.0.0", "--port", "8010"]
+    environment:
+      <<: *llm-env       # the /build endpoint runs the LLM semantic mapper
+      SEMANTICLAYER_DB: /data/semanticlayer.db   # persisted templates + approvals
+      SEMANTICLAYER_PUBLISH_PATH: /artifacts/commercerisk/query_templates.yaml
+      SEMANTICLAYER_POLICY_PUBLISH_PATH: /artifacts/commercerisk/policy.yaml
+    volumes:
+      - semanticlayer_data:/data
+      - artifacts:/artifacts          # publish writes the approved templates here
+    ports: ["8010:8010"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach the host's :5433 Postgres
+
+  # ---- service 3: semantic MCP server (templates -> live query tools) ------
+  semantic-mcp-server:
+    build: ./semantic-mcp-server
+    command:
+      - --templates=/artifacts/commercerisk/query_templates.yaml
+      - serve
+      - --http
+      - --host=0.0.0.0
+      - --port=8090
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://commercerisk:commercerisk@host.docker.internal:5433/commercerisk}
+      # Governance: enforce the published policy bundle as this caller identity.
+      # IDENTITY_QUERY is the DEPLOYMENT's mapping of an identity to caller
+      # attributes — it aliases the app schema onto the contract names
+      # (role/region); Prefront itself assumes no identity table.
+      POLICY_PATH: /artifacts/commercerisk/policy.yaml
+      ACT_AS: ${ACT_AS:-alice.chen@commercerisk.example}
+      IDENTITY_QUERY: >-
+        SELECT rep_id, name, region_id AS region, role
+        FROM sales_reps
+        WHERE email = :who OR CAST(rep_id AS TEXT) = :who
+      ENABLE_WRITES: ${ENABLE_WRITES:-0}
+      TRACE_PATH: /data/traces.jsonl
+    volumes:
+      - artifacts:/artifacts:ro
+      - mcp_data:/data                # decision traces
+    ports: ["8090:8090"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach the host's :5433 Postgres
+    depends_on:
+      semantic-layer:
+        condition: service_completed_successfully
+
+  # ---- api server (new UI companion: audit log + review websocket) ---------
+  # Node/Express service backing the new UI's persistent audit log
+  # (/api/audit) and collaborative-review presence websocket (/api/ws/review).
+  # Reuses the skill-builder design-time Postgres for its rule_audit_log table;
+  # drizzle-kit push (idempotent) creates the table on start.
+  api-server:
+    build:
+      context: ./prefront-ui
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://prefront:prefront@api-db:5432/prefront_audit
+      PORT: "8080"
+      NODE_ENV: production
+    ports: ["8080:8080"]
+    depends_on:
+      api-db:
+        condition: service_healthy
+
+  # ---- service 4: UI (new workflow-v1 front-end, nginx) --------------------
+  ui:
+    build:
+      context: ./prefront-ui
+      dockerfile: Dockerfile.ui
+    ports: ["5173:80"]
+    depends_on:
+      - skill-builder
+      - semantic-layer-api
+      - api-server
+
+volumes:
+  skillbuilder_db:
+  api_db:
+  semanticlayer_data:
+  mcp_data:
+  artifacts:
