@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -8,8 +8,13 @@ import ReactFlow, {
   useNodesState,
   useEdgesState,
 } from "reactflow";
+import dagre from "dagre";
+import { getPolicy } from "../api";
 
-// ── Stub data from SecureBank SQL + BRD ──────────────────────────────────────
+// ── Data Graph: live database relationships + clickable node detail ──────────
+// Nodes/edges come from the connected catalog (App's `schema.catalog`); applied
+// policies are layered — sensitivity markers + in-app Policy Studio rules, and
+// the authoritative bound policy bundle when one has been published.
 
 const CATEGORY_COLOR: Record<string, string> = {
   identity:    "#4f46e5",
@@ -17,26 +22,43 @@ const CATEGORY_COLOR: Record<string, string> = {
   transaction: "#059669",
   credit:      "#d97706",
   audit:       "#7c3aed",
+  _default:    "#64748b",
 };
+
+// Heuristic table category/icon from its name — the catalog carries no domain
+// category, so this is cosmetic only (engine stays domain-independent).
+function deriveKind(name: string): { category: string; icon: string } {
+  const n = (name || "").toLowerCase();
+  if (/audit|log|event|history/.test(n))                 return { category: "audit",       icon: "🔍" };
+  if (/transaction|payment|transfer|txn|ledger|order/.test(n)) return { category: "transaction", icon: "💸" };
+  if (/loan|credit|mortgage/.test(n))                    return { category: "credit",      icon: "📋" };
+  if (/user|customer|member|person|employee|principal/.test(n)) return { category: "identity",    icon: "👤" };
+  if (/account|wallet|balance|deposit|fund/.test(n))     return { category: "financial",   icon: "🏦" };
+  return { category: "_default", icon: "🗄" };
+}
 
 interface Column {
   name: string;
   type: string;
   pk?: boolean;
-  fk?: string;
+  fk?: string;          // target table (FK)
   sensitive?: boolean;
-  restriction?: string;
   gov?: boolean;
+  restriction?: string; // derived from applied policies touching this column
 }
 
-interface PolicyRule {
-  id: string;
-  title: string;
-  reqRef: string;
-  description: string;
-  severity: "high" | "medium" | "low";
-  roles?: string[];
-  columns?: string[];
+interface AppliedPolicy {
+  rule_key: string;
+  rule_type?: string;
+  decision?: string;            // block | mask | approval_required | allow | escalate
+  restricted_fields?: string[];
+  intents?: string[];
+  approver_role?: string;
+  message?: string;
+  roles?: string[];             // derived from caller.role conditions
+  status: string;               // approved | pending | rejected | published
+  source: "rule" | "bound";
+  columns: string[];            // columns on THIS table the rule touches
 }
 
 interface TableDef {
@@ -46,230 +68,229 @@ interface TableDef {
   icon: string;
   columns: Column[];
   tags: string[];
-  policies: string[];
-  rowCount: string;
+  policies: AppliedPolicy[];
 }
 
-const POLICY_RULES: Record<string, PolicyRule> = {
-  "P-SSN-VIEW": {
-    id: "P-SSN-VIEW",
-    title: "SSN restricted to Bank Manager",
-    reqRef: "FR-USER-1, FR-ACCT-3",
-    description: "The SSN field on the users table is visible only to users with the Bank Manager role. Bank Tellers and Account Holders receive a masked value.",
-    severity: "high",
-    roles: ["Bank Manager"],
-    columns: ["ssn"],
-  },
-  "P-CREDIT-VIEW": {
-    id: "P-CREDIT-VIEW",
-    title: "Credit score visible to Bank Staff only",
-    reqRef: "FR-USER-1",
-    description: "Credit score and annual income are restricted to Bank Teller and Bank Manager roles. Account Holders cannot access these fields.",
-    severity: "high",
-    roles: ["Bank Teller", "Bank Manager"],
-    columns: ["credit_score", "annual_income"],
-  },
-  "P-TXN-LIMIT-AH": {
-    id: "P-TXN-LIMIT-AH",
-    title: "Account Holder daily transfer limit: $5,000",
-    reqRef: "FR-TXN-2",
-    description: "Any single transfer or cumulative daily transfers by an Account Holder that reach or exceed $5,000 shall be rejected. This is a non-negotiable business rule.",
-    severity: "high",
-    roles: ["Account Holder"],
-    columns: ["amount"],
-  },
-  "P-TXN-APPROVAL": {
-    id: "P-TXN-APPROVAL",
-    title: "Transfers > $5,000 require Manager approval",
-    reqRef: "FR-TXN-3",
-    description: "Transfers exceeding $5,000 may only be initiated by a Bank Teller and require explicit Bank Manager approval before funds are moved.",
-    severity: "high",
-    roles: ["Bank Teller", "Bank Manager"],
-    columns: ["amount"],
-  },
-  "P-ACCT-MAKER-CHECKER": {
-    id: "P-ACCT-MAKER-CHECKER",
-    title: "Sensitive account fields require maker-checker",
-    reqRef: "FR-ACCT-3",
-    description: "Changes to interest_rate, credit_limit, overdraft_limit, and available_credit must go through a pending-change approval workflow. Bank Manager approval is required before changes take effect.",
-    severity: "high",
-    columns: ["interest_rate", "credit_limit", "overdraft_limit", "available_credit"],
-  },
-  "P-LOAN-LIMITS": {
-    id: "P-LOAN-LIMITS",
-    title: "Loan approval limits by role",
-    reqRef: "FR-LOAN-3",
-    description: "Bank Tellers may approve loans up to and including $50,000. Bank Managers may approve loans of any amount. Account Holders may not approve any loan.",
-    severity: "high",
-    roles: ["Bank Teller", "Bank Manager"],
-    columns: ["amount", "status"],
-  },
-  "P-LOAN-LIFECYCLE": {
-    id: "P-LOAN-LIFECYCLE",
-    title: "Loan status follows defined lifecycle",
-    reqRef: "FR-LOAN-5",
-    description: "Loan status transitions must follow: pending → offered → accepted/rejected → approved/declined → active → paid_off. No out-of-order transitions are permitted.",
-    severity: "medium",
-    columns: ["status"],
-  },
-  "P-AUDIT-EXPORT": {
-    id: "P-AUDIT-EXPORT",
-    title: "Audit log export restricted to Bank Manager",
-    reqRef: "FR-AUDIT-3",
-    description: "Bank Tellers may view and filter the audit log but cannot export it. Only Bank Managers may export audit log data.",
-    severity: "medium",
-    roles: ["Bank Manager"],
-  },
-  "P-AUDIT-DENY-LOG": {
-    id: "P-AUDIT-DENY-LOG",
-    title: "Every authorization decision must be logged",
-    reqRef: "FR-AUTHZ-4, FR-AUDIT-1",
-    description: "Every Allow or Deny decision from the Authorization Service must produce a structured audit_logs entry including principal, role, action, resource, decision, and risk level.",
-    severity: "medium",
-    columns: ["decision", "principal_id", "action"],
-  },
-  "P-ACCT-DELETE": {
-    id: "P-ACCT-DELETE",
-    title: "Account deletion restricted to Bank Manager",
-    reqRef: "FR-ACCT-4",
-    description: "Only Bank Managers may delete bank accounts. Bank Tellers and Account Holders are denied.",
-    severity: "medium",
-    roles: ["Bank Manager"],
-  },
+const DECISION_LABEL: Record<string, string> = {
+  block: "blocked", mask: "masked", approval_required: "approval",
+  escalate: "escalate", allow: "allow",
+};
+const DECISION_SEV: Record<string, "high" | "medium" | "low"> = {
+  block: "high", approval_required: "high", escalate: "high",
+  mask: "medium", allow: "low",
 };
 
-const TABLES: TableDef[] = [
-  {
-    id: "users",
-    label: "users",
-    category: "identity",
-    icon: "👤",
-    rowCount: "2.4K",
-    tags: ["PII", "Auth", "Governance"],
-    policies: ["P-SSN-VIEW", "P-CREDIT-VIEW"],
-    columns: [
-      { name: "id", type: "UUID", pk: true },
-      { name: "name", type: "varchar(100)" },
-      { name: "email", type: "varchar(150)", gov: true },
-      { name: "role", type: "varchar(50)", gov: true },
-      { name: "ssn", type: "varchar(11)", sensitive: true, restriction: "Bank Manager only" },
-      { name: "date_of_birth", type: "timestamp", sensitive: true },
-      { name: "credit_score", type: "integer", sensitive: true, restriction: "Bank Staff only" },
-      { name: "annual_income", type: "decimal", sensitive: true, restriction: "Bank Staff only" },
-      { name: "risk_level", type: "varchar(100)", gov: true },
-      { name: "status", type: "varchar(20)" },
-      { name: "identity_verified", type: "varchar(20)" },
-    ],
-  },
-  {
-    id: "accounts",
-    label: "accounts",
-    category: "financial",
-    icon: "🏦",
-    rowCount: "5.1K",
-    tags: ["Financial", "Maker-Checker", "Risk"],
-    policies: ["P-ACCT-MAKER-CHECKER", "P-ACCT-DELETE"],
-    columns: [
-      { name: "id", type: "UUID", pk: true },
-      { name: "user_id", type: "UUID", fk: "users" },
-      { name: "account_number", type: "varchar(20)", gov: true },
-      { name: "account_type", type: "varchar(50)" },
-      { name: "balance", type: "decimal", sensitive: true },
-      { name: "credit_limit", type: "decimal", sensitive: true, restriction: "Maker-checker required" },
-      { name: "interest_rate", type: "decimal", sensitive: true, restriction: "Maker-checker required" },
-      { name: "overdraft_limit", type: "decimal", restriction: "Maker-checker required" },
-      { name: "status", type: "varchar(20)" },
-      { name: "risk_rating", type: "varchar(20)", gov: true },
-      { name: "aml_status", type: "varchar(20)", gov: true },
-      { name: "kyc_status", type: "varchar(20)", gov: true },
-    ],
-  },
-  {
-    id: "transactions",
-    label: "transactions",
-    category: "transaction",
-    icon: "💸",
-    rowCount: "48K",
-    tags: ["Financial", "Limit-Enforced", "Approval"],
-    policies: ["P-TXN-LIMIT-AH", "P-TXN-APPROVAL"],
-    columns: [
-      { name: "id", type: "UUID", pk: true },
-      { name: "from_account_id", type: "UUID", fk: "accounts" },
-      { name: "to_account_id", type: "UUID", fk: "accounts" },
-      { name: "type", type: "varchar(50)", gov: true },
-      { name: "amount", type: "decimal", sensitive: true, restriction: "$5k limit (AH) / approval >$5k" },
-      { name: "description", type: "text" },
-      { name: "status", type: "varchar(20)" },
-      { name: "processed_by", type: "UUID", fk: "users" },
-    ],
-  },
-  {
-    id: "loans",
-    label: "loans",
-    category: "credit",
-    icon: "📋",
-    rowCount: "890",
-    tags: ["Credit", "Lifecycle", "Role-Gated"],
-    policies: ["P-LOAN-LIMITS", "P-LOAN-LIFECYCLE"],
-    columns: [
-      { name: "id", type: "UUID", pk: true },
-      { name: "user_id", type: "UUID", fk: "users" },
-      { name: "type", type: "varchar(50)" },
-      { name: "amount", type: "decimal", sensitive: true, restriction: "Teller ≤$50k · Manager unlimited" },
-      { name: "interest_rate", type: "decimal" },
-      { name: "term_months", type: "integer" },
-      { name: "monthly_payment", type: "decimal" },
-      { name: "remaining_balance", type: "decimal", sensitive: true },
-      { name: "status", type: "varchar(20)", gov: true },
-      { name: "approved_by", type: "UUID", fk: "users" },
-    ],
-  },
-  {
-    id: "audit_logs",
-    label: "audit_logs",
-    category: "audit",
-    icon: "🔍",
-    rowCount: "124K",
-    tags: ["Audit", "Compliance", "Immutable"],
-    policies: ["P-AUDIT-EXPORT", "P-AUDIT-DENY-LOG"],
-    columns: [
-      { name: "id", type: "UUID", pk: true },
-      { name: "principal_id", type: "UUID", fk: "users" },
-      { name: "principal_role", type: "varchar(50)", gov: true },
-      { name: "action", type: "varchar(100)", gov: true },
-      { name: "resource_type", type: "varchar(50)" },
-      { name: "resource_id", type: "varchar(100)" },
-      { name: "decision", type: "varchar(20)", gov: true },
-      { name: "risk_level", type: "varchar(20)", gov: true },
-      { name: "ip_address", type: "varchar(45)" },
-      { name: "processing_time_ms", type: "integer" },
-    ],
-  },
-];
+// ── Policy index: which rules touch which table (layered) ────────────────────
 
-const EDGES_DEF = [
-  { source: "accounts",     target: "users",    label: "user_id" },
-  { source: "transactions", target: "accounts", label: "from/to_account_id" },
-  { source: "transactions", target: "users",    label: "processed_by" },
-  { source: "loans",        target: "users",    label: "user_id" },
-  { source: "audit_logs",   target: "users",    label: "principal_id" },
-];
+function deriveRoles(conditions: any[]): string[] {
+  const out: string[] = [];
+  for (const c of conditions || []) {
+    if (typeof c?.field === "string" && c.field.toLowerCase().endsWith("role")) {
+      const v = c.value;
+      if (Array.isArray(v)) out.push(...v.map(String));
+      else if (v != null) out.push(String(v));
+    }
+  }
+  return Array.from(new Set(out));
+}
 
-// Manual positions for a clean layout
-const POSITIONS: Record<string, { x: number; y: number }> = {
-  users:        { x: 340, y: 160 },
-  accounts:     { x: 680, y: 20  },
-  transactions: { x: 680, y: 340 },
-  loans:        { x: 0,   y: 340 },
-  audit_logs:   { x: 0,   y: 20  },
-};
+/** Map each table -> applied policies, from in-app rules then the bound bundle. */
+function buildPolicyIndex(catalog: any, rules: any[], bound: any): Map<string, AppliedPolicy[]> {
+  const tables: any[] = catalog?.tables || [];
+  // column name (lower) -> set of table names that have it
+  const colToTables = new Map<string, Set<string>>();
+  for (const t of tables) {
+    for (const c of t.columns || []) {
+      const k = String(c.name).toLowerCase();
+      if (!colToTables.has(k)) colToTables.set(k, new Set());
+      colToTables.get(k)!.add(t.name);
+    }
+  }
+  const colSet = new Set(colToTables.keys());
+  // table -> rule_key -> AppliedPolicy
+  const byTable = new Map<string, Map<string, AppliedPolicy>>();
+  const put = (table: string, p: AppliedPolicy, override: boolean) => {
+    if (!byTable.has(table)) byTable.set(table, new Map());
+    const m = byTable.get(table)!;
+    const prev = m.get(p.rule_key);
+    if (prev && !override) {
+      prev.columns = Array.from(new Set([...prev.columns, ...p.columns]));
+    } else {
+      m.set(p.rule_key, { ...p, columns: Array.from(new Set(p.columns)) });
+    }
+  };
+
+  // Layer 1: in-app Policy Studio rules (approved + pending), name-matched.
+  for (const row of rules || []) {
+    const rule = row?.rule || {};
+    const key = rule.rule_key;
+    if (!key) continue;
+    const effect = rule.effect || {};
+    const fields = [
+      ...(effect.restricted_fields || []),
+      ...((rule.conditions || []).map((c: any) => c.field)),
+      ...((rule.conditions || []).map((c: any) => c.value)),
+    ].filter((f) => typeof f === "string" && colSet.has(f.toLowerCase()));
+    const touched = Array.from(new Set(fields.map((f: string) => f.toLowerCase())));
+    if (touched.length === 0) continue; // intent-level rule, no column anchor
+    const base: Omit<AppliedPolicy, "columns"> = {
+      rule_key: key,
+      rule_type: rule.rule_type,
+      decision: effect.decision,
+      restricted_fields: effect.restricted_fields,
+      intents: rule.applies_to_intents,
+      approver_role: effect.approver_role,
+      message: effect.message,
+      roles: deriveRoles(rule.conditions),
+      status: row.review_status || "pending",
+      source: "rule",
+    };
+    for (const col of touched) {
+      for (const table of colToTables.get(col) || []) {
+        const own = (catalog.tables.find((t: any) => t.name === table)?.columns || [])
+          .map((c: any) => String(c.name).toLowerCase());
+        if (own.includes(col)) put(table, { ...base, columns: [col] }, false);
+      }
+    }
+  }
+
+  // Layer 2: bound bundle — authoritative table.column bindings; overrides L1.
+  for (const br of bound?.rules || []) {
+    const key = br.rule_key;
+    if (!key) continue;
+    const effect = br.effect || {};
+    const byTbl = new Map<string, string[]>();
+    for (const b of Object.values<any>(br.bindings || {})) {
+      if (b?.source === "column" && typeof b.column === "string" && b.column.includes(".")) {
+        const [tbl, col] = b.column.split(".");
+        if (!byTbl.has(tbl)) byTbl.set(tbl, []);
+        byTbl.get(tbl)!.push(col);
+      }
+    }
+    const base: Omit<AppliedPolicy, "columns"> = {
+      rule_key: key,
+      rule_type: br.rule_type,
+      decision: effect.decision,
+      restricted_fields: effect.restricted_fields,
+      intents: br.intents,
+      message: effect.message,
+      roles: deriveRoles(br.conditions),
+      status: "published",
+      source: "bound",
+    };
+    for (const [tbl, cols] of byTbl) put(tbl, { ...base, columns: cols }, true);
+  }
+
+  const out = new Map<string, AppliedPolicy[]>();
+  for (const [t, m] of byTable) out.set(t, Array.from(m.values()));
+  return out;
+}
+
+// ── Catalog -> nodes/edges (dagre auto-layout, mirrors SchemaDiagram) ────────
+
+const NODE_W = 230;
+const HEADER_H = 42;
+const ROW_H = 22;
+
+function shortType(t: string) {
+  return String(t || "").replace(/character varying/i, "varchar").replace(/\(.*\)/, "").trim().slice(0, 10);
+}
+
+function buildFromCatalog(catalog: any, policyIndex: Map<string, AppliedPolicy[]>) {
+  const tables: any[] = catalog?.tables || [];
+  // table.col -> target table (FK)
+  const fkByCol: Record<string, string> = {};
+  for (const t of tables) {
+    for (const fk of t.foreign_keys || []) {
+      fkByCol[`${t.name}.${(fk.from_columns || [])[0]}`] = fk.to_table;
+    }
+  }
+
+  const defs: TableDef[] = tables.map((t: any) => {
+    const policies = policyIndex.get(t.name) || [];
+    // column -> short decision labels for the restriction hint
+    const restrByCol = new Map<string, Set<string>>();
+    for (const p of policies) {
+      for (const c of p.columns) {
+        if (!restrByCol.has(c)) restrByCol.set(c, new Set());
+        restrByCol.get(c)!.add(DECISION_LABEL[p.decision || ""] || p.decision || "policy");
+      }
+    }
+    const columns: Column[] = (t.columns || []).map((c: any) => {
+      const markers: string[] = c.markers || [];
+      const restr = restrByCol.get(String(c.name).toLowerCase());
+      return {
+        name: c.name,
+        type: c.type,
+        pk: !!c.is_primary_key,
+        fk: fkByCol[`${t.name}.${c.name}`] || undefined,
+        sensitive: markers.includes("SENSITIVE"),
+        gov: markers.includes("GOVERNED"),
+        restriction: restr && restr.size ? Array.from(restr).join(" · ") : undefined,
+      };
+    });
+    const hasSens = columns.some((c) => c.sensitive);
+    const hasGov = columns.some((c) => c.gov);
+    const tags = [hasSens ? "Sensitive" : null, hasGov ? "Governed" : null].filter(Boolean) as string[];
+    const { category, icon } = deriveKind(t.name);
+    return { id: t.name, label: t.name, category, icon, columns, tags, policies };
+  });
+
+  const nodes = defs.map((t) => ({
+    id: t.id,
+    type: "graphTable",
+    position: { x: 0, y: 0 },
+    data: { table: t },
+    selected: false,
+    __h: HEADER_H + Math.min(t.columns.length, 8) * ROW_H + 30,
+  }));
+
+  const seen = new Set<string>();
+  const edges: any[] = [];
+  for (const t of tables) {
+    for (const fk of t.foreign_keys || []) {
+      const fromCol = (fk.from_columns || [])[0];
+      const toCol = (fk.to_columns || [])[0];
+      const key = `${t.name}.${fromCol}->${fk.to_table}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({
+        id: key,
+        source: t.name,
+        target: fk.to_table,
+        label: `${fromCol} → ${toCol}`,
+        type: "smoothstep",
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "#6b7280" },
+        style: { stroke: "#9ca3af", strokeWidth: 1.5 },
+        labelStyle: { fill: "#6b7280", fontSize: 10 },
+        labelBgStyle: { fill: "#ffffff", fillOpacity: 0.85 },
+        labelBgPadding: [4, 3] as [number, number],
+        labelBgBorderRadius: 4,
+      });
+    }
+  }
+
+  // dagre layout (LR), same approach as SchemaDiagram.
+  const g = new (dagre as any).graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "LR", nodesep: 50, ranksep: 110, marginx: 24, marginy: 24 });
+  nodes.forEach((n: any) => g.setNode(n.id, { width: NODE_W, height: n.__h }));
+  edges.forEach((e: any) => g.setEdge(e.source, e.target));
+  dagre.layout(g);
+  nodes.forEach((n: any) => {
+    const p = g.node(n.id);
+    if (p) n.position = { x: p.x - NODE_W / 2, y: p.y - n.__h / 2 };
+  });
+
+  return { nodes, edges, defs };
+}
 
 // ── Graph node component ──────────────────────────────────────────────────────
 
 function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
   const t: TableDef = data.table;
-  const color = CATEGORY_COLOR[t.category];
-  const sensitiveCount = t.columns.filter(c => c.sensitive).length;
+  const color = CATEGORY_COLOR[t.category] || CATEGORY_COLOR._default;
+  const sensitiveCount = t.columns.filter((c) => c.sensitive).length;
   const policyCount = t.policies.length;
 
   return (
@@ -282,20 +303,18 @@ function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom}style={{ opacity: 0 }} />
 
-      {/* Header */}
       <div className="dg-node-head" style={{ background: color }}>
         <span className="dg-node-icon">{t.icon}</span>
         <span className="dg-node-title">{t.label}</span>
         <div className="dg-node-tags">
-          {t.tags.slice(0, 2).map(tag => (
+          {t.tags.slice(0, 2).map((tag) => (
             <span key={tag} className="dg-tag">{tag}</span>
           ))}
         </div>
       </div>
 
-      {/* Columns */}
       <div className="dg-node-cols">
-        {t.columns.slice(0, 8).map(col => (
+        {t.columns.slice(0, 8).map((col) => (
           <div key={col.name} className={`dg-col ${col.sensitive ? "sensitive" : ""} ${col.pk ? "pk" : ""}`}>
             <span className="dg-col-icon">
               {col.pk ? "🔑" : col.fk ? "↗" : col.sensitive ? "⚠" : col.gov ? "⚙" : "○"}
@@ -309,7 +328,6 @@ function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
         )}
       </div>
 
-      {/* Footer */}
       <div className="dg-node-foot">
         <span className="dg-stat" title="Applied policy rules">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -326,84 +344,48 @@ function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
             {sensitiveCount} sensitive
           </span>
         )}
-        <span className="dg-stat rows">~{t.rowCount} rows</span>
+        <span className="dg-stat rows">{t.columns.length} cols</span>
       </div>
     </div>
   );
 }
 
-function shortType(t: string) {
-  return String(t || "").replace(/character varying/i, "varchar").replace(/\(.*\)/, "").trim().slice(0, 10);
-}
-
 const NODE_TYPES = { graphTable: GraphTableNode };
-
-// ── Build initial nodes/edges ─────────────────────────────────────────────────
-
-function buildInitial() {
-  const nodes = TABLES.map(t => ({
-    id: t.id,
-    type: "graphTable",
-    position: POSITIONS[t.id],
-    data: { table: t },
-    selected: false,
-  }));
-
-  const edges = EDGES_DEF.map((e, i) => ({
-    id: `e${i}`,
-    source: e.source,
-    target: e.target,
-    label: e.label,
-    type: "smoothstep",
-    animated: false,
-    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "#6b7280" },
-    style: { stroke: "#9ca3af", strokeWidth: 1.5 },
-    labelStyle: { fill: "#6b7280", fontSize: 10 },
-    labelBgStyle: { fill: "#ffffff", fillOpacity: 0.85 },
-    labelBgPadding: [4, 3] as [number, number],
-    labelBgBorderRadius: 4,
-  }));
-
-  return { nodes, edges };
-}
 
 // ── Detail panel ──────────────────────────────────────────────────────────────
 
 function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void }) {
-  const color = CATEGORY_COLOR[table.category];
-  const sensitive = table.columns.filter(c => c.sensitive);
-  const fks = table.columns.filter(c => c.fk);
+  const color = CATEGORY_COLOR[table.category] || CATEGORY_COLOR._default;
+  const sensitive = table.columns.filter((c) => c.sensitive);
+  const fks = table.columns.filter((c) => c.fk);
 
   return (
     <div className="dg-detail">
       <div className="dg-detail-head" style={{ borderColor: color }}>
         <div>
           <div className="dg-detail-title" style={{ color }}>{table.icon} {table.label}</div>
-          <div className="dg-detail-sub">~{table.rowCount} rows · {table.columns.length} columns</div>
+          <div className="dg-detail-sub">{table.columns.length} columns · {table.policies.length} policies</div>
         </div>
         <button className="dg-detail-close" onClick={onClose}>×</button>
       </div>
 
-      {/* Tags */}
-      <div className="dg-detail-tags">
-        {table.tags.map(tag => (
-          <span key={tag} className="dg-detail-tag">{tag}</span>
-        ))}
-      </div>
+      {table.tags.length > 0 && (
+        <div className="dg-detail-tags">
+          {table.tags.map((tag) => (
+            <span key={tag} className="dg-detail-tag">{tag}</span>
+          ))}
+        </div>
+      )}
 
       {/* All columns */}
       <div className="dg-detail-section">
         <div className="dg-detail-section-title">Columns</div>
         <table className="dg-col-table">
           <thead>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Flags</th>
-            </tr>
+            <tr><th>Name</th><th>Type</th><th>Flags</th></tr>
           </thead>
           <tbody>
-            {table.columns.map(col => (
+            {table.columns.map((col) => (
               <tr key={col.name} className={col.sensitive ? "sensitive-row" : ""}>
                 <td className="dg-col-table-name">
                   {col.pk && <span className="dg-flag pk">PK</span>}
@@ -424,15 +406,15 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
         </table>
       </div>
 
-      {/* FK relationships */}
+      {/* Relationships (foreign keys) */}
       {fks.length > 0 && (
         <div className="dg-detail-section">
-          <div className="dg-detail-section-title">Foreign Keys</div>
-          {fks.map(col => (
+          <div className="dg-detail-section-title">Relationships</div>
+          {fks.map((col) => (
             <div key={col.name} className="dg-fk-row">
               <span className="dg-fk-col">{col.name}</span>
               <span className="dg-fk-arrow">→</span>
-              <span className="dg-fk-target">{col.fk}.id</span>
+              <span className="dg-fk-target">{col.fk}</span>
             </div>
           ))}
         </div>
@@ -444,7 +426,7 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
           <div className="dg-detail-section-title">
             <span style={{ color: "var(--red)" }}>⚠</span> Sensitive Columns ({sensitive.length})
           </div>
-          {sensitive.map(col => (
+          {sensitive.map((col) => (
             <div key={col.name} className="dg-sensitive-row">
               <span className="dg-sensitive-name">{col.name}</span>
               {col.restriction && <span className="dg-sensitive-note">{col.restriction}</span>}
@@ -461,20 +443,29 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
           </svg>
           Applied Policies ({table.policies.length})
         </div>
-        {table.policies.map(pid => {
-          const rule = POLICY_RULES[pid];
-          if (!rule) return null;
+        {table.policies.length === 0 && (
+          <div className="dg-policy-empty">No policy rules reference this table yet. Approve rules in Policy Studio.</div>
+        )}
+        {table.policies.map((p) => {
+          const sev = DECISION_SEV[p.decision || ""] || "low";
+          const pending = p.status !== "approved" && p.status !== "published";
           return (
-            <div key={pid} className={`dg-policy-card sev-${rule.severity}`}>
+            <div key={p.rule_key} className={`dg-policy-card sev-${sev}`} style={pending ? { opacity: 0.62, borderStyle: "dashed" } : undefined}>
               <div className="dg-policy-head">
-                <span className={`dg-policy-badge sev-${rule.severity}`}>{rule.severity.toUpperCase()}</span>
-                <span className="dg-policy-id">{rule.reqRef}</span>
+                <span className={`dg-policy-badge sev-${sev}`}>{(DECISION_LABEL[p.decision || ""] || p.decision || "rule").toUpperCase()}</span>
+                <span className="dg-policy-id">{p.status}{p.source === "bound" ? " · bound" : ""}</span>
               </div>
-              <div className="dg-policy-title">{rule.title}</div>
-              <div className="dg-policy-desc">{rule.description}</div>
-              {rule.roles && (
+              <div className="dg-policy-title">{p.rule_key}</div>
+              {p.message && <div className="dg-policy-desc">{p.message}</div>}
+              {p.restricted_fields && p.restricted_fields.length > 0 && (
+                <div className="dg-policy-desc">restricts: {p.restricted_fields.join(", ")}</div>
+              )}
+              {p.intents && p.intents.length > 0 && (
+                <div className="dg-policy-desc" style={{ fontSize: 11, opacity: 0.8 }}>intents: {p.intents.join(", ")}</div>
+              )}
+              {p.roles && p.roles.length > 0 && (
                 <div className="dg-policy-roles">
-                  {rule.roles.map(r => <span key={r} className="dg-role-chip">{r}</span>)}
+                  {p.roles.map((r) => <span key={r} className="dg-role-chip">{r}</span>)}
                 </div>
               )}
             </div>
@@ -487,40 +478,23 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
 
 // ── Stats bar ─────────────────────────────────────────────────────────────────
 
-function StatsBar() {
-  const totalTables = TABLES.length;
-  const totalCols = TABLES.reduce((s, t) => s + t.columns.length, 0);
-  const sensitiveCols = TABLES.reduce((s, t) => s + t.columns.filter(c => c.sensitive).length, 0);
-  const totalPolicies = Object.keys(POLICY_RULES).length;
+function StatsBar({ defs, datasourceId }: { defs: TableDef[]; datasourceId?: string }) {
+  const totalTables = defs.length;
+  const totalCols = defs.reduce((s, t) => s + t.columns.length, 0);
+  const sensitiveCols = defs.reduce((s, t) => s + t.columns.filter((c) => c.sensitive).length, 0);
+  const totalPolicies = new Set(defs.flatMap((t) => t.policies.map((p) => p.rule_key))).size;
 
   return (
     <div className="dg-stats-bar">
-      <div className="dg-stat-item">
-        <span className="dg-stat-value">{totalTables}</span>
-        <span className="dg-stat-label">Tables</span>
-      </div>
+      <div className="dg-stat-item"><span className="dg-stat-value">{totalTables}</span><span className="dg-stat-label">Tables</span></div>
       <div className="dg-stat-sep" />
-      <div className="dg-stat-item">
-        <span className="dg-stat-value">{totalCols}</span>
-        <span className="dg-stat-label">Columns</span>
-      </div>
+      <div className="dg-stat-item"><span className="dg-stat-value">{totalCols}</span><span className="dg-stat-label">Columns</span></div>
       <div className="dg-stat-sep" />
-      <div className="dg-stat-item">
-        <span className="dg-stat-value" style={{ color: "var(--red)" }}>{sensitiveCols}</span>
-        <span className="dg-stat-label">Sensitive</span>
-      </div>
+      <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--red)" }}>{sensitiveCols}</span><span className="dg-stat-label">Sensitive</span></div>
       <div className="dg-stat-sep" />
-      <div className="dg-stat-item">
-        <span className="dg-stat-value" style={{ color: "var(--blue)" }}>{totalPolicies}</span>
-        <span className="dg-stat-label">Policy Rules</span>
-      </div>
-      <div className="dg-stat-sep" />
-      <div className="dg-stat-item">
-        <span className="dg-stat-value" style={{ color: "var(--green)" }}>verified</span>
-        <span className="dg-stat-label">KYC status</span>
-      </div>
+      <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--blue)" }}>{totalPolicies}</span><span className="dg-stat-label">Policy Rules</span></div>
       <div style={{ flex: 1 }} />
-      <span className="dg-source-badge">SecureBank · BRD v2.0 · June 2026</span>
+      {datasourceId && <span className="dg-source-badge">{datasourceId}</span>}
     </div>
   );
 }
@@ -540,33 +514,86 @@ function Legend() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-const { nodes: INIT_NODES, edges: INIT_EDGES } = buildInitial();
+interface Props {
+  catalog?: any;
+  datasourceId?: string;
+  rules?: any[];
+}
 
-export default function DataGraph() {
-  const [nodes, , onNodesChange] = useNodesState(INIT_NODES);
-  const [edges, , onEdgesChange] = useEdgesState(INIT_EDGES);
+export default function DataGraph({ catalog, datasourceId, rules = [] }: Props) {
+  const [bound, setBound] = useState<any>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // Fetch the authoritative bound policy bundle for this datasource (best-effort).
+  useEffect(() => {
+    let live = true;
+    setBound(null);
+    if (!datasourceId) return;
+    getPolicy(datasourceId)
+      .then((r) => { if (live) setBound(r?.policy_bundle || null); })
+      .catch(() => { if (live) setBound(null); });
+    return () => { live = false; };
+  }, [datasourceId]);
+
+  const hasCatalog = !!(catalog && (catalog.tables?.length ?? 0) > 0);
+
+  const policyIndex = useMemo(
+    () => buildPolicyIndex(catalog, rules, bound),
+    [catalog, rules, bound]
+  );
+
+  const built = useMemo(
+    () => (hasCatalog ? buildFromCatalog(catalog, policyIndex) : { nodes: [], edges: [], defs: [] as TableDef[] }),
+    [catalog, policyIndex, hasCatalog]
+  );
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
+
+  useEffect(() => {
+    setNodes(built.nodes);
+    setEdges(built.edges);
+    setSelectedId((prev) => (prev && built.defs.some((t) => t.id === prev) ? prev : null));
+  }, [built, setNodes, setEdges]);
+
   const selectedTable = useMemo(
-    () => selectedId ? TABLES.find(t => t.id === selectedId) ?? null : null,
-    [selectedId]
+    () => (selectedId ? built.defs.find((t) => t.id === selectedId) ?? null : null),
+    [selectedId, built]
   );
 
   const onNodeClick = useCallback((_: any, node: any) => {
-    setSelectedId(prev => prev === node.id ? null : node.id);
+    setSelectedId((prev) => (prev === node.id ? null : node.id));
   }, []);
 
-  const styledNodes = useMemo(() =>
-    nodes.map(n => ({ ...n, selected: n.id === selectedId })),
+  const styledNodes = useMemo(
+    () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
     [nodes, selectedId]
   );
 
+  if (!hasCatalog) {
+    return (
+      <div className="dg-shell">
+        <div className="dg-empty-state">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" style={{ color: "var(--muted)", marginBottom: 14 }}>
+            <ellipse cx="12" cy="5" rx="9" ry="3"/>
+            <path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+            <path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/>
+          </svg>
+          <div style={{ fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6, fontSize: 15 }}>No datasource connected</div>
+          <div style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", maxWidth: 360, lineHeight: 1.5 }}>
+            Connect a datasource in the <strong>Data Connector</strong> tab to populate the graph with your
+            tables, relationships, and applied policies.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="dg-shell">
-      <StatsBar />
+      <StatsBar defs={built.defs} datasourceId={datasourceId} />
 
       <div className="dg-workspace">
-        {/* Graph canvas */}
         <div className="dg-canvas">
           <ReactFlow
             nodes={styledNodes}
@@ -587,11 +614,9 @@ export default function DataGraph() {
           <Legend />
         </div>
 
-        {/* Detail panel */}
-        {selectedTable && (
+        {selectedTable ? (
           <DetailPanel table={selectedTable} onClose={() => setSelectedId(null)} />
-        )}
-        {!selectedTable && (
+        ) : (
           <div className="dg-empty-detail">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: "var(--muted)", marginBottom: 10 }}>
               <rect x="3" y="3" width="7" height="7" rx="1"/>

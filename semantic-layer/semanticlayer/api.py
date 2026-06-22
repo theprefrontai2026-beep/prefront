@@ -564,6 +564,15 @@ def list_templates(semantic_model_id: Optional[str] = None):
     return {"query_templates": store().list_templates(semantic_model_id)}
 
 
+@app.get("/design/semantic/policy")
+def get_policy(datasource_id: Optional[str] = None):
+    """The published, bound policy bundle for a datasource (the authoritative
+    rule->column bindings the Data Graph reads). Empty {} if nothing is published
+    yet for this datasource."""
+    ds = datasource_id or "datasource"
+    return {"policy_bundle": _load_policy_bundle(_datasource_policy_path(ds))}
+
+
 @app.post("/design/semantic/templates/{template_id}/approve")
 def approve_template(template_id: str, body: ReviewBody = ReviewBody()):
     try:

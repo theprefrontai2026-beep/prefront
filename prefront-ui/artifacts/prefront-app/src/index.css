@@ -732,6 +732,24 @@ select { cursor: pointer; }
   gap: 0;
 }
 
+/* Empty state (no datasource connected) */
+.dg-empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 420px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+}
+
+/* "no policies reference this table" note in the detail panel */
+.dg-policy-empty {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  padding: 4px 0 2px;
+}
+
 /* Stats bar */
 .dg-stats-bar {
   display: flex;

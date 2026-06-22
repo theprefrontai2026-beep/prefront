@@ -239,6 +239,13 @@ export function listTemplates(semanticModelId?: string) {
   return fetch(`/design/semantic/templates${q}`).then(jsonOrThrow);
 }
 
+/** Fetch the published, bound policy bundle for a datasource (authoritative
+ *  rule->column bindings). Returns { policy_bundle: {} } if nothing published. */
+export function getPolicy(datasourceId?: string) {
+  const q = datasourceId ? `?datasource_id=${encodeURIComponent(datasourceId)}` : "";
+  return fetch(`/design/semantic/policy${q}`).then(jsonOrThrow);
+}
+
 export function approveTemplate(templateId: string) {
   return fetch(`/design/semantic/templates/${templateId}/approve`, { method: "POST" }).then(jsonOrThrow);
 }
