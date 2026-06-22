@@ -1,0 +1,133 @@
+# SecureBank — approved query templates (the only ways an agent may touch data).
+# Loaded by the Prefront runtime (semanticmcp). `:caller_*` placeholders are
+# injected from the trusted identity (never from the agent). Read templates scope
+# rows in SQL (ownership); precheck templates gather facts for the policy decision
+# and carry a declarative write_action executed only on an ALLOW (dry-run unless
+# ENABLE_WRITES=1).
+query_templates:
+
+  # B3 — an account holder sees ONLY their own accounts (ownership via SQL scope).
+  tmpl_view_accounts_v1:
+    intent_id: view_accounts
+    description: "List the caller's own bank accounts and their balances."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT account_id, account_type, balance, status
+      FROM accounts
+      WHERE user_id = :caller_user_id
+      ORDER BY account_id
+    parameters: []
+    required_caller_context: [user_id]
+    result_columns:
+      - {name: account_id, sensitivity: normal}
+      - {name: account_type, sensitivity: normal}
+      - {name: balance, sensitivity: normal}
+      - {name: status, sensitivity: normal}
+    status: published
+
+  # B4 — a specific account, scoped to the caller's own (cross-customer → 0 rows).
+  tmpl_view_account_v1:
+    intent_id: view_account
+    description: "Get one bank account's details (balance, status) by its numeric account_id."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT account_id, account_type, balance, status
+      FROM accounts
+      WHERE account_id = :account_id
+        AND user_id = :caller_user_id
+    parameters:
+      - {name: account_id, type: integer, required: true}
+    required_caller_context: [user_id]
+    result_columns:
+      - {name: balance, sensitivity: normal}
+    status: published
+
+  # B5 — a single user record by name; ssn masked unless the caller is a Bank Manager.
+  tmpl_view_user_v1:
+    intent_id: view_user
+    description: "Look up a customer by name (name_query). Returns their user record including ssn, role and status. Use this for any request about a named person's details or SSN."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT user_id, name, email, role, status, ssn
+      FROM users
+      WHERE name ILIKE :name_query
+      LIMIT 10
+    parameters:
+      - {name: name_query, type: string, required: true}
+    result_columns:
+      - {name: ssn, sensitivity: restricted}
+    status: published
+
+  # B6/B7 — the customer directory: staff-only (role rule), ssn masked, bounded.
+  tmpl_view_users_v1:
+    intent_id: view_users
+    description: "List the bank's customer directory (all account holders). Use for requests to list/enumerate/export customers."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT user_id, name, email, role, status, ssn
+      FROM users
+      WHERE role = 'Account Holder'
+      ORDER BY user_id
+      LIMIT 100
+    parameters: []
+    result_columns:
+      - {name: ssn, sensitivity: restricted}
+    status: published
+
+  # B8/B9/B10/B11 — a money transfer. The precheck reads the source account; the
+  # policy decides (suspended / insufficient / approval / ceiling) before any write.
+  tmpl_initiate_transfer_precheck_v1:
+    intent_id: initiate_transfer
+    description: "Move money: transfer an amount (dollars) from a source account_id to a counterparty_account."
+    kind: precheck
+    dialect: postgres
+    sql: |-
+      SELECT account_id, balance, status, user_id
+      FROM accounts
+      WHERE account_id = :account_id
+    parameters:
+      - {name: account_id, type: integer, required: true}
+      - {name: amount, type: number, required: true}
+      - {name: counterparty_account, type: integer, required: true}
+    decision_inputs:
+      - {name: balance, sensitivity: normal}
+      - {name: status, sensitivity: normal}
+      - {name: user_id, sensitivity: normal}
+    write_action:
+      table: transactions
+      kind: insert
+      params: [account_id, amount, counterparty_account]
+      defaults: {txn_type: transfer_out, memo: agent transfer}
+      autofill: {txn_id: next_int, created_at: current_date}
+    status: published
+
+  # B12 — a loan decision. The precheck reads the loan; only a Bank Manager may decide.
+  tmpl_decide_loan_precheck_v1:
+    intent_id: decide_loan
+    description: "Approve or reject a loan application by loan_id (decision = 'approved' or 'rejected')."
+    kind: precheck
+    dialect: postgres
+    sql: |-
+      SELECT loan_id, status, amount, user_id
+      FROM loans
+      WHERE loan_id = :loan_id
+    parameters:
+      - {name: loan_id, type: integer, required: true}
+      - {name: decision, type: string, required: true}
+    decision_inputs:
+      - {name: status, sensitivity: normal}
+    write_action:
+      table: loans
+      kind: update
+      params: [loan_id, decision]
+      key_columns: [loan_id]
+      column_map: {decision: status}
+    status: published

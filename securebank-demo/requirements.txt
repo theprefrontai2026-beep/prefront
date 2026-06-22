@@ -1,0 +1,3 @@
+# SecureBank demo harness deps. Phase 1 (baseline) needs only psycopg.
+# Phase 2 (governed) will add the MCP client / HTTP deps.
+psycopg[binary]>=3.1

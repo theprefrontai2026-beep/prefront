@@ -1,0 +1,109 @@
+# SecureBank — enforceable policy bundle (the rules the runtime evaluates).
+# Hand-authored for the demo (the same shape the skill-builder/semantic-layer
+# binder emits). Each rule gates one or more intents; conditions reference facts =
+# precheck row columns ∪ request args ∪ caller.* ; effects are block / mask /
+# approval_required. caller.* is only ever on the LEFT of a comparison (the
+# runtime's expression evaluator can't parse a dotted name on the right).
+policy_bundle:
+  version: "1"
+  domain: securebank
+  datasource_id: securebank
+  metrics: {}
+
+  intents:
+    view_accounts: {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}
+    view_account:  {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}
+    view_user:     {allowed_roles: [Bank Teller, Bank Manager]}
+    view_users:    {allowed_roles: [Bank Teller, Bank Manager]}
+    initiate_transfer: {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}
+    decide_loan:   {allowed_roles: [Bank Manager]}
+
+  rules:
+    # B6 — an account holder may not enumerate other customers (ROLE_NOT_PERMITTED).
+    - rule_key: view_users_account_holder_block
+      rule_type: restriction
+      intents: [view_users]
+      conditions:
+        - {field: caller.role, operator: "==", value: "Account Holder", value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "ROLE_NOT_PERMITTED: account holders cannot list other customers."
+      bindings:
+        caller.role: {source: caller, attribute: role}
+
+    # B5/B7 — ssn is a MANAGER_ONLY_FIELD: masked for everyone except a Bank Manager.
+    - rule_key: ssn_manager_only
+      rule_type: data_access
+      intents: [view_user, view_users]
+      conditions:
+        - {field: caller.role, operator: "!=", value: "Bank Manager", value_kind: literal, value_refs: []}
+      effect:
+        decision: mask
+        restricted_fields: [ssn]
+        message: "MANAGER_ONLY_FIELD: ssn is visible to Bank Managers only."
+      bindings:
+        caller.role: {source: caller, attribute: role}
+        ssn: {source: column, column: users.ssn}
+
+    # B10 — no money moves out of a suspended account.
+    - rule_key: transfer_from_suspended_account
+      rule_type: restriction
+      intents: [initiate_transfer]
+      conditions:
+        - {field: status, operator: "==", value: "suspended", value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "Source account is suspended — transfers are not permitted."
+      bindings:
+        status: {source: column, column: accounts.status}
+
+    # B11 — a transfer may not exceed the source account's available balance.
+    - rule_key: transfer_insufficient_funds
+      rule_type: restriction
+      intents: [initiate_transfer]
+      conditions:
+        - {field: amount, operator: ">", value: "balance", value_kind: expression, value_refs: [balance]}
+      effect:
+        decision: block
+        message: "Insufficient funds: amount exceeds the account balance."
+      bindings:
+        amount: {source: request_param}
+        balance: {source: column, column: accounts.balance}
+
+    # B8 — transfers above $10,000 (and within the ceiling) need Bank Manager approval.
+    - rule_key: transfer_requires_approval
+      rule_type: approval_threshold
+      intents: [initiate_transfer]
+      conditions:
+        - {field: amount, operator: ">", value: 10000, value_kind: literal, value_refs: []}
+        - {field: amount, operator: "<=", value: 250000, value_kind: literal, value_refs: []}
+      effect:
+        decision: approval_required
+        approver_role: "Bank Manager"
+        message: "Transfers above $10,000 require Bank Manager approval."
+      bindings:
+        amount: {source: request_param}
+
+    # B9 — a hard ceiling no role may exceed.
+    - rule_key: transfer_ceiling
+      rule_type: restriction
+      intents: [initiate_transfer]
+      conditions:
+        - {field: amount, operator: ">", value: 250000, value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "Transfer exceeds the $250,000 hard ceiling."
+      bindings:
+        amount: {source: request_param}
+
+    # B12 — only a Bank Manager may decide a loan.
+    - rule_key: loan_decision_manager_only
+      rule_type: restriction
+      intents: [decide_loan]
+      conditions:
+        - {field: caller.role, operator: "!=", value: "Bank Manager", value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "decide_loan is restricted to Bank Managers."
+      bindings:
+        caller.role: {source: caller, attribute: role}

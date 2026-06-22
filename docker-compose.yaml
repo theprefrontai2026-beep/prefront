@@ -201,9 +201,97 @@ services:
       - semantic-layer-api
       - api-server
 
+  # ==========================================================================
+  # SecureBank demo (moved in-repo under ./securebank-demo) — the active
+  # before/after harness. Its own Postgres + an ungoverned LLM-SQL service +
+  # ONE Prefront MCP server (curated artifacts) + the orchestrator the UI's
+  # Runtime tab points at (http://localhost:8095). Shares the engine's
+  # `artifacts` volume; the demo owns /artifacts/securebank-demo/ so UI
+  # publishing to /artifacts/<id>/ never clobbers it.
+  # ==========================================================================
+
+  # ---- SecureBank sample datasource (schema + seed auto-apply on first boot)
+  securebank-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: securebank
+      POSTGRES_PASSWORD: securebank
+      POSTGRES_DB: securebank
+    volumes:
+      - ./securebank-demo/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./securebank-demo/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+      - securebank_pgdata:/var/lib/postgresql/data
+    ports: ["5434:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U securebank -d securebank"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- the "before": a real LLM that writes + runs raw SQL (reads leak) ----
+  securebank-ungoverned:
+    build: ./securebank-demo
+    command: ["python", "ungoverned_server.py"]
+    environment:
+      <<: *llm-env                       # OPENAI_API_KEY (same key Prefront uses)
+      SECUREBANK_DSN: postgresql://securebank:securebank@securebank-db:5432/securebank
+      UNGOVERNED_MODEL: gpt-4o-mini
+      SECUREBANK_READONLY: "on"          # writes attempted but rolled back
+    ports: ["8096:8096"]
+    depends_on:
+      securebank-db: {condition: service_healthy}
+
+  # ---- seed the curated SecureBank artifacts the MCP serves ----
+  # Idempotent copy into the demo-owned /artifacts/securebank-demo/ dir.
+  securebank-seed:
+    image: alpine
+    command:
+      - sh
+      - -c
+      - mkdir -p /artifacts/securebank-demo &&
+        ([ -f /artifacts/securebank-demo/query_templates.yaml ] ||
+         cp /src/query_templates.yaml /src/policy.yaml /artifacts/securebank-demo/) &&
+        echo "securebank curated artifacts ready in /artifacts/securebank-demo"
+    volumes:
+      - artifacts:/artifacts
+      - ./securebank-demo/policy:/src:ro
+    restart: "no"
+
+  # ---- Prefront, exposed as ONE MCP server (the single endpoint the LLM uses)
+  # Same engine image as semantic-mcp-server, but serving the demo's curated
+  # artifacts against the SecureBank DB; identity resolved per-connection.
+  securebank-mcp:
+    build: ./semantic-mcp-server
+    command: ["--templates=/artifacts/securebank-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
+    environment:
+      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
+      DATABASE_URL: postgresql://securebank:securebank@securebank-db:5432/securebank
+      POLICY_PATH: /artifacts/securebank-demo/policy.yaml
+    volumes:
+      - artifacts:/artifacts:ro          # shared with the engine; read-only here
+    ports: ["8100:8090"]                 # host 8100 (engine MCP owns 8090)
+    depends_on:
+      securebank-db: {condition: service_healthy}
+      securebank-seed: {condition: service_completed_successfully}
+
+  # ---- the "after" orchestrator: gpt-4o-mini as an MCP CLIENT of the server
+  securebank-orchestrator:
+    build: ./securebank-demo
+    command: ["python", "demo_server.py"]
+    environment:
+      <<: *llm-env                       # OPENAI_API_KEY
+      GOVERNED_MODEL: gpt-4o-mini
+      UNGOVERNED_URL: http://securebank-ungoverned:8096/run
+      GOVERNED_MCP_URL: http://securebank-mcp:8090/sse
+    ports: ["8095:8095"]
+    depends_on:
+      securebank-ungoverned: {condition: service_started}
+      securebank-mcp: {condition: service_started}
+
 volumes:
   skillbuilder_db:
   api_db:
   semanticlayer_data:
   mcp_data:
   artifacts:
+  securebank_pgdata:
