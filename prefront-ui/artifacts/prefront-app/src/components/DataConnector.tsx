@@ -15,7 +15,7 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
   const [mode, setMode] = useState<"dsn" | "ddl" | "catalog">("dsn");
   const [dsn, setDsn] = useState("");
   const [dbSchema, setDbSchema] = useState("public");
-  const [datasourceId, setDatasourceId] = useState("ds_primary");
+  const [datasourceId, setDatasourceId] = useState("securebank");
   const [ddl, setDdl] = useState("");
   const [ddlFileName, setDdlFileName] = useState("");
   const [catalogJson, setCatalogJson] = useState("");

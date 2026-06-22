@@ -21,7 +21,6 @@ const TABS = [
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map" },
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles" },
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules" },
-  { id: "semantic", label: "Semantic Layer",  sub: "Build governed interfaces" },
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned" },
 ];
 
@@ -97,7 +96,7 @@ function IconSettings() {
   );
 }
 
-const TAB_ICONS = [IconDatabase, IconGraph, IconBusiness, IconShield, IconLayers, IconDiff];
+const TAB_ICONS = [IconDatabase, IconGraph, IconBusiness, IconShield, IconDiff];
 
 const PAGE_META: Record<string, { title: string; desc: string }> = {
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
