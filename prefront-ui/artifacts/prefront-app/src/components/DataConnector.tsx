@@ -5,12 +5,13 @@ import SchemaDiagram from "./SchemaDiagram";
 interface Props {
   active: boolean;
   onSchema: (s: any) => void;
+  onDisconnect: () => void;
   restored: any;
 }
 
 const DSN_PLACEHOLDER = "postgresql://user:pass@host:5432/db";
 
-export default function DataConnector({ onSchema, restored }: Props) {
+export default function DataConnector({ onSchema, onDisconnect, restored }: Props) {
   const [mode, setMode] = useState<"dsn" | "ddl" | "catalog">("dsn");
   const [dsn, setDsn] = useState("");
   const [dbSchema, setDbSchema] = useState("public");
@@ -25,6 +26,14 @@ export default function DataConnector({ onSchema, restored }: Props) {
   const [resultId, setResultId] = useState<string>(restored?.datasourceId || "");
   const [dragOver, setDragOver] = useState(false);
   const sqlInputRef = useRef<HTMLInputElement>(null);
+
+  function handleDisconnect() {
+    setCatalog(null);
+    setResultId("");
+    setStatus("");
+    setError("");
+    onDisconnect();
+  }
 
   function readSqlFile(file: File) {
     if (!file.name.match(/\.(sql|ddl|txt)$/i)) {
@@ -214,7 +223,12 @@ export default function DataConnector({ onSchema, restored }: Props) {
 
       {catalog && (
         <div className="pf-panel">
-          <h2>Schema — <code style={{ fontSize: 15, fontWeight: 500 }}>{resultId}</code></h2>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <h2 style={{ margin: 0 }}>Schema — <code style={{ fontSize: 15, fontWeight: 500 }}>{resultId}</code></h2>
+            <button className="pf-btn" onClick={handleDisconnect} title="Clear the connected datasource (browser-only state)">
+              Disconnect
+            </button>
+          </div>
           <div className="pf-readiness" style={{ marginBottom: 16 }}>
             <span className="pf-ready-item ok">{catalog.tables?.length ?? 0} tables</span>
             {(catalog.tables || []).flatMap((t: any) => t.columns || []).filter((c: any) => c.markers?.includes("SENSITIVE")).length > 0 && (

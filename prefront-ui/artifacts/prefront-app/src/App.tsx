@@ -170,6 +170,15 @@ export default function App() {
     }
   }
 
+  function onDisconnect() {
+    setSchema(null);
+    setIntents("");
+    try {
+      localStorage.removeItem(SCHEMA_KEY);
+      localStorage.removeItem(INTENTS_KEY);
+    } catch { /* ignore */ }
+  }
+
   useEffect(() => {
     try { localStorage.setItem(INTENTS_KEY, intents); } catch { /* quota */ }
   }, [intents]);
@@ -258,7 +267,7 @@ export default function App() {
         {/* Tab bodies */}
         <div className="pf-body">
           <div className={tab === "data" ? "" : "tab-hidden"}>
-            <DataConnector active={tab === "data"} onSchema={onSchema} restored={schema} />
+            <DataConnector active={tab === "data"} onSchema={onSchema} onDisconnect={onDisconnect} restored={schema} />
           </div>
           {graphMounted && (
             <div className={tab === "graph" ? "" : "tab-hidden"}>

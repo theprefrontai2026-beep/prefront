@@ -7,6 +7,11 @@
 #     the demo baselines (securebank, commercerisk) unless WIPE_ALL=1.
 # The datasource databases (securebank / commercerisk Postgres) are NOT touched.
 #
+# NOTE: the UI's "connected datasource" is browser-only state (localStorage keys
+# prefront.schema / prefront.intents) — there is no server record to clear, so
+# this script cannot reset it. The closing note prints the console one-liner to
+# wipe it in the browser.
+#
 # Usage:
 #   scripts/reset.sh            # shows what will be wiped, then prompts
 #   scripts/reset.sh -y         # skip the prompt (also: FORCE=1 scripts/reset.sh)
@@ -131,5 +136,13 @@ if [ "$SL_UP" = "1" ] && [ "${WIPE_ALL:-0}" = "1" ]; then
   echo "note: securebank artifacts were removed (WIPE_ALL=1) — re-seed with:"
   echo "      (cd ../securebank-demo && docker compose up -d seed-artifacts mcp)"
 fi
-echo "note: the UI persists the connected schema in the browser (localStorage) —"
-echo "      clear it there or reconnect for a fully clean UI."
+echo
+echo "note: the connected-datasource state is NOT stored server-side — the UI keeps"
+echo "      it only in the browser's localStorage, so this script cannot clear it."
+echo "      To wipe it, open the UI's browser devtools Console and run:"
+echo
+echo "          localStorage.removeItem('prefront.schema');"
+echo "          localStorage.removeItem('prefront.intents');"
+echo "          location.reload();"
+echo
+echo "      (or just reconnect a datasource to overwrite it)."
