@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { introspect, parseSchema, resetDatasources } from "../api";
-import SchemaDiagram from "./SchemaDiagram";
 
 interface Props {
   active: boolean;
@@ -242,7 +241,7 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
       {catalog && (
         <div className="pf-panel">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <h2 style={{ margin: 0 }}>Schema — <code style={{ fontSize: 15, fontWeight: 500 }}>{resultId}</code></h2>
+            <h2 style={{ margin: 0 }}>Connected — <code style={{ fontSize: 15, fontWeight: 500 }}>{resultId}</code></h2>
             <button className="pf-btn reject" onClick={handleDisconnect} disabled={busy}
               title="Forget everything: clear this datasource + its query templates on the server, and the browser cache">
               {busy ? "Disconnecting…" : "Disconnect"}
@@ -267,7 +266,9 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
               </div>
             </div>
           )}
-          <SchemaDiagram catalog={catalog} />
+          <p className="pf-hint" style={{ marginBottom: 0 }}>
+            View the full schema — tables, relationships, sensitive columns, and applied policies — in the <strong>Data Graph</strong> tab.
+          </p>
         </div>
       )}
     </main>

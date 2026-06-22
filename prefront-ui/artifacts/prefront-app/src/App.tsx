@@ -16,12 +16,16 @@ function loadJSON(key: string) {
   catch { return null; }
 }
 
+// Order reflects the pipeline: connect → model the domain → author policy →
+// see the governed schema map → compare at runtime. Data Graph follows Policy
+// Studio because the graph now surfaces applied policies. Icons live on each
+// tab so order changes can't desync the icon row.
 const TABS = [
-  { id: "data",     label: "Data Connector",  sub: "Connect datasource" },
-  { id: "graph",    label: "Data Graph",      sub: "Schema & policy map" },
-  { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles" },
-  { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules" },
-  { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned" },
+  { id: "data",     label: "Data Connector",  sub: "Connect datasource",       icon: IconDatabase },
+  { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
+  { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
+  { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
+  { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconDiff },
 ];
 
 /* ── Sidebar icons ── */
@@ -95,8 +99,6 @@ function IconSettings() {
     </svg>
   );
 }
-
-const TAB_ICONS = [IconDatabase, IconGraph, IconBusiness, IconShield, IconDiff];
 
 const PAGE_META: Record<string, { title: string; desc: string }> = {
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
@@ -207,8 +209,8 @@ export default function App() {
         </div>
 
         {/* Nav icons */}
-        {TABS.map((t, i) => {
-          const Icon = TAB_ICONS[i];
+        {TABS.map((t) => {
+          const Icon = t.icon;
           const isActive = tab === t.id;
           const isDone = completedTabs.has(t.id) && !isActive;
           return (
