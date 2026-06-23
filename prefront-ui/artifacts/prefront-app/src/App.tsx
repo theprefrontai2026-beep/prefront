@@ -198,14 +198,11 @@ export default function App() {
     <div className="pf-shell">
       {/* ── Left icon sidebar ── */}
       <aside className="pf-sidebar">
-        {/* Logo */}
-        <div className="pf-sidebar-logo">
-          <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-            <rect x="2" y="2" width="6" height="6" rx="1.5" fill="white"/>
-            <rect x="10" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
-            <rect x="2" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
-            <rect x="10" y="10" width="6" height="6" rx="1.5" fill="white"/>
-          </svg>
+        {/* Logo — "pf" wordmark (p solid, f outline) */}
+        <div className="pf-sidebar-logo" title="Prefront">
+          <span className="pf-logo-wordmark">
+            <span className="pf-logo-p">p</span><span className="pf-logo-f">f</span>
+          </span>
         </div>
 
         {/* Nav icons */}

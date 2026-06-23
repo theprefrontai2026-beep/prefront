@@ -128,12 +128,25 @@
 .pf-sidebar-logo {
   width: 36px; height: 36px;
   background: var(--blue);
-  border-radius: 10px;
+  border-radius: 11px;
   display: grid; place-items: center;
   margin-bottom: 20px;
   flex-shrink: 0;
 }
 .pf-sidebar-logo svg { color: #fff; }
+/* "pf" wordmark: p solid, f outline — white on the brand tile */
+.pf-logo-wordmark {
+  display: flex; align-items: baseline;
+  font-family: var(--app-font-sans);
+  font-weight: 600; font-size: 21px; line-height: 1;
+  letter-spacing: -0.04em;
+}
+.pf-logo-p { color: #fff; }
+.pf-logo-f {
+  color: transparent;
+  -webkit-text-stroke: 1.1px #fff;
+  text-stroke: 1.1px #fff;
+}
 .pf-sidebar-divider {
   width: 32px; height: 1px;
   background: rgba(255,255,255,0.1);
