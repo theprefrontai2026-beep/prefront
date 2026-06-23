@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import Dashboard from "./components/Dashboard";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
 import DataGraph from "./components/DataGraph";
@@ -21,6 +22,7 @@ function loadJSON(key: string) {
 // Studio because the graph now surfaces applied policies. Icons live on each
 // tab so order changes can't desync the icon row.
 const TABS = [
+  { id: "dashboard",label: "Overview",        sub: "Governance at a glance",   icon: IconHome },
   { id: "data",     label: "Data Connector",  sub: "Connect datasource",       icon: IconDatabase },
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
@@ -29,6 +31,14 @@ const TABS = [
 ];
 
 /* ── Sidebar icons ── */
+function IconHome() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12l9-8 9 8"/>
+      <path d="M5 10v10h5v-6h4v6h5V10"/>
+    </svg>
+  );
+}
 function IconDatabase() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -101,6 +111,7 @@ function IconSettings() {
 }
 
 const PAGE_META: Record<string, { title: string; desc: string }> = {
+  dashboard:{ title: "Overview",          desc: "Decision intelligence — can I trust what my agents are doing right now?" },
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
   graph:    { title: "Data Graph",       desc: "Interactive map of tables, relationships, sensitive columns, and applied governance policies." },
   bizgraph: { title: "Business Graph",   desc: "Domain model showing business entities, processes, roles, and applied governance policies." },
@@ -122,7 +133,7 @@ function ReviewerDot({ name, color, focused }: { name: string; color: string; fo
 }
 
 export default function App() {
-  const [tab, setTab] = useState("data");
+  const [tab, setTab] = useState("dashboard");
   const [graphMounted, setGraphMounted] = useState(false);
   const [bizGraphMounted, setBizGraphMounted] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
@@ -267,6 +278,9 @@ export default function App() {
 
         {/* Tab bodies */}
         <div className="pf-body">
+          <div className={tab === "dashboard" ? "" : "tab-hidden"}>
+            <Dashboard />
+          </div>
           <div className={tab === "data" ? "" : "tab-hidden"}>
             <DataConnector active={tab === "data"} onSchema={onSchema} onDisconnect={onDisconnect} restored={schema} />
           </div>
