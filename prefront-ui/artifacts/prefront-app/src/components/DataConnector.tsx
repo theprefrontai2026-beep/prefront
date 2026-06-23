@@ -8,8 +8,12 @@ function ConnectProgress({ p }: { p: Progress }) {
   const schemaDone = p.phase === "pii" || p.phase === "done";
   const piiActive = p.phase === "pii";
   const piiDone = p.phase === "done";
+  const pct = p.phase === "schema" ? 40 : p.phase === "pii" ? 80 : 100;
   return (
     <div className="pf-progress">
+      <div className="pf-progressbar">
+        <div className={`pf-progressbar-fill ${piiDone ? "done" : ""}`} style={{ width: `${pct}%` }} />
+      </div>
       <div className={`pf-progress-step ${schemaDone ? "done" : "active"}`}>
         <span className="pf-progress-icon">{schemaDone ? "✓" : <span className="pf-spin" />}</span>
         <span>{schemaDone ? `Schema read — ${p.tables} table${p.tables !== 1 ? "s" : ""}` : "Reading schema…"}</span>
@@ -18,8 +22,8 @@ function ConnectProgress({ p }: { p: Progress }) {
         <span className="pf-progress-icon">{piiDone ? "✓" : piiActive ? <span className="pf-spin" /> : "○"}</span>
         <span>
           {piiDone
-            ? `PII scan complete — ${p.pii} likely-PII field${p.pii !== 1 ? "s" : ""}`
-            : piiActive ? "Scanning fields for PII (Presidio)…" : "Detect PII"}
+            ? `PII scan complete — ${p.pii} PII field${p.pii !== 1 ? "s" : ""}`
+            : piiActive ? "Scanning fields for PII (Presidio)…" : "Scan for PII"}
         </span>
       </div>
     </div>
@@ -297,7 +301,7 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
               <span className="pf-ready-item ok">sensitive columns detected</span>
             )}
             {pii && Object.keys(pii).length > 0 && (
-              <span className="pf-ready-item ok">{Object.keys(pii).length} likely-PII fields</span>
+              <span className="pf-ready-item ok">{Object.keys(pii).length} PII fields</span>
             )}
             {catalog.suggestedIntents?.length > 0 && (
               <span className="pf-ready-item ok">{catalog.suggestedIntents.length} intent suggestions</span>

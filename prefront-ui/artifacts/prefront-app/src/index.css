@@ -469,10 +469,31 @@ select { cursor: pointer; }
 
 /* Connect → PII-scan progress indicator */
 .pf-progress {
-  margin-top: 14px; padding: 12px 14px;
+  margin-top: 14px; padding: 14px;
   background: var(--surface-alt); border: 1px solid var(--line); border-radius: var(--radius);
-  display: flex; flex-direction: column; gap: 8px; max-width: 460px;
+  display: flex; flex-direction: column; gap: 9px; max-width: 460px;
 }
+.pf-progressbar {
+  height: 7px; border-radius: 999px; background: var(--line);
+  overflow: hidden; position: relative;
+}
+.pf-progressbar-fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--blue), #6366f1);
+  transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease;
+  position: relative;
+}
+/* moving sheen while in-flight */
+.pf-progressbar-fill:not(.done)::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  transform: translateX(-100%);
+  animation: pf-sheen 1.1s ease-in-out infinite;
+}
+.pf-progressbar-fill.done {
+  background: linear-gradient(90deg, var(--green), #34d399);
+}
+@keyframes pf-sheen { to { transform: translateX(100%); } }
 .pf-progress-step { display: flex; align-items: center; gap: 9px; font-size: 13px; }
 .pf-progress-step.pending { color: var(--muted); }
 .pf-progress-step.active  { color: var(--ink-soft); }

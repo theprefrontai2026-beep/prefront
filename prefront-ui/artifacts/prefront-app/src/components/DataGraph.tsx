@@ -325,7 +325,7 @@ function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
               {col.pk ? "🔑" : col.fk ? "↗" : col.sensitive ? "⚠" : col.gov ? "⚙" : "○"}
             </span>
             <span className="dg-col-name">{col.name}</span>
-            {col.pii && <span className="dg-col-pii" title={`Likely PII: ${col.pii.label}`}>PII</span>}
+            {col.pii && <span className="dg-col-pii" title={`PII: ${col.pii.label}`}>PII</span>}
             <span className="dg-col-type">{shortType(col.type)}</span>
           </div>
         ))}
@@ -520,7 +520,7 @@ function StatsBar({ defs, datasourceId, piiScanned }:
       <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--blue)" }}>{totalPolicies}</span><span className="dg-stat-label">Policy Rules</span></div>
       {piiScanned && (<>
         <div className="dg-stat-sep" />
-        <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--amber)" }}>{piiCols}</span><span className="dg-stat-label">Likely PII</span></div>
+        <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--amber)" }}>{piiCols}</span><span className="dg-stat-label">PII</span></div>
       </>)}
       <div style={{ flex: 1 }} />
       {datasourceId && <span className="dg-source-badge">{datasourceId}</span>}
