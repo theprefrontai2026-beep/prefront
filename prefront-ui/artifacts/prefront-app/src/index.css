@@ -467,6 +467,27 @@ select { cursor: pointer; }
 .pf-error { color: var(--red); font-size: 13px; margin: 12px 0 0; }
 .pf-hint { color: var(--muted); font-size: 13px; margin: 8px 0; line-height: 1.5; }
 
+/* Connect → PII-scan progress indicator */
+.pf-progress {
+  margin-top: 14px; padding: 12px 14px;
+  background: var(--surface-alt); border: 1px solid var(--line); border-radius: var(--radius);
+  display: flex; flex-direction: column; gap: 8px; max-width: 460px;
+}
+.pf-progress-step { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.pf-progress-step.pending { color: var(--muted); }
+.pf-progress-step.active  { color: var(--ink-soft); }
+.pf-progress-step.done    { color: var(--green); }
+.pf-progress-icon {
+  width: 16px; height: 16px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 700;
+}
+.pf-spin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--blue);
+  animation: pf-spin 0.7s linear infinite;
+}
+@keyframes pf-spin { to { transform: rotate(360deg); } }
+
 /* ── Readiness checks ─────────────────────────────────────────────────────── */
 .pf-readiness { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 20px; }
 .pf-ready-item {

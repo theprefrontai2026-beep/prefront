@@ -275,7 +275,7 @@ export default function App() {
           </div>
           {graphMounted && (
             <div className={tab === "graph" ? "" : "tab-hidden"}>
-              <DataGraph catalog={schema?.catalog} datasourceId={schema?.datasourceId} rules={rules} />
+              <DataGraph catalog={schema?.catalog} datasourceId={schema?.datasourceId} rules={rules} pii={schema?.pii} />
             </div>
           )}
           {bizGraphMounted && (

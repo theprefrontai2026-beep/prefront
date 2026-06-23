@@ -1,5 +1,30 @@
 import { useRef, useState } from "react";
-import { introspect, parseSchema, resetDatasources } from "../api";
+import { introspect, parseSchema, resetDatasources, analyzePii } from "../api";
+
+type Progress = { phase: "schema" | "pii" | "done"; tables: number; pii: number };
+
+// Live progress for the connect → PII-scan pipeline.
+function ConnectProgress({ p }: { p: Progress }) {
+  const schemaDone = p.phase === "pii" || p.phase === "done";
+  const piiActive = p.phase === "pii";
+  const piiDone = p.phase === "done";
+  return (
+    <div className="pf-progress">
+      <div className={`pf-progress-step ${schemaDone ? "done" : "active"}`}>
+        <span className="pf-progress-icon">{schemaDone ? "✓" : <span className="pf-spin" />}</span>
+        <span>{schemaDone ? `Schema read — ${p.tables} table${p.tables !== 1 ? "s" : ""}` : "Reading schema…"}</span>
+      </div>
+      <div className={`pf-progress-step ${piiDone ? "done" : piiActive ? "active" : "pending"}`}>
+        <span className="pf-progress-icon">{piiDone ? "✓" : piiActive ? <span className="pf-spin" /> : "○"}</span>
+        <span>
+          {piiDone
+            ? `PII scan complete — ${p.pii} likely-PII field${p.pii !== 1 ? "s" : ""}`
+            : piiActive ? "Scanning fields for PII (Presidio)…" : "Detect PII"}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 interface Props {
   active: boolean;
@@ -23,6 +48,8 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
   const [busy, setBusy] = useState(false);
   const [catalog, setCatalog] = useState<any>(restored?.catalog || null);
   const [resultId, setResultId] = useState<string>(restored?.datasourceId || "");
+  const [pii, setPii] = useState<Record<string, { label: string; score: number }> | null>(restored?.pii || null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const sqlInputRef = useRef<HTMLInputElement>(null);
 
@@ -39,6 +66,8 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
       const n = (r?.cleared?.datasources ?? 0) + (r?.cleared?.query_templates ?? 0);
       setCatalog(null);
       setResultId("");
+      setPii(null);
+      setProgress(null);
       onDisconnect();
       setStatus(`Disconnected — forgot ${n} server record${n !== 1 ? "s" : ""}; browser cache cleared`);
     } catch (e: any) {
@@ -81,15 +110,14 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
 
   async function handleConnect() {
     setError(""); setStatus(""); setBusy(true);
+    setProgress({ phase: "schema", tables: 0, pii: 0 });
     try {
       let result: any;
       if (mode === "ddl") {
         if (!ddl.trim()) throw new Error("Upload a .sql file or paste CREATE TABLE statements first");
-        setStatus("Parsing DDL…");
         result = await parseSchema(ddl.trim(), datasourceId);
       } else if (mode === "dsn") {
         if (!dsn.trim()) throw new Error("Enter a connection string");
-        setStatus("Introspecting schema…");
         result = await introspect(dsn.trim(), { datasourceId, schema: dbSchema || undefined });
       } else {
         if (!catalogJson.trim()) throw new Error("Paste catalog JSON");
@@ -100,12 +128,26 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
       const dsId = result.datasource_id || datasourceId;
       const tbl = cat.tables?.length ?? 0;
       const intents = cat.suggestedIntents || [];
+
+      // Auto-scan for PII as soon as the schema is in — no manual step.
+      setProgress({ phase: "pii", tables: tbl, pii: 0 });
+      const piiMap: Record<string, { label: string; score: number }> = {};
+      try {
+        const fields = (cat.tables || []).flatMap((t: any) =>
+          (t.columns || []).map((c: any) => ({ table: t.name, column: c.name, type: c.type })));
+        const r = await analyzePii(fields);
+        for (const x of r?.results || []) piiMap[`${x.table}.${x.column}`] = { label: x.label, score: x.score };
+      } catch { /* PII is best-effort — never block a connection on it */ }
+      const piiCount = Object.keys(piiMap).length;
+
       setCatalog(cat);
       setResultId(dsId);
-      onSchema({ catalog: cat, datasourceId: dsId, suggestedIntents: intents });
-      setStatus(`Connected — ${tbl} table${tbl !== 1 ? "s" : ""} found`);
+      setPii(piiMap);
+      onSchema({ catalog: cat, datasourceId: dsId, suggestedIntents: intents, pii: piiMap });
+      setProgress({ phase: "done", tables: tbl, pii: piiCount });
     } catch (e: any) {
       setError(String(e.message || e));
+      setProgress(null);
     } finally {
       setBusy(false);
     }
@@ -236,6 +278,8 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
           {status && <span className="pf-status">✓ {status}</span>}
           {error && <span className="pf-error">{error}</span>}
         </div>
+
+        {progress && <ConnectProgress p={progress} />}
       </div>
 
       {catalog && (
@@ -251,6 +295,9 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
             <span className="pf-ready-item ok">{catalog.tables?.length ?? 0} tables</span>
             {(catalog.tables || []).flatMap((t: any) => t.columns || []).filter((c: any) => c.markers?.includes("SENSITIVE")).length > 0 && (
               <span className="pf-ready-item ok">sensitive columns detected</span>
+            )}
+            {pii && Object.keys(pii).length > 0 && (
+              <span className="pf-ready-item ok">{Object.keys(pii).length} likely-PII fields</span>
             )}
             {catalog.suggestedIntents?.length > 0 && (
               <span className="pf-ready-item ok">{catalog.suggestedIntents.length} intent suggestions</span>

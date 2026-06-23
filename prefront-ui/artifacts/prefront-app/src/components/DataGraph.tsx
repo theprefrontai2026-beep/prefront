@@ -9,7 +9,7 @@ import ReactFlow, {
   useEdgesState,
 } from "reactflow";
 import dagre from "dagre";
-import { getPolicy, analyzePii } from "../api";
+import { getPolicy } from "../api";
 
 // ── Data Graph: live database relationships + clickable node detail ──────────
 // Nodes/edges come from the connected catalog (App's `schema.catalog`); applied
@@ -501,8 +501,8 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
 
 // ── Stats bar ─────────────────────────────────────────────────────────────────
 
-function StatsBar({ defs, datasourceId, onDetectPii, piiBusy, piiRan, piiError }:
-  { defs: TableDef[]; datasourceId?: string; onDetectPii: () => void; piiBusy: boolean; piiRan: boolean; piiError: string }) {
+function StatsBar({ defs, datasourceId, piiScanned }:
+  { defs: TableDef[]; datasourceId?: string; piiScanned: boolean }) {
   const totalTables = defs.length;
   const totalCols = defs.reduce((s, t) => s + t.columns.length, 0);
   const sensitiveCols = defs.reduce((s, t) => s + t.columns.filter((c) => c.sensitive).length, 0);
@@ -518,17 +518,12 @@ function StatsBar({ defs, datasourceId, onDetectPii, piiBusy, piiRan, piiError }
       <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--red)" }}>{sensitiveCols}</span><span className="dg-stat-label">Sensitive</span></div>
       <div className="dg-stat-sep" />
       <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--blue)" }}>{totalPolicies}</span><span className="dg-stat-label">Policy Rules</span></div>
-      {piiRan && (<>
+      {piiScanned && (<>
         <div className="dg-stat-sep" />
-        <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--amber, #d97706)" }}>{piiCols}</span><span className="dg-stat-label">Likely PII</span></div>
+        <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--amber)" }}>{piiCols}</span><span className="dg-stat-label">Likely PII</span></div>
       </>)}
       <div style={{ flex: 1 }} />
-      {piiError && <span className="pf-error" style={{ marginRight: 10 }}>{piiError}</span>}
-      <button className="pf-btn sm" onClick={onDetectPii} disabled={piiBusy}
-        title="Run Presidio over the column names to guess which fields are PII">
-        {piiBusy ? "Detecting…" : piiRan ? "Re-detect PII" : "Detect PII"}
-      </button>
-      {datasourceId && <span className="dg-source-badge" style={{ marginLeft: 10 }}>{datasourceId}</span>}
+      {datasourceId && <span className="dg-source-badge">{datasourceId}</span>}
     </div>
   );
 }
@@ -552,21 +547,18 @@ interface Props {
   catalog?: any;
   datasourceId?: string;
   rules?: any[];
+  pii?: Record<string, { label: string; score: number }>;  // computed at connect (DataConnector)
 }
 
-export default function DataGraph({ catalog, datasourceId, rules = [] }: Props) {
+export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Props) {
   const [bound, setBound] = useState<any>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pii, setPii] = useState<PiiIndex>(new Map());
-  const [piiBusy, setPiiBusy] = useState(false);
-  const [piiRan, setPiiRan] = useState(false);
-  const [piiError, setPiiError] = useState("");
+  const piiMap = useMemo<PiiIndex>(() => new Map(Object.entries(pii || {})), [pii]);
 
   // Fetch the authoritative bound policy bundle for this datasource (best-effort).
   useEffect(() => {
     let live = true;
     setBound(null);
-    setPii(new Map()); setPiiRan(false); setPiiError("");  // stale PII is per-datasource
     if (!datasourceId) return;
     getPolicy(datasourceId)
       .then((r) => { if (live) setBound(r?.policy_bundle || null); })
@@ -576,29 +568,14 @@ export default function DataGraph({ catalog, datasourceId, rules = [] }: Props) 
 
   const hasCatalog = !!(catalog && (catalog.tables?.length ?? 0) > 0);
 
-  const handleDetectPii = useCallback(() => {
-    if (!hasCatalog) return;
-    const fields = (catalog.tables || []).flatMap((t: any) =>
-      (t.columns || []).map((c: any) => ({ table: t.name, column: c.name, type: c.type })));
-    setPiiBusy(true); setPiiError("");
-    analyzePii(fields)
-      .then((r) => {
-        const m: PiiIndex = new Map();
-        for (const x of r?.results || []) m.set(`${x.table}.${x.column}`, { label: x.label, score: x.score });
-        setPii(m); setPiiRan(true);
-      })
-      .catch((e) => setPiiError(`PII scan failed: ${String(e.message || e)}`))
-      .finally(() => setPiiBusy(false));
-  }, [hasCatalog, catalog]);
-
   const policyIndex = useMemo(
     () => buildPolicyIndex(catalog, rules, bound),
     [catalog, rules, bound]
   );
 
   const built = useMemo(
-    () => (hasCatalog ? buildFromCatalog(catalog, policyIndex, pii) : { nodes: [], edges: [], defs: [] as TableDef[] }),
-    [catalog, policyIndex, pii, hasCatalog]
+    () => (hasCatalog ? buildFromCatalog(catalog, policyIndex, piiMap) : { nodes: [], edges: [], defs: [] as TableDef[] }),
+    [catalog, policyIndex, piiMap, hasCatalog]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
@@ -645,8 +622,7 @@ export default function DataGraph({ catalog, datasourceId, rules = [] }: Props) 
 
   return (
     <div className="dg-shell">
-      <StatsBar defs={built.defs} datasourceId={datasourceId}
-        onDetectPii={handleDetectPii} piiBusy={piiBusy} piiRan={piiRan} piiError={piiError} />
+      <StatsBar defs={built.defs} datasourceId={datasourceId} piiScanned={pii != null} />
 
       <div className="dg-workspace">
         <div className="dg-canvas">
