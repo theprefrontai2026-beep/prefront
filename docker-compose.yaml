@@ -23,8 +23,8 @@ name: prefront
 
 # Shared LLM credentials/provider, injected into the services that call an LLM.
 x-llm-env: &llm-env
-  LLM_PROVIDER: ${LLM_PROVIDER:-groq}
-  SKILLBUILDER_PROVIDER: ${LLM_PROVIDER:-groq}
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+  SKILLBUILDER_PROVIDER: ${LLM_PROVIDER:-openai}
   GROQ_API_KEY: ${GROQ_API_KEY:-}
   NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}

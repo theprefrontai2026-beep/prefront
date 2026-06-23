@@ -22,11 +22,6 @@ interface Props {
   remoteRuleUpdates: ReviewEvent[];
 }
 
-// Bare provider names accepted by the backend LLM resolver (skillbuilder/
-// semanticlayer llm.py). The model per provider is fixed server-side; this
-// field selects only the provider. Default matches the demo's LLM_PROVIDER.
-const PROVIDERS = ["openai", "groq", "nvidia", "deepseek", "grok"];
-
 export default function PolicyStudio({
   onRules, schema, metrics, intents, setIntents,
   reviewers, myId, onFocusRule, broadcastRuleStatus, remoteRuleUpdates,
@@ -42,7 +37,9 @@ export default function PolicyStudio({
   const [fileName, setFileName] = useState("policy.txt");
   const [domain, setDomain] = useState("");
   const [version, setVersion] = useState("1.0");
-  const [provider, setProvider] = useState(PROVIDERS[0]);
+  // Provider is taken from the app's env default (LLM_PROVIDER, default openai);
+  // the UI no longer selects it. Empty => backend resolves the env default.
+  const provider = "";
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
@@ -495,7 +492,6 @@ export default function PolicyStudio({
             )}
 
           <div className="pf-fields">
-            <label>Domain<input value={domain} onChange={e => setDomain(e.target.value)} placeholder="e.g. credit, healthcare, hr" /></label>
             <label>Version<input value={version} onChange={e => setVersion(e.target.value)} /></label>
           </div>
 
@@ -524,29 +520,10 @@ export default function PolicyStudio({
                   <button className="pf-btn primary" onClick={handleExtract} disabled={extractBusy || actionBusy}>
                     {extractBusy ? "Extracting…" : "Extract rules"}
                   </button>
-                  <button className="pf-btn" onClick={handleClassify} disabled={classifyBusy}>
-                    {classifyBusy ? "Classifying…" : "Classify clauses"}
-                  </button>
-                  <button className="pf-btn" onClick={handleExtractAtoms} disabled={atomsBusy}>
-                    {atomsBusy ? "Extracting…" : "Extract atoms"}
-                  </button>
-                  <button className="pf-btn" onClick={handleValidate} disabled={validateBusy}>
-                    {validateBusy ? "Validating…" : "Validate"}
-                  </button>
                 </div>
               </div>
 
               <div className="pf-fields">
-                <label>
-                  Model / provider
-                  <select value={provider} onChange={e => setProvider(e.target.value)}>
-                    {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </label>
-                <label>
-                  Domain (override)
-                  <input value={domain} onChange={e => setDomain(e.target.value)} placeholder="e.g. credit" />
-                </label>
                 <label style={{ gridColumn: "1 / -1" }}>
                   Known intents (comma-separated)
                   <input value={intents} onChange={e => setIntents(e.target.value)} placeholder="get_credit_score, get_account_balance, …" />
@@ -576,12 +553,6 @@ export default function PolicyStudio({
                 </button>
                 <button className={`pf-sub-tab ${tab === "ledger" ? "active" : ""}`} onClick={handleShowLedger}>
                   Clause ledger
-                </button>
-                <button className={`pf-sub-tab ${tab === "atoms" ? "active" : ""}`} onClick={handleShowAtoms}>
-                  Policy atoms
-                </button>
-                <button className={`pf-sub-tab ${tab === "validation" ? "active" : ""}`} onClick={handleValidate}>
-                  Validation
                 </button>
                 <button className={`pf-sub-tab ${tab === "unresolved" ? "active" : ""}`} onClick={() => setTab("unresolved")}>
                   Unresolved {unresolved.filter(u => u.status === "open").length > 0 &&
