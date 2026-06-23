@@ -115,6 +115,22 @@ async def _run_async(question: str, url: str, act_as: str) -> dict:
             decision["intent"] = intent
             decision["args"] = args
             decision["outcome"] = _outcome(decision)
+
+            # Second LLM pass: synthesize the governed result into a natural language answer.
+            if decision.get("status") == "allowed":
+                synth = await _client.chat.completions.create(
+                    model=MODEL, temperature=0, max_tokens=200,
+                    messages=[
+                        {"role": "system", "content": SYSTEM},
+                        {"role": "user", "content": question},
+                        {"role": "assistant", "content": None, "tool_calls": [
+                            {"id": tc.id, "type": "function",
+                             "function": {"name": intent, "arguments": tc.function.arguments}}
+                        ]},
+                        {"role": "tool", "tool_call_id": tc.id, "content": text},
+                    ])
+                decision["answer"] = synth.choices[0].message.content
+
             return decision
 
 

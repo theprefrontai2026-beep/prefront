@@ -79,6 +79,7 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
           {g.status === "allowed" && g.row_count === 0 && (
             <div className="pf-diff-reason">0 rows — nothing in the caller's scope</div>
           )}
+          {g.answer && <div className="pf-diff-reason"><span className="lbl">model</span>{g.answer}</div>}
         </div>
       </div>
     </div>
