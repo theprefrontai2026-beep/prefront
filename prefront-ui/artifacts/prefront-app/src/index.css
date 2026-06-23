@@ -906,7 +906,7 @@ select { cursor: pointer; }
 
 /* Detail panel */
 .dg-detail {
-  width: 340px;
+  width: 430px;
   flex-shrink: 0;
   background: var(--surface);
   border-left: 1px solid var(--line);
@@ -961,6 +961,7 @@ select { cursor: pointer; }
   border-bottom: 1px solid var(--line);
 }
 .dg-col-table td { padding: 5px 6px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+.dg-flags-cell { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .dg-col-table tr.sensitive-row td { background: #fff8f8; }
 .dg-col-table tr:hover td { background: var(--surface-alt); }
 .dg-col-table-name { color: var(--ink); font-family: var(--app-font-mono); font-size: 11.5px; display: flex; align-items: center; gap: 4px; }

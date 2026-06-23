@@ -400,7 +400,7 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
                   {col.name}
                 </td>
                 <td className="dg-col-table-type">{col.type}</td>
-                <td>
+                <td className="dg-flags-cell">
                   {col.sensitive && <span className="dg-flag sens">SENSITIVE</span>}
                   {col.gov && !col.sensitive && <span className="dg-flag gov">GOV</span>}
                   {col.pii && <span className="dg-flag pii" title={`${col.pii.label} · ${Math.round(col.pii.score * 100)}% confidence`}>PII: {col.pii.label}</span>}
