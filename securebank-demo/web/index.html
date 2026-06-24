@@ -64,6 +64,37 @@
   .meta{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px}
   .expected{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:14px}
   .err{color:var(--oxblood);font-family:var(--mono);font-size:12px}
+  /* decision trace */
+  details.tr{margin-top:12px;border-top:1px solid var(--line-soft);padding-top:10px}
+  details.tr summary{cursor:pointer;font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--clay)}
+  .tr-head{display:flex;align-items:center;gap:8px;margin:10px 0}
+  .tr-kicker{font-family:var(--mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .tr-id{font-family:var(--mono);font-size:10px;color:var(--faint)}
+  .tr-stages{list-style:none;margin:0;padding:0}
+  .tr-stage{position:relative;display:flex;gap:10px;padding:0 0 14px}
+  .tr-stage:last-child{padding-bottom:0}
+  .tr-stage::before{content:"";position:absolute;left:9px;top:20px;bottom:0;width:1px;background:var(--line)}
+  .tr-stage:last-child::before{display:none}
+  .tr-marker{display:inline-grid;place-items:center;flex-shrink:0;width:19px;height:19px;border-radius:50%;z-index:1;background:var(--clay-tint);color:var(--clay);font-family:var(--mono);font-size:10px;font-weight:600}
+  .tr-body{flex:1;min-width:0}
+  .tr-title{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:3px}
+  .tr-detail{font-size:12px;color:var(--ink-soft)}
+  .tr-muted{font-size:12px;color:var(--muted);font-style:italic}
+  .tr-sub{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:2px}
+  .tr-call{font-family:var(--mono);font-size:11.5px;color:var(--ink)}
+  .tr-kv{display:flex;flex-wrap:wrap;gap:5px}
+  .tr-pair{display:inline-flex;align-items:baseline;gap:5px;border:1px solid var(--line);border-radius:5px;padding:2px 7px;font-family:var(--mono);font-size:11px}
+  .tr-pair .k{color:var(--muted)} .tr-pair .v{color:var(--ink);font-weight:600}
+  .tr-rule{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:3px 0;opacity:.55;font-family:var(--mono);font-size:11.5px}
+  .tr-rule.is-fired{opacity:1}
+  .tr-effect{font-family:var(--mono);font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 7px}
+  .tr-chip{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
+  .tr-chip.fired{color:var(--forest);background:var(--forest-tint)}
+  .tr-chip.skip{color:var(--muted);background:var(--field)}
+  .tr-chip.ind{color:var(--amber);background:var(--amber-tint)}
+  .tr-missing{font-family:var(--mono);font-size:10px;color:var(--amber)}
+  .tr-exec{font-family:var(--mono);font-size:12px;font-weight:600}
+  .tr-exec.ok{color:var(--forest)} .tr-exec.dry{color:var(--clay)} .tr-exec.off{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -134,7 +165,76 @@ function governedSide(g) {
   if (g.masked_fields && g.masked_fields.length) body += `<div class="reason"><span class="lbl">masked</span>${g.masked_fields.join(", ")}</div>`;
   if (g.status==="allowed" && g.rows && g.rows.length) body += rowsTable(Object.keys(g.rows[0]), g.rows, {masked:g.masked_fields||[]});
   else if (g.status==="allowed" && g.row_count===0) body += `<div class="reason">0 rows — nothing in the caller's scope</div>`;
+  if (g.governance) body += decisionTrace(g.governance);
   return `<div class="side good"><div class="side-head"><span>With Prefront</span></div><div class="side-body">${body}</div></div>`;
+}
+
+// The deterministic decision trace — what was asked, by whom, which rules fired,
+// what was decided, what executed. Mirrors the React DecisionTrace component.
+function decisionTrace(t) {
+  const decVerdict = t.decision==="blocked" ? "v-block"
+    : t.decision==="approval_required" ? "v-appr"
+    : (t.masked_fields||[]).length ? "v-mask" : "v-allow";
+  const decLabel = t.decision==="blocked" ? "BLOCK"
+    : t.decision==="approval_required" ? "APPROVAL REQUIRED"
+    : (t.masked_fields||[]).length ? "ALLOW · MASKED" : "ALLOW";
+  const execLabel = {executed:"SQL executed", write_executed:"write executed",
+    write_dry_run:"write simulated (dry-run)", not_executed:"not executed",
+    error:"execution error"}[t.execution_status] || t.execution_status || "—";
+  const rules = t.rules_evaluated || [];
+  const authzBlock = t.decision==="blocked" && !rules.length;
+
+  const stage = (n, title, detail) =>
+    `<li class="tr-stage"><span class="tr-marker">${n}</span><div class="tr-body">`
+    + `<div class="tr-title">${title}</div><div class="tr-detail">${detail}</div></div></li>`;
+
+  // 1 Identity
+  const ident = t.caller
+    ? `<div class="tr-kv">${Object.entries(t.caller).map(([k,v]) =>
+        `<span class="tr-pair"><span class="k">${k}</span><span class="v">${v}</span></span>`).join("")}</div>`
+    : `<span class="tr-muted">no caller identity — everything blocks</span>`;
+  // 2 Request
+  const args = Object.entries(t.parameters||{}).map(([k,v]) => `${k}=${JSON.stringify(v)}`).join(", ");
+  const req = `<code class="tr-call">${t.matched_intent}(${args})</code>`
+    + (t.template_id ? `<div class="tr-sub">template ${t.template_id}</div>` : "");
+  // 3 Policy evaluation
+  let policy;
+  if (rules.length) {
+    policy = rules.map(r => {
+      const ind = r.missing && r.missing.length;
+      const chip = ind ? "indeterminate" : r.fired ? "fired" : "not fired";
+      const chipCls = ind ? "ind" : r.fired ? "fired" : "skip";
+      return `<div class="tr-rule${r.fired?" is-fired":""}"><code>${r.rule_key}</code>`
+        + (r.decision ? `<span class="tr-effect">${r.decision}</span>` : "")
+        + `<span class="tr-chip ${chipCls}">${chip}</span>`
+        + (ind ? `<span class="tr-missing">missing: ${r.missing.join(", ")}</span>` : "")
+        + `</div>`;
+    }).join("");
+  } else {
+    policy = `<span class="tr-muted">${authzBlock
+      ? "blocked at authorization — no business rules evaluated"
+      : "no rules applied to this intent"}</span>`;
+  }
+  // 4 Decision
+  let dec = `<span class="verdict ${decVerdict}">${decLabel}</span>`;
+  for (const r of (t.reasons||[])) dec += `<div class="reason"><span class="lbl">reason</span>${r}</div>`;
+  if ((t.approver_roles||[]).length) dec += `<div class="reason"><span class="lbl">approver</span>${t.approver_roles.join(", ")}</div>`;
+  if ((t.masked_fields||[]).length) dec += `<div class="reason"><span class="lbl">masked</span>${t.masked_fields.join(", ")}</div>`;
+  // 5 Execution
+  const execCls = (t.execution_status==="executed"||t.execution_status==="write_executed") ? "ok"
+    : t.execution_status==="write_dry_run" ? "dry" : "off";
+  const exec = `<span class="tr-exec ${execCls}">${execLabel}</span>`;
+
+  return `<details class="tr"><summary>Show decision trace</summary>`
+    + `<div class="tr-head"><span class="tr-kicker">Decision trace</span>`
+    + (t.trace_id ? `<code class="tr-id">${t.trace_id}</code>` : "") + `</div>`
+    + `<ol class="tr-stages">`
+    + stage(1, "Identity", ident)
+    + stage(2, "Request", req)
+    + stage(3, "Policy evaluation", policy)
+    + stage(4, "Decision", dec)
+    + stage(5, "Execution", exec)
+    + `</ol></details>`;
 }
 
 function card(s) {

@@ -115,6 +115,7 @@ def build_diff(only=None) -> list[dict]:
                 "row_count": g.get("row_count"),
                 "answer": g.get("answer"),
                 "error": g.get("error"),
+                "governance": g.get("governance"),  # the deterministic decision trace
             },
         })
     return _clean(out)

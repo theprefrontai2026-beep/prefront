@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import DecisionTrace from "./DecisionTrace";
 
 const DEFAULT_SERVER = "http://localhost:8095";
 
@@ -37,6 +38,7 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
   const u = d.ungoverned || {};
   const g = d.governed || {};
   const hasRows = u.rows && u.rows.length;
+  const [showTrace, setShowTrace] = useState(false);
   return (
     <div className="pf-diff-cols" style={{ marginTop: 10 }}>
       <div className="pf-diff-side bad">
@@ -85,6 +87,14 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
             <div className="pf-diff-reason">0 rows — nothing in the caller's scope</div>
           )}
           {g.answer && <div className="pf-diff-reason"><span className="lbl">model</span>{g.answer}</div>}
+          {g.governance && (
+            <>
+              <button className="pf-trace-toggle" onClick={() => setShowTrace((s) => !s)}>
+                {showTrace ? "Hide decision trace ▴" : "Show decision trace ▾"}
+              </button>
+              {showTrace && <DecisionTrace trace={g.governance} />}
+            </>
+          )}
         </div>
       </div>
     </div>
