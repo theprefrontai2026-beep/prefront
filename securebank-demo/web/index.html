@@ -71,7 +71,7 @@
   <header class="topbar">
     <div>
       <div class="kicker">Governance Dossier · Runtime</div>
-      <h1 class="brand">Prefront · SecureBank — Governed vs Ungoverned</h1>
+      <h1 class="brand">Prefront · SecureBank — Governed vs App Layer</h1>
     </div>
     <div class="rec"><div id="recdate"></div><div>SECUREBANK · 12 SCENARIOS</div></div>
   </header>
@@ -104,14 +104,22 @@ function rowsTable(cols, rows, {masked=[]}={}) {
 }
 
 function ungovernedSide(u) {
-  let v = `<span class="verdict v-leak">UNGOVERNED</span>`;
+  let v = `<span class="verdict v-leak">NO POLICY</span>`;
   let body = "";
-  if (u.error) body = `<div class="err">ERROR ${u.error}</div>`;
-  else if (u.rows && u.rows.length) body = rowsTable(u.columns, u.rows);
-  else if (u.note) body = `<div class="reason">${u.note}</div>`;
-  if (u.would) body += `<div class="reason"><span class="lbl">would</span>${u.would}</div>`;
-  else if (u.rows && u.rows.length) body = `<div class="reason"><span class="lbl">returned</span>${u.row_count} row(s)</div>` + body;
-  return `<div class="side bad"><div class="side-head"><span>Without Prefront</span></div><div class="side-body">${v}${body}</div></div>`;
+  if (u.tool) {
+    const argStr = u.args && Object.keys(u.args).length
+      ? Object.entries(u.args).map(([k,w]) => `${k}=${w}`).join(", ")
+      : "";
+    body += `<div class="reason"><span class="lbl">called</span><code>${u.tool}(${argStr})</code></div>`;
+  }
+  if (u.sql) body += `<pre style="font-size:11px;margin:4px 0;white-space:pre-wrap;word-break:break-all">${u.sql}</pre>`;
+  if (u.error) body += `<div class="err">ERROR ${u.error}</div>`;
+  else if (u.rows && u.rows.length) {
+    body += `<div class="reason"><span class="lbl">returned</span>${u.row_count} row(s)</div>`;
+    body += rowsTable(u.columns, u.rows);
+  }
+  if (u.answer) body += `<div class="reason"><span class="lbl">model</span>${u.answer}</div>`;
+  return `<div class="side bad"><div class="side-head"><span>App layer · no policy</span></div><div class="side-body">${v}${body}</div></div>`;
 }
 
 function governedSide(g) {

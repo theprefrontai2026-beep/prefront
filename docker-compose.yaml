@@ -180,8 +180,9 @@ services:
 
   # ==========================================================================
   # SecureBank demo (moved in-repo under ./securebank-demo) — the active
-  # before/after harness. Its own Postgres + an ungoverned LLM-SQL service +
-  # ONE Prefront MCP server (curated artifacts) + the orchestrator the UI's
+  # before/after harness. Its own Postgres + an app-layer agent service
+  # (typed business functions, no access-control policy — the realistic "before")
+  # + ONE Prefront MCP server (curated artifacts) + the orchestrator the UI's
   # Runtime tab points at (http://localhost:8095). Shares the engine's
   # `artifacts` volume; the demo owns /artifacts/securebank-demo/ so UI
   # publishing to /artifacts/<id>/ never clobbers it.
@@ -205,7 +206,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # ---- the "before": a real LLM that writes + runs raw SQL (reads leak) ----
+  # ---- the "before": app-layer agent — typed functions, no access-control policy ----
   securebank-ungoverned:
     build: ./securebank-demo
     command: ["python", "ungoverned_server.py"]

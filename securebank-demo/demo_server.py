@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """SecureBank — before/after demo server.
 
-Serves a single page that shows each scenario WITHOUT Prefront (ungoverned raw
-SQL) next to WITH Prefront (the governed decision), computed live. Self-contained
+Serves a single page that shows each scenario WITHOUT Prefront (a realistic
+app-layer agent with typed business functions but no access-control policy)
+next to WITH Prefront (the governed decision), computed live. Self-contained
 on purpose: the securebank vocabulary lives here, not in the domain-neutral
 engine UI.
 
@@ -31,7 +32,8 @@ from scenarios import CALLERS, get_scenarios
 
 HERE = Path(__file__).parent
 PORT = int(os.environ.get("SECUREBANK_DEMO_PORT", "8095"))
-# The ungoverned "before" is a SEPARATE service (an LLM that writes + runs raw SQL).
+# The "before" is a SEPARATE service — an app-layer agent with typed business
+# functions (no raw SQL) but no access-control policy.
 UNGOVERNED_URL = os.environ.get("UNGOVERNED_URL", "http://localhost:8096/run")
 
 
@@ -62,8 +64,8 @@ def list_scenarios(only=None) -> list[dict]:
 
 
 def _ungoverned(question: str, caller: dict | None = None) -> dict:
-    """Call the separate ungoverned LLM service (writes + runs raw SQL). `caller`
-    is the signed-in user (the app knows it) — no enforcement, just context."""
+    """Call the app-layer agent service (typed business functions, no policy).
+    `caller` is the signed-in user the app knows — no enforcement."""
     req = urllib.request.Request(
         UNGOVERNED_URL, data=json.dumps({"question": question, "caller": caller}).encode("utf-8"),
         headers={"Content-Type": "application/json"})
@@ -76,8 +78,8 @@ def _ungoverned(question: str, caller: dict | None = None) -> dict:
 
 def build_diff(only=None) -> list[dict]:
     """For each selected test case, run it LIVE both ways and merge:
-    ungoverned = the LLM-SQL service; governed = the LLM→Prefront agent. Nothing
-    is stored or canned — both sides are computed on each call."""
+    ungoverned = app-layer agent (typed functions, no policy);
+    governed = LLM→Prefront agent. Nothing is stored — computed on each call."""
     out = []
     for s in get_scenarios(only):
         c = CALLERS[s["caller"]]
@@ -92,6 +94,8 @@ def build_diff(only=None) -> list[dict]:
             "risk": s["risk"],
             "expected": s["prefront"],
             "ungoverned": {
+                "tool": u.get("tool"),
+                "args": u.get("args"),
                 "sql": u.get("sql"),
                 "columns": u.get("columns"),
                 "rows": u.get("rows"),

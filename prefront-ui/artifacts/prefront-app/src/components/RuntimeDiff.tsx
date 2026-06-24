@@ -40,9 +40,14 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
   return (
     <div className="pf-diff-cols" style={{ marginTop: 10 }}>
       <div className="pf-diff-side bad">
-        <div className="pf-diff-side-head">Without Prefront · LLM + raw SQL</div>
+        <div className="pf-diff-side-head">App layer · typed functions, no policy</div>
         <div className="pf-diff-side-body">
-          <span className="pf-verdict v-leak">UNGOVERNED</span>
+          <span className="pf-verdict v-leak">NO POLICY</span>
+          {u.tool && (
+            <div className="pf-diff-reason"><span className="lbl">called</span>
+              <code>{u.tool}({Object.entries(u.args || {}).map(([k, v]) => `${k}=${v}`).join(", ")})</code>
+            </div>
+          )}
           {u.sql && <pre className="pf-sql" style={{ fontSize: 11 }}>{u.sql}</pre>}
           {u.error && <div className="pf-diff-err">ERROR {u.error}</div>}
           {hasRows && (
@@ -157,9 +162,9 @@ export default function RuntimeDiff() {
           Run the test cases
         </h2>
         <p className="pf-hint">
-          Each row is one request. Click <strong>Run</strong> to evaluate it two ways — an ungoverned
-          agent wired straight at the database (raw SQL, no policy) versus the same request through the
-          Prefront runtime (identity injected, policy enforced).
+          Each row is one request. Click <strong>Run</strong> to evaluate it two ways — a realistic
+          app-layer agent with typed business functions but no authorization policy, versus the same
+          request through the Prefront runtime (identity injected, policy enforced).
         </p>
 
         <div className="pf-fields">
