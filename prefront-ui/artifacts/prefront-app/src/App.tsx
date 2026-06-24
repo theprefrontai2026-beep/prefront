@@ -17,15 +17,16 @@ function loadJSON(key: string) {
   catch { return null; }
 }
 
-// Order reflects the pipeline: connect → model the domain → author policy →
-// see the governed schema map → compare at runtime. Data Graph follows Policy
-// Studio because the graph now surfaces applied policies. Icons live on each
-// tab so order changes can't desync the icon row.
+// Order reflects the pipeline: connect → author policy → see the domain &
+// schema maps → compare at runtime. Both Business Graph and Data Graph follow
+// Policy Studio because they surface applied policies (Business Graph joins
+// schema entities/intents with policy rules; Data Graph annotates the schema).
+// Icons live on each tab so order changes can't desync the icon row.
 const TABS = [
   { id: "dashboard",label: "Overview",        sub: "Governance at a glance",   icon: IconHome },
   { id: "data",     label: "Data Connector",  sub: "Connect datasource",       icon: IconDatabase },
-  { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
+  { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconDiff },
 ];
@@ -291,7 +292,14 @@ export default function App() {
           )}
           {bizGraphMounted && (
             <div className={tab === "bizgraph" ? "" : "tab-hidden"}>
-              <BusinessGraph />
+              <BusinessGraph
+                catalog={schema?.catalog}
+                datasourceId={schema?.datasourceId}
+                rules={rules}
+                intents={intents}
+                domain={domain}
+                pii={schema?.pii}
+              />
             </div>
           )}
           <div className={tab === "policy" ? "" : "tab-hidden"}>

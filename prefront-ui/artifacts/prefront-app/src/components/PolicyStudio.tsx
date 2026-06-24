@@ -18,7 +18,7 @@ interface Props {
   reviewers: Reviewer[];
   myId: string | null;
   onFocusRule: (ruleId: string | null) => void;
-  broadcastRuleStatus: (ruleId: string, status: "approved" | "rejected") => void;
+  broadcastRuleStatus: (ruleId: string, status: "approved" | "rejected", documentId?: string) => void;
   remoteRuleUpdates: ReviewEvent[];
 }
 

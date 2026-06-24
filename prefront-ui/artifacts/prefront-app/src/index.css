@@ -846,6 +846,13 @@ select { cursor: pointer; }
   height: 100%;
 }
 
+/* Business Graph uses a 4-tier vertical layout (roles → entities → processes →
+   governance), so it needs more vertical room than DataGraph's wide LR layout.
+   Grow the canvas with the viewport, clamped so it never gets too short or tall. */
+.bg-graph-shell .dg-workspace {
+  height: clamp(640px, calc(100vh - 250px), 1000px);
+}
+
 /* Legend */
 .dg-legend {
   position: absolute; bottom: 44px; left: 12px;

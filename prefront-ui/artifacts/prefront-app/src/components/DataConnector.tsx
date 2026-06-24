@@ -23,7 +23,7 @@ function ConnectProgress({ p }: { p: Progress }) {
         <span>
           {piiDone
             ? `PII scan complete — ${p.pii} PII field${p.pii !== 1 ? "s" : ""}`
-            : piiActive ? "Scanning fields for PII (Presidio)…" : "Scan for PII"}
+            : piiActive ? "Scanning fields for PII…" : "Scan for PII"}
         </span>
       </div>
     </div>
