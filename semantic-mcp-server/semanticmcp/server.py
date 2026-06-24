@@ -192,6 +192,20 @@ def call_governed(
 
     if kind == "precheck":
         wa = tool.get("write_action") or {}
+        if not wa:
+            # Guarded read: a precheck with no write_action returns its row(s) on
+            # allow (the precheck SELECT IS the read), masking restricted fields for
+            # this caller. Because the precheck row's columns were facts, a rule can
+            # gate on them — e.g. block when the row's owner != the caller — which a
+            # plain read, having no row at decision time, cannot do.
+            masked = [m.split(".")[-1] for m in decision.mask_fields]
+            out_rows = rows
+            if masked:
+                out_rows = [{k: ("***" if k in masked else v) for k, v in r.items()}
+                            for r in rows]
+            return respond(decision, "executed",
+                           row_count=len(out_rows), rows=out_rows,
+                           masked_fields=masked or None)
         write_params = {k: args.get(k) for k in (wa.get("params") or []) if k in (args or {})}
         result = writes_mod.perform(dsn, wa, write_params, caller)
         status = {"executed": "write_executed", "dry_run": "write_dry_run"}.get(

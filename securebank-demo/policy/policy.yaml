@@ -12,13 +12,30 @@ policy_bundle:
 
   intents:
     view_accounts: {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}
-    view_account:  {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}
+    view_account:  {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}  # ownership enforced by view_account_owner_only
     view_user:     {allowed_roles: [Bank Teller, Bank Manager]}
     view_users:    {allowed_roles: [Bank Teller, Bank Manager]}
     initiate_transfer: {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}
     decide_loan:   {allowed_roles: [Bank Manager]}
 
   rules:
+    # B2 — an account holder may read ONLY their own account by id (OWN_DATA_ONLY).
+    # Fires only for account holders whose id differs from the row's owner; staff
+    # (Teller/Manager) skip the role guard and may inspect any account.
+    - rule_key: view_account_owner_only
+      rule_type: restriction
+      intents: [view_account]
+      conditions:
+        - {field: caller.role, operator: "==", value: "Account Holder", value_kind: literal, value_refs: []}
+        - {field: caller.user_id, operator: "!=", value: "user_id", value_kind: expression, value_refs: [user_id]}
+      effect:
+        decision: block
+        message: "OWN_DATA_ONLY: account holders may only view their own accounts."
+      bindings:
+        caller.role: {source: caller, attribute: role}
+        caller.user_id: {source: caller, attribute: user_id}
+        user_id: {source: column, column: accounts.user_id}
+
     # B6 — an account holder may not enumerate other customers (ROLE_NOT_PERMITTED).
     - rule_key: view_users_account_holder_block
       rule_type: restriction

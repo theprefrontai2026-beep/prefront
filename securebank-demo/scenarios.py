@@ -46,7 +46,7 @@ SCENARIOS = [
         "app_tool": "get_account", "app_args": {"account_id": 1042},
         "intent": "view_account", "args": {"account_id": 1042},
         "risk": "get_account() has no ownership check — returns Sam's account to Maria.",
-        "prefront": "BLOCK — OWN_DATA_ONLY: account holders see only their own accounts.",
+        "prefront": "BLOCK — OWN_DATA_ONLY: account holders may only view their own accounts.",
     },
     {
         "id": "B3", "capability": "Policy: sensitive field", "caller": "tom",

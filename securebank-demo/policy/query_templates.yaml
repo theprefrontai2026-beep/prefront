@@ -27,23 +27,25 @@ query_templates:
       - {name: status, sensitivity: normal}
     status: published
 
-  # B4 — a specific account, scoped to the caller's own (cross-customer → 0 rows).
+  # B2 — a specific account by id. A guarded read (precheck, no write_action): it
+  # fetches the row UNSCOPED so the owner (user_id) is a fact, then the ownership
+  # rule blocks an account holder reading someone else's account (with a reason).
+  # Staff (Teller/Manager) are allowed any account by the same rule's role guard.
   tmpl_view_account_v1:
     intent_id: view_account
     description: "Get one bank account's details (balance, status) by its numeric account_id."
-    kind: read
-    read_only: true
+    kind: precheck
     dialect: postgres
     sql: |-
-      SELECT account_id, account_type, balance, status
+      SELECT account_id, account_type, balance, status, user_id
       FROM accounts
       WHERE account_id = :account_id
-        AND user_id = :caller_user_id
     parameters:
       - {name: account_id, type: integer, required: true}
-    required_caller_context: [user_id]
-    result_columns:
+    decision_inputs:
+      - {name: user_id, sensitivity: normal}
       - {name: balance, sensitivity: normal}
+      - {name: status, sensitivity: normal}
     status: published
 
   # B5 — a single user record by name; ssn masked unless the caller is a Bank Manager.
