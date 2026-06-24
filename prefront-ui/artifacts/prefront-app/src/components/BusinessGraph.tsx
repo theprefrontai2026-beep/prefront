@@ -10,7 +10,7 @@ import ReactFlow, {
   type NodeProps,
 } from "reactflow";
 import { getPolicy } from "../api";
-import { buildPolicyIndex, deriveKind, deriveRoles, type AppliedPolicy } from "./policyIndex";
+import { buildPolicyIndex, deriveKind, deriveRoles, DECISION_LABEL, DECISION_SEV, type AppliedPolicy } from "./policyIndex";
 
 // ── Business Graph: live domain model derived from the connected catalog +
 // approved policy. A *join view* — entities/processes come from the schema and
@@ -41,7 +41,8 @@ interface BizEntity {
   domain: string;
   description: string;
   tables: string[];
-  policies: string[];   // attached rule_keys
+  policies: string[];        // attached rule_keys (for counts / node badges)
+  policyInfo: AppliedPolicy[]; // full detail for the panel (decision, message, …)
   roles: string[];
   triggers?: string;
   output?: string;
@@ -85,6 +86,32 @@ function roleDomain(name: string): string {
   return "identity";
 }
 
+// ── Synthesize a human description for a rule that carries no authored message ──
+const OP_LABEL: Record<string, string> = {
+  "==": "=", "!=": "≠", ">": ">", "<": "<", ">=": "≥", "<=": "≤", in: "in", not_in: "not in",
+};
+function describeCondition(c: any): string {
+  const field = c?.field ?? "";
+  const op = OP_LABEL[c?.operator as string] ?? c?.operator ?? "";
+  let val = c?.value;
+  if (Array.isArray(val)) val = val.join(", ");
+  return `${field} ${op} ${val ?? ""}`.replace(/\s+/g, " ").trim();
+}
+function describeRule(p: AppliedPolicy): string | null {
+  if (p.message) return p.message;
+  let phrase: string;
+  switch (p.decision) {
+    case "block":             phrase = "Blocks the action"; break;
+    case "approval_required": phrase = "Requires approval"; break;
+    case "mask":              phrase = "Masks the result"; break;
+    case "escalate":          phrase = "Escalates the request"; break;
+    case "allow":             phrase = "Allows the action"; break;
+    default:                  phrase = "Governs the action";
+  }
+  const conds = (p.conditions || []).map(describeCondition).filter(Boolean);
+  return conds.length ? `${phrase} when ${conds.join(" and ")}.` : `${phrase}.`;
+}
+
 // ── Build the domain model from catalog + rules + intents + policy index ──────
 
 interface BuiltGraph { nodes: BizEntity[]; edges: BizEdge[]; }
@@ -115,6 +142,7 @@ function buildGraph(
       description: `Business entity backed by table \`${t.name}\` (${colCount} column${colCount !== 1 ? "s" : ""}). ${pols.length} governance ${pols.length === 1 ? "rule" : "rules"} attached.`,
       tables: [t.name],
       policies: pols.map((p) => p.rule_key),
+      policyInfo: pols,
       roles: Array.from(roleSet).map(humanize),
     };
   });
@@ -135,6 +163,35 @@ function buildGraph(
       approver: br.effect?.approver_role as string | undefined,
     })),
   ].filter((r) => r.key);
+
+  // rule_key -> full detail (decision/message/intents/roles); bound overrides in-app.
+  const ruleDetail = new Map<string, AppliedPolicy>();
+  for (const row of rules || []) {
+    const rule = row?.rule; const key = rule?.rule_key;
+    if (!key) continue;
+    const effect = rule.effect || {};
+    ruleDetail.set(key, {
+      rule_key: key, rule_type: rule.rule_type, decision: effect.decision,
+      restricted_fields: effect.restricted_fields, intents: rule.applies_to_intents,
+      approver_role: effect.approver_role, message: effect.message,
+      roles: deriveRoles(rule.conditions), conditions: rule.conditions,
+      status: row.review_status || "pending",
+      source: "rule", columns: [],
+    });
+  }
+  for (const br of (bound?.rules || []) as any[]) {
+    const key = br.rule_key;
+    if (!key) continue;
+    const effect = br.effect || {};
+    ruleDetail.set(key, {
+      rule_key: key, rule_type: br.rule_type, decision: effect.decision,
+      restricted_fields: effect.restricted_fields, intents: br.intents,
+      message: effect.message, roles: deriveRoles(br.conditions),
+      conditions: br.conditions, status: "published", source: "bound", columns: [],
+    });
+  }
+  const infoFor = (keys: string[]): AppliedPolicy[] =>
+    keys.map((k) => ruleDetail.get(k) || { rule_key: k, status: "approved", source: "rule" as const, columns: [] });
 
   // intent -> tables it touches (from attached policies)
   const intentToTables = new Map<string, Set<string>>();
@@ -177,6 +234,7 @@ function buildGraph(
       description: `Business operation \`${intent}\`. Governed by ${keys.length} ${keys.length === 1 ? "rule" : "rules"}${tbls.length ? `, touching ${tbls.join(", ")}` : ""}.`,
       tables: tbls,
       policies: keys,
+      policyInfo: infoFor(keys),
       roles: info ? Array.from(info.roles).map(humanize) : [],
       triggers: `Invoked as the \`${intent}\` intent`,
       output: keys.length ? `Governed result (${keys.length} rule${keys.length !== 1 ? "s" : ""} enforced)` : "Ungoverned (no rule attached yet)",
@@ -220,6 +278,7 @@ function buildGraph(
       description: `Caller role \`${r}\`. Referenced by ${polKeys.size} governance ${polKeys.size === 1 ? "rule" : "rules"}${entLabels.length ? `, with access governed on ${entLabels.join(", ")}` : ""}.`,
       tables: [],
       policies: Array.from(polKeys),
+      policyInfo: infoFor(Array.from(polKeys)),
       roles: [],
     };
   });
@@ -234,12 +293,12 @@ function buildGraph(
     {
       id: "gov-policy", kind: "governance", label: "Policy Engine", icon: "⚙️", domain: "governance",
       description: "Runtime enforcement layer. Applies every approved governance rule to each data access and business action — resolving the caller's role and context, then masking, blocking, or requiring approval per policy.",
-      tables: [], policies: govPolicies, roles: [],
+      tables: [], policies: govPolicies, policyInfo: infoFor(govPolicies), roles: [],
     },
     {
       id: "gov-audit", kind: "governance", label: "Audit Trail", icon: "📜", domain: "governance",
       description: "Immutable, tamper-evident record of governed events — every policy decision, masked field, and approval is logged for compliance review.",
-      tables: [], policies: govPolicies, roles: [],
+      tables: [], policies: govPolicies, policyInfo: infoFor(govPolicies), roles: [],
     },
   ];
 
@@ -502,24 +561,43 @@ function DetailPanel({ node, onClose }: { node: BizEntity; onClose: () => void }
           </div>
         )}
 
-        {/* Policy references */}
+        {/* Attached policies — full governance detail per rule */}
         <div className="dg-detail-section">
           <div className="dg-detail-section-title">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
-            Attached Policies ({node.policies.length})
+            Attached Policies ({node.policyInfo.length})
           </div>
-          {node.policies.length === 0 && (
-            <div style={{ fontSize: 11.5, color: "#9ca3af" }}>No rules reference this node yet.</div>
+          {node.policyInfo.length === 0 && (
+            <div className="dg-policy-empty">No rules reference this node yet.</div>
           )}
-          {node.policies.map(p => (
-            <div key={p} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-              <span style={{ background: d.bg, color: d.text, border: `1px solid ${d.border}55`, borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 700, fontFamily: "monospace" }}>
-                {p}
-              </span>
-            </div>
-          ))}
+          {node.policyInfo.map(p => {
+            const sev = DECISION_SEV[p.decision || ""] || "low";
+            const pending = p.status !== "approved" && p.status !== "published";
+            const desc = describeRule(p);
+            return (
+              <div key={p.rule_key} className={`dg-policy-card sev-${sev}`} style={pending ? { opacity: 0.62, borderStyle: "dashed" } : undefined}>
+                <div className="dg-policy-head">
+                  <span className={`dg-policy-badge sev-${sev}`}>{(DECISION_LABEL[p.decision || ""] || p.decision || "rule").toUpperCase()}</span>
+                  <span className="dg-policy-id">{p.status}{p.source === "bound" ? " · bound" : ""}</span>
+                </div>
+                <div className="dg-policy-title">{p.rule_key}</div>
+                {desc && <div className="dg-policy-desc">{desc}</div>}
+                {p.restricted_fields && p.restricted_fields.length > 0 && (
+                  <div className="dg-policy-desc">restricts: {p.restricted_fields.join(", ")}</div>
+                )}
+                {p.intents && p.intents.length > 0 && (
+                  <div className="dg-policy-desc" style={{ fontSize: 11, opacity: 0.8 }}>intents: {p.intents.join(", ")}</div>
+                )}
+                {p.roles && p.roles.length > 0 && (
+                  <div className="dg-policy-roles">
+                    {p.roles.map(r => <span key={r} className="dg-role-chip">{r}</span>)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Authorized roles */}

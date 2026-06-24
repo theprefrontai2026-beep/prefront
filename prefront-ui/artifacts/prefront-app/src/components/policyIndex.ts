@@ -12,6 +12,7 @@ export interface AppliedPolicy {
   approver_role?: string;
   message?: string;
   roles?: string[];             // derived from caller.role conditions
+  conditions?: any[];           // raw rule conditions (for synthesizing a description)
   status: string;               // approved | pending | rejected | published
   source: "rule" | "bound";
   columns: string[];            // columns on THIS table the rule touches
@@ -98,6 +99,7 @@ export function buildPolicyIndex(catalog: any, rules: any[], bound: any): Map<st
       approver_role: effect.approver_role,
       message: effect.message,
       roles: deriveRoles(rule.conditions),
+      conditions: rule.conditions,
       status: row.review_status || "pending",
       source: "rule",
     };
@@ -131,6 +133,7 @@ export function buildPolicyIndex(catalog: any, rules: any[], bound: any): Map<st
       intents: br.intents,
       message: effect.message,
       roles: deriveRoles(br.conditions),
+      conditions: br.conditions,
       status: "published",
       source: "bound",
     };
