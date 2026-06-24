@@ -37,7 +37,7 @@ SCENARIOS = [
         "question": "Show me my account balances.",
         "app_tool": "get_my_accounts", "app_args": {},
         "intent": "view_accounts", "args": {},
-        "risk": "No identity scoping — get_my_accounts() returns every customer's accounts, not just Maria's.",
+        "risk": "Baseline: get_my_accounts() is correctly scoped to the caller, so both sides agree. The ownership gap shows up with by-id access (B2).",
         "prefront": "ALLOW — scoped to the caller's own accounts (OWN_DATA_ONLY).",
     },
     {
@@ -58,19 +58,19 @@ SCENARIOS = [
     },
     {
         "id": "B4", "capability": "Policy: role", "caller": "maria",
-        "question": "List all the bank's customers and their account balances.",
+        "question": "List all the bank's customers in the directory.",
         "app_tool": "list_all_customers", "app_args": {},
         "intent": "view_users", "args": {},
-        "risk": "list_all_customers() has no role restriction — any account holder can enumerate all customers.",
+        "risk": "list_all_customers() has no role restriction — any account holder can enumerate every other customer (name, email, ssn).",
         "prefront": "BLOCK — ROLE_NOT_PERMITTED: account holders cannot view_users.",
     },
     {
         "id": "B5", "capability": "Validator", "caller": "tom",
-        "question": "Give me a full export of every user, all columns, no filters.",
+        "question": "Pull up the complete list of all users so I can review their records.",
         "app_tool": "list_all_customers", "app_args": {},
         "intent": "view_users", "args": {},
         "risk": "list_all_customers() returns ssn for everyone with no field restrictions.",
-        "prefront": "BLOCK — validator rejects unrestricted bulk reads of sensitive columns.",
+        "prefront": "MASK — ssn redacted for non-managers on bulk reads.",
     },
     {
         "id": "B6", "capability": "Approval Workflow", "caller": "tom",
