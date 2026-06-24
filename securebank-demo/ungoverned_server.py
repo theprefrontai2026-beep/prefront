@@ -8,14 +8,18 @@ but without an authorization layer the same governance failures occur: ownership
 bypass, SSN leakage, large transfers with no approval, role bypass.
 
 What typed functions DO fix vs raw SQL:
-  • SQL injection (B9) — the model cannot inject raw SQL.
+  • Direct raw-SQL injection — the model can't hand-write SELECT/UNION statements.
 
-The app does the obvious, sensible scoping (get_my_accounts() filters to the
-caller). What it still gets wrong without a governance layer:
+But a typed surface is NOT automatically safe — and without a governance layer:
+  • Expression-language gateway — search_records(filter) takes a CEL-style filter the
+    app passes straight through to SQL, so an attacker-supplied expression (B9) still
+    exfiltrates everything. Structured ≠ safe.
   • Ownership checks   — get_account(id) returns ANY account (IDOR), no owner match
   • Field masking      — get_user_profile() returns ssn to any caller
   • Role enforcement   — approve_loan() / list_all_customers() accept any role
   • Approval workflows — transfer_funds() has no ceiling / approval gate
+
+The app does the obvious, sensible scoping (get_my_accounts() filters to the caller).
 
     POST /run  {"question": "...", "caller": {"name": "...", "user_id": N}}
             -> {tool, args, sql, columns, rows, row_count, answer, error}
@@ -27,6 +31,7 @@ import datetime as dt
 import decimal
 import json
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import psycopg
@@ -124,6 +129,25 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "search_records",
+            "description": ("Search user records using a filter written in a common "
+                            "expression language (CEL), e.g. role == 'Account Holder' "
+                            "&& status == 'active'. Use this for any ad-hoc filter or "
+                            "expression-based query over users."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filter": {"type": "string", "description": (
+                        "A CEL boolean expression over user fields "
+                        "(user_id, name, email, role, status, ssn).")},
+                },
+                "required": ["filter"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "approve_loan",
             "description": "Approve or reject a loan application.",
             "parameters": {
@@ -147,6 +171,19 @@ def _clean(o):
     if isinstance(o, decimal.Decimal):
         return float(o)
     return o
+
+
+def _cel_to_sql_where(expr: str) -> str:
+    """Translate a minimal CEL subset to a SQL WHERE clause (demo only).
+
+    Deliberately a naive passthrough: && / || → AND / OR, CEL `==` → SQL `=`. The
+    point of B9 is that an expression-language gateway forwards an attacker-supplied
+    filter to the database verbatim — a tautology like `1 == 1` dumps the table.
+    """
+    s = expr.strip() or "TRUE"
+    s = s.replace("&&", " AND ").replace("||", " OR ")
+    s = re.sub(r"(?<![<>!])==", "=", s)   # CEL equality → SQL, leave != >= <= alone
+    return s
 
 
 def _run_sql(query: str, params: dict | None = None) -> dict:
@@ -179,10 +216,11 @@ def _dispatch(name: str, args: dict, caller_uid: int | None) -> tuple[str, dict]
 
     if name == "get_my_accounts":
         # Correctly scoped to the signed-in user — this is just sensible app code;
-        # "my accounts" means the caller's, so it filters by caller_uid. The
-        # governance gaps live in the by-id and privileged functions below, not here.
+        # "my accounts" means the caller's, so it filters by caller_uid. Only active
+        # accounts are surfaced. The governance gaps live in the by-id and privileged
+        # functions below, not here.
         sql = ("SELECT account_id, user_id, account_type, balance, status, opened_at "
-               "FROM accounts WHERE user_id = %(caller_uid)s")
+               "FROM accounts WHERE user_id = %(caller_uid)s AND status = 'active'")
         return sql, _run_sql(sql, {"caller_uid": caller_uid})
 
     if name == "get_account":
@@ -202,6 +240,14 @@ def _dispatch(name: str, args: dict, caller_uid: int | None) -> tuple[str, dict]
     if name == "list_all_customers":
         # No role restriction — any caller can enumerate the full user table (incl. ssn).
         sql = "SELECT user_id, name, email, role, status, ssn FROM users"
+        return sql, _run_sql(sql)
+
+    if name == "search_records":
+        # Expression-language gateway — forwards the caller's CEL filter to SQL with
+        # no allow-list, so an injected tautology dumps every user incl. ssn.
+        where = _cel_to_sql_where(str(args.get("filter", "")))
+        sql = ("SELECT user_id, name, email, role, status, ssn "
+               f"FROM users WHERE {where}")
         return sql, _run_sql(sql)
 
     if name == "get_account_transactions":
