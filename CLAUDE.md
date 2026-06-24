@@ -60,6 +60,8 @@ A retail-banking example that ships **inside this repo** and runs from the same 
 
 The curated artifacts (`securebank-demo/policy/query_templates.yaml`, `policy.yaml`) are committed. The `securebank-seed` one-shot service copies them into the shared `artifacts` volume at startup. `OpenAI API key` required for the ungoverned and orchestrator services.
 
+The test-case catalog lives in `securebank-demo/scenarios.py` (`CALLERS` dict + `get_scenarios()`). `demo_server.py` serves `GET /api/scenarios` (metadata only) and `GET /api/diff?only=B1,B4` (live run both ways). `governed_agent.py` implements the full OpenAI tool-calling loop: LLM picks an MCP tool → Prefront enforces policy → tool result passed back to LLM for natural-language synthesis → `decision["answer"]` set. The Runtime tab (`RuntimeDiff.tsx`) points at `http://localhost:8095` by default (configurable in the UI).
+
 ## Runtime governance pipeline (`semantic-mcp-server/semanticmcp/governance/`)
 
 One MCP tool = one query template. `server.py:call_governed` threads a `GovernanceContext` through stages:
@@ -118,6 +120,19 @@ cd prefront-ui
 pnpm install                          # install workspace deps (pnpm only; enforced by preinstall hook)
 pnpm run typecheck                    # type-check all packages
 pnpm -r --filter ./artifacts/prefront-app run dev   # Vite dev server (needs API proxy or full stack up)
+
+# Regenerate the React-Query client after editing lib/api-spec/openapi.yaml
+pnpm --filter ./lib/api-spec run codegen   # runs orval + typecheck:libs
+```
+
+### Hot-patching running containers
+Python services have no build step — copy + restart suffices:
+```bash
+docker cp <file> prefront-<service>-1:/app/<file> && docker restart prefront-<service>-1
+```
+The UI is a compiled Vite SPA served by nginx — a restart alone won't pick up `.tsx` changes; a full rebuild is required:
+```bash
+docker compose build ui && docker compose up -d ui
 ```
 
 ### Publish flow (design-time → runtime)
@@ -126,6 +141,14 @@ Artifacts reach the runtime by HTTP, then land in the shared `artifacts` volume 
 2. Publish skill: `POST :8000/design/skills/{skill_id}/publish`
 3. Build the semantic model + templates from approved rules + schema: `POST :8010/design/semantic/build` then `/publish`
 4. Bind + publish the enforceable bundle: `POST :8010/design/semantic/publish-policy` → `policy.yaml`. Rules whose symbols don't resolve are **rejected here**, not shipped.
+
+## UI tab architecture (`prefront-ui/artifacts/prefront-app/src/`)
+
+`App.tsx` owns a single `useState("dashboard")` for the active tab. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. The tab order mirrors the dependency pipeline: **Dashboard → Data Connector → Data Graph → Business Graph → Policy Studio → Semantic → Runtime**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+
+`Dashboard.tsx` is currently **presentational with hardcoded fixtures** (SecureBank governance vocabulary: intents, rules, roles, B1–B10 scenario personas). The comment at the top of that file marks each `const` fixture for replacement with a real API call once the backend summary endpoint lands.
+
+The `skill-builder/CLAUDE.md` is a **sub-CLAUDE.md** with skill-builder-specific architecture notes (pipeline vs API dual-path, domain-pack layering, downstream contract). Read it when working on that service.
 
 ## Where to read more
 `design.md` (positioning + the LLM-at-design-time-only principle), `prefront_semantic_layer_design.md` (the semantic-contract artifact set), and each service's `README.md`. For a concrete end-to-end domain + a before/after governed-vs-ungoverned harness, see the in-repo `securebank-demo/` example.
