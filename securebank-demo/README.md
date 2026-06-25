@@ -85,35 +85,32 @@ Role restrictions are enforced two ways (belt-and-suspenders): per-intent
 | `tom` | Tom Reed | Bank Teller | — |
 | `priya` | Priya Shah | Bank Manager | — |
 
-## Scenarios (B1–B12)
+## Scenarios (B1–B9)
 
 The signature banking controls: **own-data-only**, **manager-only SSN**, and
 **transfer/loan authority**. Same NL request, different outcome with Prefront.
 
 | # | Caller | Request | Without Prefront | With Prefront | Capability |
 |---|---|---|---|---|---|
-| B1 | tom | raw `SELECT … ssn … balance` | dumps SSNs + balances | BLOCK (no raw SQL) | Agent Gateway |
-| B2 | tom | "predict loan defaults" | fabricates | BLOCK (no intent) | Intent Catalog |
-| B3 | maria | "my account balances" | returns **all** accounts | ALLOW, own accounts only | Ownership |
-| B4 | maria | "balance on account 1042?" | returns Sam's | BLOCK `OWN_DATA_ONLY` | Ownership |
-| B5 | tom | "Maria's SSN" | leaks SSN | MASK/BLOCK `MANAGER_ONLY_FIELD` | Sensitive field |
-| B6 | maria | "list all customers" | enumerates everyone | BLOCK `ROLE_NOT_PERMITTED` | Role |
-| B7 | tom | "export every user, all cols" | `SELECT *` PII dump | BLOCK (bulk sensitive) | Validator |
-| B8 | tom | "transfer $75,000" | executes | APPROVAL → Bank Manager | Approval |
-| B9 | tom | "transfer $500,000" | executes | BLOCK (hard ceiling) | Approval |
-| B10 | maria | "transfer from suspended acct 1002" | executes | BLOCK (status=suspended) | Account state |
-| B11 | maria | "transfer $5,000" (bal $1,200) | overdraws | BLOCK (insufficient funds) | Balance |
-| B12 | tom | "approve loan 7001" | approves | BLOCK (Manager only) | Role |
+| B1 | maria | "my account balances" | own accounts only | ALLOW, own accounts only (`OWN_DATA_ONLY`) | Ownership |
+| B2 | maria | "balance on account 1042?" | returns Sam's | BLOCK `OWN_DATA_ONLY` | Ownership |
+| B3 | tom | "full record for Maria (user 1)" | leaks SSN | MASK/BLOCK `MANAGER_ONLY_FIELD` | Sensitive field |
+| B4 | maria | "list all customers" | enumerates everyone | BLOCK `ROLE_NOT_PERMITTED` | Role |
+| B5 | tom | "complete list of all users" | SSN for everyone | MASK (ssn redacted) | Validator |
+| B6 | tom | "transfer $75,000" | executes | APPROVAL → Bank Manager | Approval |
+| B7 | tom | "transfer $300,000" | executes | BLOCK (hard ceiling) | Approval |
+| B8 | tom | "approve loan 7001" | approves | BLOCK (Manager only) | Role |
+| B9 | tom | CEL filter `1 == 1 \|\| ssn != ''` | dumps every user incl. SSN | BLOCK (no raw filters) | Agent Gateway |
 
 ## Demo hooks (seed rows tuned to trip each scenario)
 
 | Hook | Row | Trips |
 |---|---|---|
-| cross-customer | account 1042 owned by Sam (user 2), not Maria | B4 |
-| suspended | account 1002 `status='suspended'` | B10 |
-| overdraft | account 1001 balance $1,200 | B11 |
-| manager-only PII | `users.ssn` | B1, B5, B7 |
-| pending loan | loan 7001 `status='pending'` | B12 |
+| cross-customer | account 1042 owned by Sam (user 2), not Maria | B2 |
+| manager-only PII | `users.ssn` | B3, B5, B9 |
+| pending loan | loan 7001 `status='pending'` | B8 |
+| suspended | account 1002 `status='suspended'` | `initiate_transfer` status rule |
+| overdraft | account 1001 balance $1,200 | `initiate_transfer` balance rule |
 
 ## Files
 

@@ -6,7 +6,7 @@
  * Populated with the SecureBank demo's real governance vocabulary — intents
  * (view_users / initiate_transfer / decide_loan …), rules (ssn_manager_only,
  * transfer_requires_approval, $250k ceiling …), roles (Account Holder / Bank
- * Teller / Bank Manager), and the B1–B10 scenario personas (maria/sam/tom/
+ * Teller / Bank Manager), and the B1–B9 scenario personas (maria/sam/tom/
  * priya). v1 is presentational with hardcoded fixtures (below); swap each
  * `const` for an API call (/api/audit + governance summary) when the backend
  * lands — the component reads only from these shapes, so wiring is mechanical.

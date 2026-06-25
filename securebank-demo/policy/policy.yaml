@@ -41,7 +41,7 @@ policy_bundle:
         caller.user_id: {source: caller, attribute: user_id}
         user_id: {source: column, column: accounts.user_id}
 
-    # B6 — an account holder may not enumerate other customers (ROLE_NOT_PERMITTED).
+    # B4 — an account holder may not enumerate other customers (ROLE_NOT_PERMITTED).
     - rule_key: view_users_account_holder_block
       rule_type: restriction
       intents: [view_users]
@@ -58,7 +58,7 @@ policy_bundle:
       bindings:
         caller.role: {source: caller, attribute: role}
 
-    # B5/B7 — ssn is a MANAGER_ONLY_FIELD: masked for everyone except a Bank Manager.
+    # B3/B5 — ssn is a MANAGER_ONLY_FIELD: masked for everyone except a Bank Manager.
     - rule_key: ssn_manager_only
       rule_type: data_access
       intents: [view_user, view_users]
@@ -77,7 +77,7 @@ policy_bundle:
         caller.role: {source: caller, attribute: role}
         ssn: {source: column, column: users.ssn}
 
-    # B10 — no money moves out of a suspended account.
+    # No money moves out of a suspended account.
     - rule_key: transfer_from_suspended_account
       rule_type: restriction
       intents: [initiate_transfer]
@@ -94,7 +94,7 @@ policy_bundle:
       bindings:
         status: {source: column, column: accounts.status}
 
-    # B11 — a transfer may not exceed the source account's available balance.
+    # A transfer may not exceed the source account's available balance.
     - rule_key: transfer_insufficient_funds
       rule_type: restriction
       intents: [initiate_transfer]
@@ -112,7 +112,7 @@ policy_bundle:
         amount: {source: request_param}
         balance: {source: column, column: accounts.balance}
 
-    # B8 — transfers above $10,000 (and within the ceiling) need Bank Manager approval.
+    # B6 — transfers above $10,000 (and within the ceiling) need Bank Manager approval.
     - rule_key: transfer_requires_approval
       rule_type: approval_threshold
       intents: [initiate_transfer]
@@ -131,7 +131,7 @@ policy_bundle:
       bindings:
         amount: {source: request_param}
 
-    # B9 — a hard ceiling no role may exceed.
+    # B7 — a hard ceiling no role may exceed.
     - rule_key: transfer_ceiling
       rule_type: restriction
       intents: [initiate_transfer]
@@ -148,7 +148,7 @@ policy_bundle:
       bindings:
         amount: {source: request_param}
 
-    # B12 — only a Bank Manager may decide a loan.
+    # B8 — only a Bank Manager may decide a loan.
     - rule_key: loan_decision_manager_only
       rule_type: restriction
       intents: [decide_loan]

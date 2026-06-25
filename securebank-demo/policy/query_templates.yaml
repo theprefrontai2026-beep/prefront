@@ -6,7 +6,7 @@
 # ENABLE_WRITES=1).
 query_templates:
 
-  # B3 — an account holder sees ONLY their own accounts (ownership via SQL scope).
+  # B1 — an account holder sees ONLY their own accounts (ownership via SQL scope).
   tmpl_view_accounts_v1:
     intent_id: view_accounts
     description: "List the caller's own bank accounts and their balances."
@@ -48,7 +48,7 @@ query_templates:
       - {name: status, sensitivity: normal}
     status: published
 
-  # B5 — a single user record by name; ssn masked unless the caller is a Bank Manager.
+  # B3 — a single user record by name; ssn masked unless the caller is a Bank Manager.
   tmpl_view_user_v1:
     intent_id: view_user
     description: "Look up a customer by name (name_query). Returns their user record including ssn, role and status. Use this for any request about a named person's details or SSN."
@@ -66,7 +66,7 @@ query_templates:
       - {name: ssn, sensitivity: restricted}
     status: published
 
-  # B6/B7 — the customer directory: staff-only (role rule), ssn masked, bounded.
+  # B4/B5 — the customer directory: staff-only (role rule), ssn masked, bounded.
   tmpl_view_users_v1:
     intent_id: view_users
     description: "List the bank's customer directory (all account holders). Use for requests to list/enumerate/export customers."
@@ -84,7 +84,7 @@ query_templates:
       - {name: ssn, sensitivity: restricted}
     status: published
 
-  # B8/B9/B10/B11 — a money transfer. The precheck reads the source account; the
+  # B6/B7 — a money transfer. The precheck reads the source account; the
   # policy decides (suspended / insufficient / approval / ceiling) before any write.
   tmpl_initiate_transfer_precheck_v1:
     intent_id: initiate_transfer
@@ -111,7 +111,7 @@ query_templates:
       autofill: {txn_id: next_int, created_at: current_date}
     status: published
 
-  # B12 — a loan decision. The precheck reads the loan; only a Bank Manager may decide.
+  # B8 — a loan decision. The precheck reads the loan; only a Bank Manager may decide.
   tmpl_decide_loan_precheck_v1:
     intent_id: decide_loan
     description: "Approve or reject a loan application by loan_id (decision = 'approved' or 'rejected')."

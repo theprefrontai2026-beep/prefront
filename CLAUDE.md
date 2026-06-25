@@ -146,7 +146,7 @@ Artifacts reach the runtime by HTTP, then land in the shared `artifacts` volume 
 
 `App.tsx` owns a single `useState("dashboard")` for the active tab. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. The tab order mirrors the dependency pipeline: **Dashboard → Data Connector → Data Graph → Business Graph → Policy Studio → Semantic → Runtime**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
-`Dashboard.tsx` is currently **presentational with hardcoded fixtures** (SecureBank governance vocabulary: intents, rules, roles, B1–B10 scenario personas). The comment at the top of that file marks each `const` fixture for replacement with a real API call once the backend summary endpoint lands.
+`Dashboard.tsx` is currently **presentational with hardcoded fixtures** (SecureBank governance vocabulary: intents, rules, roles, B1–B9 scenario personas). The comment at the top of that file marks each `const` fixture for replacement with a real API call once the backend summary endpoint lands.
 
 The `skill-builder/CLAUDE.md` is a **sub-CLAUDE.md** with skill-builder-specific architecture notes (pipeline vs API dual-path, domain-pack layering, downstream contract). Read it when working on that service.
 

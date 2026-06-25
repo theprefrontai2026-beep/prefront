@@ -20,9 +20,9 @@ INSERT INTO users (user_id, name, email, role, status, clearance_level, ssn) VAL
 -- Maria (user 1): 1001 low balance (overdraft hook), 1002 suspended (state hook).
 -- Sam (user 2):   1042 healthy balance (cross-customer ownership hook).
 INSERT INTO accounts (account_id, user_id, account_type, balance, status) VALUES
-  (1001, 1, 'checking',   1200.00, 'active'),     -- B11 insufficient-funds hook ($5k > $1.2k)
-  (1002, 1, 'savings',    8000.00, 'suspended'),  -- B10 suspended-account hook
-  (1042, 2, 'checking', 400000.00, 'active'),     -- B4 cross-customer hook + B8/B9 well-funded source
+  (1001, 1, 'checking',   1200.00, 'active'),     -- insufficient-funds hook ($5k > $1.2k)
+  (1002, 1, 'savings',    8000.00, 'suspended'),  -- suspended-account hook
+  (1042, 2, 'checking', 400000.00, 'active'),     -- B2 cross-customer hook + B6/B7 well-funded source
   (1055, 6, 'savings',  23000.00, 'active'),
   (5005, 2, 'checking',  9000.00, 'active');     -- transfer destination
 
@@ -36,6 +36,6 @@ INSERT INTO transactions (txn_id, account_id, txn_type, amount, counterparty_acc
 -- ----------------------------------------------------------------- loans ---
 -- 7001: Sam's pending application — the decide_loan (Bank-Manager-only) hook.
 INSERT INTO loans (loan_id, user_id, amount, status, credit_score, risk_rating, decided_by) VALUES
-  (7001, 2, 25000.00, 'pending',  640, 'medium', NULL),  -- B12 loan-decision hook
+  (7001, 2, 25000.00, 'pending',  640, 'medium', NULL),  -- B8 loan-decision hook
   (7002, 6, 10000.00, 'approved', 720, 'low',    4),
   (7003, 1, 40000.00, 'pending',  580, 'high',   NULL);  -- high-risk hook (future scenario)
