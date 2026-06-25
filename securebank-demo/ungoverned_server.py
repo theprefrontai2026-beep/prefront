@@ -187,10 +187,19 @@ def _cel_to_sql_where(expr: str) -> str:
 
 
 def _run_sql(query: str, params: dict | None = None) -> dict:
-    """Execute a parameterised query (read-only unless SECUREBANK_READONLY=off)."""
+    """Execute a parameterised query, then ALWAYS roll back — nothing the ungoverned
+    agent does is ever persisted.
+
+    Reads run in a read-only transaction (defence in depth). Writes must run in a
+    writable transaction so they actually *execute* — that is the whole point of the
+    ungoverned demo: with no governance, the dangerous mutation goes through (the
+    agent sees it succeed and reports it as done). The final ``rollback`` is what
+    keeps the demo database clean; ``SECUREBANK_READONLY=on`` would instead make the
+    write fail with a DB error, which wrongly makes the ungoverned app look safe."""
+    is_write = query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
     try:
         with psycopg.connect(DSN) as conn:
-            conn.read_only = READONLY
+            conn.read_only = READONLY and not is_write
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 if cur.description:
