@@ -104,6 +104,7 @@ def _rule_block(rule: CandidateRule, clause_by_id: dict[str, Clause]) -> dict[st
         "page": clause.page_number if clause else None,
         "paragraph_ref": clause.paragraph_ref if clause else None,
         "evidence": rule.source_evidence,
+        "text": clause.source_text if clause else "",
     }
     effect: dict[str, Any] = {"decision": rule.effect.decision}
     if rule.effect.approval_required is not None:

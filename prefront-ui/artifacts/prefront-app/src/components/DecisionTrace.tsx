@@ -2,12 +2,27 @@
 // on every governed call (the `governance` object on an MCP tool response). It is
 // the audit "product": what was asked, by whom, which rules fired, what was
 // decided, what executed. Pure presentation of the existing trace — no enrichment.
+import RuleProvenance, { type RuleSource } from "./RuleProvenance";
+
+type Clause = {
+  field: string;
+  operator: string;
+  value: any;
+  value_kind?: string;
+};
 
 type Rule = {
   rule_key: string;
+  rule_type?: string;
   decision?: string;
   fired?: boolean;
+  indeterminate?: boolean;
+  conditions?: Clause[];
+  reason?: string;
+  restricted_fields?: string[];
+  approver_role?: string;
   missing?: string[];
+  source?: RuleSource;
 };
 
 export type GovernanceTrace = {
@@ -54,19 +69,59 @@ function execClass(status = "") {
   return "off"; // not_executed / error
 }
 
-// One rule row: rule_key + effect + a fired / not-fired / indeterminate chip.
+const OP_SYMBOL: Record<string, string> = {
+  "==": "=", "!=": "≠", ">": ">", "<": "<", ">=": "≥", "<=": "≤",
+  in: "in", not_in: "not in",
+};
+
+// "amount > 10000", "caller.role ≠ Bank Manager", "amount > balance" (expression)
+function clauseText(c: Clause) {
+  const op = OP_SYMBOL[c.operator] || c.operator;
+  let v: any = c.value;
+  if (Array.isArray(v)) v = `[${v.join(", ")}]`;
+  return `${c.field} ${op} ${v}`;
+}
+
+// One rule row: name + type + effect + fired/indeterminate chip, then its
+// clauses (the conditions that must all hold to fire) and the policy detail.
 function RuleRow({ r }: { r: Rule }) {
-  const indeterminate = !!(r.missing && r.missing.length);
+  const indeterminate = r.indeterminate ?? !!(r.missing && r.missing.length);
   const chip = indeterminate ? "indeterminate" : r.fired ? "fired" : "not-fired";
   const chipClass = indeterminate ? "ind" : r.fired ? "fired" : "skip";
+  const conds = r.conditions || [];
   return (
     <div className={`pf-trace-rule ${r.fired ? "is-fired" : ""}`}>
-      <code className="pf-trace-rulekey">{r.rule_key}</code>
-      {r.decision && <span className="pf-trace-effect">{r.decision}</span>}
-      <span className={`pf-trace-chip ${chipClass}`}>{chip}</span>
-      {indeterminate && (
-        <span className="pf-trace-missing">missing: {r.missing!.join(", ")}</span>
+      <div className="pf-trace-rule-head">
+        <code className="pf-trace-rulekey">{r.rule_key}</code>
+        {r.rule_type && <span className="pf-trace-type">{r.rule_type}</span>}
+        {r.decision && <span className="pf-trace-effect">{r.decision}</span>}
+        <span className={`pf-trace-chip ${chipClass}`}>{chip}</span>
+      </div>
+      {conds.length > 0 && (
+        <div className="pf-trace-clauses">
+          <span className="pf-trace-when">when</span>
+          {conds.map((c, i) => (
+            <span key={i} className="pf-trace-clause">{clauseText(c)}</span>
+          ))}
+        </div>
       )}
+      {r.reason && <div className="pf-trace-rule-detail">{r.reason}</div>}
+      {r.restricted_fields && r.restricted_fields.length > 0 && (
+        <div className="pf-trace-rule-detail">
+          <span className="pf-trace-dlabel">restricts</span>{r.restricted_fields.join(", ")}
+        </div>
+      )}
+      {r.approver_role && (
+        <div className="pf-trace-rule-detail">
+          <span className="pf-trace-dlabel">approver</span>{r.approver_role}
+        </div>
+      )}
+      {indeterminate && (
+        <div className="pf-trace-rule-detail">
+          <span className="pf-trace-missing">missing: {(r.missing || []).join(", ")}</span>
+        </div>
+      )}
+      <RuleProvenance source={r.source} />
     </div>
   );
 }

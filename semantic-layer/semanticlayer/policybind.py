@@ -132,6 +132,17 @@ def bind_rules(
             rejected.append({"rule_key": key, "intents": intents, "reasons": problems})
             continue
 
+        # Provenance: carry the rule's link back to the source policy document
+        # (opaque bag — the binder never interprets it). Without this the published
+        # bundle loses all trace of WHICH policy text authorized the rule.
+        src = r.get("source") or {}
+        prov = {k: v for k, v in {
+            "text": src.get("text", ""),
+            "evidence": src.get("evidence", ""),
+            "document": src.get("document") or src.get("document_id", ""),
+            "section": src.get("section", ""),
+        }.items() if v}
+
         bound.append({
             "rule_key": key,
             "rule_type": r.get("rule_type", "restriction"),
@@ -139,6 +150,7 @@ def bind_rules(
             "conditions": bound_conditions,
             "effect": {k: v for k, v in effect.items() if v not in (None, [], "")},
             "bindings": bindings,
+            **({"source": prov} if prov else {}),
         })
 
     return bound, rejected, skipped, intents_map

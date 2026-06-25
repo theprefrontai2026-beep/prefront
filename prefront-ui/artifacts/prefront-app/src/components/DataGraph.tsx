@@ -17,6 +17,7 @@ import {
   deriveKind,
   buildPolicyIndex,
 } from "./policyIndex";
+import RuleProvenance from "./RuleProvenance";
 
 // ── Data Graph: live database relationships + clickable node detail ──────────
 // Nodes/edges come from the connected catalog (App's `schema.catalog`); applied
@@ -357,6 +358,7 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
                   {p.roles.map((r) => <span key={r} className="dg-role-chip">{r}</span>)}
                 </div>
               )}
+              <RuleProvenance source={p.provenance} collapsible />
             </div>
           );
         })}

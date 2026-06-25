@@ -11,6 +11,7 @@ import ReactFlow, {
 } from "reactflow";
 import { getPolicy } from "../api";
 import { buildPolicyIndex, deriveKind, deriveRoles, DECISION_LABEL, DECISION_SEV, type AppliedPolicy } from "./policyIndex";
+import RuleProvenance from "./RuleProvenance";
 
 // ── Business Graph: live domain model derived from the connected catalog +
 // approved policy. A *join view* — entities/processes come from the schema and
@@ -595,6 +596,7 @@ function DetailPanel({ node, onClose }: { node: BizEntity; onClose: () => void }
                     {p.roles.map(r => <span key={r} className="dg-role-chip">{r}</span>)}
                   </div>
                 )}
+                <RuleProvenance source={p.provenance} collapsible />
               </div>
             );
           })}

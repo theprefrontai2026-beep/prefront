@@ -14,8 +14,11 @@ export interface AppliedPolicy {
   roles?: string[];             // derived from caller.role conditions
   conditions?: any[];           // raw rule conditions (for synthesizing a description)
   status: string;               // approved | pending | rejected | published
-  source: "rule" | "bound";
+  source: "rule" | "bound";     // which layer this came from (NOT provenance)
   columns: string[];            // columns on THIS table the rule touches
+  // Provenance back to the source policy document (opaque bag). Named `provenance`
+  // to avoid clashing with `source` above (which means the layer origin).
+  provenance?: { text?: string; evidence?: string; document?: string; section?: string };
 }
 
 export const DECISION_LABEL: Record<string, string> = {
@@ -102,6 +105,12 @@ export function buildPolicyIndex(catalog: any, rules: any[], bound: any): Map<st
       conditions: rule.conditions,
       status: row.review_status || "pending",
       source: "rule",
+      provenance: {
+        text: rule.source_text,
+        evidence: rule.source_evidence,
+        document: rule.source?.document,
+        section: rule.source?.section,
+      },
     };
     for (const col of touched) {
       for (const table of colToTables.get(col) || []) {
@@ -136,6 +145,7 @@ export function buildPolicyIndex(catalog: any, rules: any[], bound: any): Map<st
       conditions: br.conditions,
       status: "published",
       source: "bound",
+      provenance: br.source,
     };
     for (const [tbl, cols] of byTbl) put(tbl, { ...base, columns: cols }, true);
   }

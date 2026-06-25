@@ -238,7 +238,8 @@ class Source(BaseModel):
     page: Optional[int] = None
     section: str = ""
     paragraph_ref: Optional[str] = None
-    evidence: str = ""
+    evidence: str = ""          # the cited phrase (LLM-pinpointed justification)
+    text: str = ""              # the full verbatim clause/section the rule was carved from
 
 
 class ApprovedRule(BaseModel):

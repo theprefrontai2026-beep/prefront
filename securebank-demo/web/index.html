@@ -85,14 +85,27 @@
   .tr-kv{display:flex;flex-wrap:wrap;gap:5px}
   .tr-pair{display:inline-flex;align-items:baseline;gap:5px;border:1px solid var(--line);border-radius:5px;padding:2px 7px;font-family:var(--mono);font-size:11px}
   .tr-pair .k{color:var(--muted)} .tr-pair .v{color:var(--ink);font-weight:600}
-  .tr-rule{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:3px 0;opacity:.55;font-family:var(--mono);font-size:11.5px}
-  .tr-rule.is-fired{opacity:1}
+  .tr-rule{padding:7px 9px;margin:5px 0;opacity:.6;border:1px solid var(--line-soft);border-radius:6px;background:var(--card)}
+  .tr-rule.is-fired{opacity:1;border-color:var(--clay-tint);box-shadow:inset 2px 0 0 var(--clay)}
+  .tr-rule-head{display:flex;align-items:center;flex-wrap:wrap;gap:7px;font-family:var(--mono);font-size:11.5px}
+  .tr-type{font-family:var(--mono);font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--clay);background:var(--clay-tint);border-radius:999px;padding:1px 7px}
   .tr-effect{font-family:var(--mono);font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 7px}
-  .tr-chip{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
+  .tr-chip{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border-radius:999px;padding:2px 8px;margin-left:auto}
   .tr-chip.fired{color:var(--forest);background:var(--forest-tint)}
   .tr-chip.skip{color:var(--muted);background:var(--field)}
   .tr-chip.ind{color:var(--amber);background:var(--amber-tint)}
+  .tr-clauses{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px}
+  .tr-when{font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .tr-clause{font-family:var(--mono);font-size:11px;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:5px;padding:2px 7px}
+  .tr-rdetail{font-size:11.5px;color:var(--ink-soft);margin-top:5px}
+  .tr-dlabel{font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:5px}
   .tr-missing{font-family:var(--mono);font-size:10px;color:var(--amber)}
+  .tr-prov{margin-top:7px}
+  .tr-prov-label{display:flex;align-items:baseline;gap:8px;margin-bottom:3px}
+  .tr-prov-kicker{font-family:var(--mono);font-size:9px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;color:var(--muted)}
+  .tr-prov-loc{font-family:var(--mono);font-size:10px;color:var(--clay)}
+  .tr-prov-quote{margin:0;padding:6px 10px;border-left:3px solid var(--line);background:var(--field);border-radius:0 5px 5px 0;font-size:12px;font-style:italic;color:var(--ink-soft);line-height:1.5}
+  .tr-cite{background:var(--amber-tint);color:var(--amber);font-style:normal;font-weight:600;padding:0 2px;border-radius:2px}
   .tr-exec{font-family:var(--mono);font-size:12px;font-weight:600}
   .tr-exec.ok{color:var(--forest)} .tr-exec.dry{color:var(--clay)} .tr-exec.off{color:var(--muted)}
 </style>
@@ -169,6 +182,19 @@ function governedSide(g) {
   return `<div class="side good"><div class="side-head"><span>With Prefront</span></div><div class="side-body">${body}</div></div>`;
 }
 
+// A rule's link back to the source policy document: the exact relevant excerpt
+// plus the document section. Mirrors the React RuleProvenance component.
+function provenance(s) {
+  if (!s) return "";
+  const esc = x => String(x).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  const excerpt = (s.evidence || s.text || "").trim();
+  const loc = [s.document, s.section].filter(Boolean).join(" · ");
+  if (!excerpt && !loc) return "";
+  return `<div class="tr-prov"><div class="tr-prov-label"><span class="tr-prov-kicker">policy source</span>`
+    + (loc ? `<span class="tr-prov-loc">${esc(loc)}</span>` : "") + `</div>`
+    + (excerpt ? `<blockquote class="tr-prov-quote">${esc(excerpt)}</blockquote>` : "") + `</div>`;
+}
+
 // The deterministic decision trace — what was asked, by whom, which rules fired,
 // what was decided, what executed. Mirrors the React DecisionTrace component.
 function decisionTrace(t) {
@@ -198,17 +224,29 @@ function decisionTrace(t) {
   const req = `<code class="tr-call">${t.matched_intent}(${args})</code>`
     + (t.template_id ? `<div class="tr-sub">template ${t.template_id}</div>` : "");
   // 3 Policy evaluation
+  const OP = {"==":"=","!=":"≠",">":">","<":"<",">=":"≥","<=":"≤","in":"in","not_in":"not in"};
+  const clauseText = c => `${c.field} ${OP[c.operator]||c.operator} ${Array.isArray(c.value)?"["+c.value.join(", ")+"]":c.value}`;
   let policy;
   if (rules.length) {
     policy = rules.map(r => {
-      const ind = r.missing && r.missing.length;
+      const ind = (r.indeterminate !== undefined) ? r.indeterminate : (r.missing && r.missing.length);
       const chip = ind ? "indeterminate" : r.fired ? "fired" : "not fired";
       const chipCls = ind ? "ind" : r.fired ? "fired" : "skip";
-      return `<div class="tr-rule${r.fired?" is-fired":""}"><code>${r.rule_key}</code>`
+      const conds = r.conditions || [];
+      let h = `<div class="tr-rule${r.fired?" is-fired":""}">`;
+      h += `<div class="tr-rule-head"><code>${r.rule_key}</code>`
+        + (r.rule_type ? `<span class="tr-type">${r.rule_type}</span>` : "")
         + (r.decision ? `<span class="tr-effect">${r.decision}</span>` : "")
-        + `<span class="tr-chip ${chipCls}">${chip}</span>`
-        + (ind ? `<span class="tr-missing">missing: ${r.missing.join(", ")}</span>` : "")
-        + `</div>`;
+        + `<span class="tr-chip ${chipCls}">${chip}</span></div>`;
+      if (conds.length) h += `<div class="tr-clauses"><span class="tr-when">when</span>`
+        + conds.map(c => `<span class="tr-clause">${clauseText(c)}</span>`).join("") + `</div>`;
+      if (r.reason) h += `<div class="tr-rdetail">${r.reason}</div>`;
+      if (r.restricted_fields && r.restricted_fields.length)
+        h += `<div class="tr-rdetail"><span class="tr-dlabel">restricts</span>${r.restricted_fields.join(", ")}</div>`;
+      if (r.approver_role) h += `<div class="tr-rdetail"><span class="tr-dlabel">approver</span>${r.approver_role}</div>`;
+      if (ind) h += `<div class="tr-rdetail"><span class="tr-missing">missing: ${(r.missing||[]).join(", ")}</span></div>`;
+      h += provenance(r.source);
+      return h + `</div>`;
     }).join("");
   } else {
     policy = `<span class="tr-muted">${authzBlock

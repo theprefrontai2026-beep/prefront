@@ -1185,24 +1185,64 @@ select { cursor: pointer; }
 }
 .pf-trace-kvpair .k { color: var(--muted); }
 .pf-trace-kvpair .v { color: var(--ink); font-weight: 600; }
-/* one rule row */
+/* one rule row — stacked: head line, clauses, then policy detail */
 .pf-trace-rule {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
-  padding: 3px 0; opacity: 0.6;
+  padding: 7px 9px; margin: 5px 0; opacity: 0.62;
+  border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface);
 }
-.pf-trace-rule.is-fired { opacity: 1; }
+.pf-trace-rule.is-fired { opacity: 1; border-color: var(--blue-light); box-shadow: inset 2px 0 0 var(--blue); }
+.pf-trace-rule-head { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.pf-trace-type {
+  font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--blue); background: var(--blue-light); border-radius: 999px; padding: 1px 7px;
+  font-family: var(--app-font-mono);
+}
 .pf-trace-effect {
   font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px;
 }
 .pf-trace-chip {
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-  border-radius: 999px; padding: 2px 8px; font-family: var(--app-font-mono);
+  border-radius: 999px; padding: 2px 8px; font-family: var(--app-font-mono); margin-left: auto;
 }
 .pf-trace-chip.fired { color: var(--green); background: var(--green-light); }
 .pf-trace-chip.skip  { color: var(--muted); background: var(--line-soft); }
 .pf-trace-chip.ind   { color: var(--amber); background: var(--amber-light); }
+/* clauses (conditions) */
+.pf-trace-clauses { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.pf-trace-when {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  font-family: var(--app-font-mono);
+}
+.pf-trace-clause {
+  font-family: var(--app-font-mono); font-size: 11px; color: var(--ink);
+  background: var(--bg, #f0f2f5); border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px;
+}
+.pf-trace-rule-detail { font-size: 11.5px; color: var(--ink-soft); margin-top: 5px; }
+.pf-trace-dlabel {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  margin-right: 5px; font-family: var(--app-font-mono);
+}
 .pf-trace-missing { font-size: 10px; color: var(--amber); font-family: var(--app-font-mono); }
+
+/* rule provenance — link back to the source policy document (shared across surfaces) */
+.pf-prov { margin-top: 7px; }
+.pf-prov-label { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+.pf-prov-kicker {
+  font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; font-weight: 700;
+  color: var(--muted); font-family: var(--app-font-mono);
+}
+.pf-prov-loc { font-size: 10px; color: var(--blue); font-family: var(--app-font-mono); }
+.pf-prov-quote {
+  margin: 0; padding: 6px 10px; border-left: 3px solid var(--line);
+  background: var(--bg, #f0f2f5); border-radius: 0 5px 5px 0;
+  font-size: 12px; font-style: italic; color: var(--ink-soft); line-height: 1.5;
+}
+.pf-prov-cite { background: var(--amber-light); color: var(--amber); font-style: normal; font-weight: 600; padding: 0 2px; border-radius: 2px; }
+.pf-prov-toggle {
+  margin-top: 4px; background: none; border: none; cursor: pointer; padding: 0;
+  font-size: 10px; font-weight: 600; color: var(--blue); font-family: var(--app-font-mono);
+}
 /* execution status */
 .pf-trace-exec { font-size: 12px; font-weight: 600; font-family: var(--app-font-mono); }
 .pf-trace-exec.ok  { color: var(--green); }

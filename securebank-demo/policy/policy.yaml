@@ -31,6 +31,11 @@ policy_bundle:
       effect:
         decision: block
         message: "OWN_DATA_ONLY: account holders may only view their own accounts."
+      source:
+        document: "SecureBank BRD"
+        section: "Stakeholders — Account Holder"
+        text: "Account Holder — Bank customer; can view own accounts, apply for loans, accept/decline loan offers, and initiate transfers within daily limits."
+        evidence: "can view own accounts"
       bindings:
         caller.role: {source: caller, attribute: role}
         caller.user_id: {source: caller, attribute: user_id}
@@ -45,6 +50,11 @@ policy_bundle:
       effect:
         decision: block
         message: "ROLE_NOT_PERMITTED: account holders cannot list other customers."
+      source:
+        document: "SecureBank BRD"
+        section: "FR-USER-1"
+        text: "Bank Managers and Tellers shall be able to list, view, create, and update user records."
+        evidence: "Bank Managers and Tellers shall be able to list, view"
       bindings:
         caller.role: {source: caller, attribute: role}
 
@@ -58,6 +68,11 @@ policy_bundle:
         decision: mask
         restricted_fields: [ssn]
         message: "MANAGER_ONLY_FIELD: ssn is visible to Bank Managers only."
+      source:
+        document: "SecureBank BRD"
+        section: "FR-ACCT-3"
+        text: "Sensitive field edits (interest rate, credit limit, SSN, credit score, annual income) shall follow a maker-checker workflow requiring Bank Manager approval before changes take effect."
+        evidence: "requiring Bank Manager approval"
       bindings:
         caller.role: {source: caller, attribute: role}
         ssn: {source: column, column: users.ssn}
@@ -71,6 +86,11 @@ policy_bundle:
       effect:
         decision: block
         message: "Source account is suspended — transfers are not permitted."
+      source:
+        document: "SecureBank BRD"
+        section: "FR-TXN-4"
+        text: "All fund transfers shall be authorized by the system's Authorization Service before execution; the service evaluates the user's role, risk level, and transfer amount."
+        evidence: "authorized by the system's Authorization Service before execution"
       bindings:
         status: {source: column, column: accounts.status}
 
@@ -83,6 +103,11 @@ policy_bundle:
       effect:
         decision: block
         message: "Insufficient funds: amount exceeds the account balance."
+      source:
+        document: "SecureBank BRD"
+        section: "FR-TXN-4"
+        text: "All fund transfers shall be authorized by the system's Authorization Service before execution; the service evaluates the user's role, risk level, and transfer amount."
+        evidence: "the service evaluates the user's role, risk level, and transfer amount"
       bindings:
         amount: {source: request_param}
         balance: {source: column, column: accounts.balance}
@@ -98,6 +123,11 @@ policy_bundle:
         decision: approval_required
         approver_role: "Bank Manager"
         message: "Transfers above $10,000 require Bank Manager approval."
+      source:
+        document: "SecureBank BRD"
+        section: "FR-TXN-3"
+        text: "Transfers exceeding $5,000 may only be initiated by a Bank Teller, and require Bank Manager approval before the funds are moved. The system shall not complete such a transfer without explicit Manager approval on record."
+        evidence: "require Bank Manager approval before the funds are moved"
       bindings:
         amount: {source: request_param}
 
@@ -110,6 +140,11 @@ policy_bundle:
       effect:
         decision: block
         message: "Transfer exceeds the $250,000 hard ceiling."
+      source:
+        document: "SecureBank BRD"
+        section: "BO-6"
+        text: "Enforce daily transfer limits per role to control financial risk and fraud exposure."
+        evidence: "control financial risk and fraud exposure"
       bindings:
         amount: {source: request_param}
 
@@ -122,5 +157,10 @@ policy_bundle:
       effect:
         decision: block
         message: "decide_loan is restricted to Bank Managers."
+      source:
+        document: "SecureBank BRD"
+        section: "FR-LOAN-3"
+        text: "Loan approval is subject to the following limits: Bank Tellers may approve loans up to and including $50,000; Bank Managers may approve loans of any amount. No other role may approve a loan."
+        evidence: "No other role may approve a loan"
       bindings:
         caller.role: {source: caller, attribute: role}

@@ -60,6 +60,9 @@ def evaluate(bundle: dict, intent: str, facts: dict[str, Any]) -> list[RuleOutco
             reason=effect.get("message", ""),
             approver_role=effect.get("approver_role"),
             restricted_fields=effect.get("restricted_fields") or [],
+            rule_type=rule.get("rule_type", ""),
+            conditions=rule.get("conditions") or [],
+            source=rule.get("source") or {},
         )
         fired = True
         for cond in rule.get("conditions") or []:

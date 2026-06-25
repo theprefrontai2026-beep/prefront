@@ -43,8 +43,15 @@ def build_trace(
         "rules_evaluated": [
             {
                 "rule_key": o.rule_key,
+                "rule_type": o.rule_type,
                 "decision": o.decision,
                 "fired": o.fired,
+                "indeterminate": o.indeterminate,
+                "conditions": o.conditions,
+                **({"source": o.source} if o.source else {}),
+                **({"reason": o.reason} if o.reason else {}),
+                **({"restricted_fields": o.restricted_fields} if o.restricted_fields else {}),
+                **({"approver_role": o.approver_role} if o.approver_role else {}),
                 **({"missing": o.missing} if o.missing else {}),
             }
             for o in decision.outcomes

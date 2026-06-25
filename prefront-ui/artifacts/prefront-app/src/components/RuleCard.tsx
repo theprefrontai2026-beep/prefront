@@ -1,5 +1,6 @@
 import { localTime } from "../util";
 import type { Reviewer } from "../hooks/useReviewSync";
+import RuleProvenance from "./RuleProvenance";
 
 const DECISION_CLASS: Record<string, string> = {
   block: "decision-block",
@@ -120,9 +121,12 @@ export default function RuleCard({ row, onApprove, onReject, busy, validation, f
           </div>
         )}
 
-        {rule.source_evidence && (
-          <blockquote className="pf-evidence">"{rule.source_evidence}"</blockquote>
-        )}
+        <RuleProvenance source={{
+          text: rule.source_text,
+          evidence: rule.source_evidence,
+          document: rule.source?.document,
+          section: rule.source?.section,
+        }} />
       </div>
 
       <footer className="pf-rule-foot">

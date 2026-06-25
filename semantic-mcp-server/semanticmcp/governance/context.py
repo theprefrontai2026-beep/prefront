@@ -48,6 +48,9 @@ class RuleOutcome:
     reason: str = ""
     approver_role: Optional[str] = None
     restricted_fields: list[str] = field(default_factory=list)
+    rule_type: str = ""                        # restriction | approval_threshold | data_access | …
+    conditions: list[dict] = field(default_factory=list)  # the rule's clauses (verbatim from the bundle)
+    source: dict = field(default_factory=dict)  # opaque provenance (text/evidence/document/section) — engine never interprets it
 
     @property
     def indeterminate(self) -> bool:

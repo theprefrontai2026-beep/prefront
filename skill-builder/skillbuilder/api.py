@@ -498,7 +498,25 @@ def run_full_extraction(document_id: str, body: StageBody = Body(default=StageBo
 
 @app.get("/design/skills/candidate-rules")
 def list_candidate_rules(document_id: Optional[str] = Query(default=None)):
-    return {"candidate_rules": store().list_candidate_rules(document_id)}
+    rows = store().list_candidate_rules(document_id)
+    # Attach the originating clause's verbatim text (provenance) so the UI can show
+    # the exact policy-document text a rule was generated from. The candidate already
+    # carries source_clause_id + source_evidence; we join the clause for full text.
+    clause_cache: dict[str, dict] = {}
+    for row in rows:
+        did = row.get("document_id")
+        if did not in clause_cache:
+            try:
+                _, clauses = _derive(_doc_or_404(did))
+                clause_cache[did] = _clause_index(clauses)
+            except Exception:
+                clause_cache[did] = {}
+        rule = row.get("rule") or {}
+        clause = clause_cache[did].get(rule.get("source_clause_id") or "")
+        if clause:
+            rule["source_text"] = clause.source_text
+            rule["source"] = {"document": clause.document_id, "section": clause.section_path}
+    return {"candidate_rules": rows}
 
 
 def _approve_candidate(
@@ -531,6 +549,7 @@ def _approve_candidate(
         section=clause.section_path if clause else "",
         paragraph_ref=clause.paragraph_ref if clause else None,
         evidence=cand.source_evidence,
+        text=clause.source_text if clause else "",
     )
     approved = ApprovedRule(
         rule_key=cand.rule_key,
