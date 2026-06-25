@@ -19,6 +19,14 @@ import RuleProvenance from "./RuleProvenance";
 // the published bound bundle when one exists). Engine stays domain-independent:
 // every label/heuristic is cosmetic, no table/role/policy is hardcoded.
 
+// Temporarily hide the "Attached Policies" fly-out section on the detail panel.
+// Flip to true to re-enable.
+const SHOW_ATTACHED_POLICIES = false;
+
+// Temporarily hide the side detail panel entirely (canvas takes full width).
+// Flip to true to re-enable.
+const SHOW_DETAIL_PANEL = false;
+
 // ── Domain palette ────────────────────────────────────────────────────────────
 const DOMAIN: Record<string, { bg: string; border: string; text: string; badge: string }> = {
   identity:   { bg: "#ede9fe", border: "#4f46e5", text: "#3730a3", badge: "#4f46e5" },
@@ -562,7 +570,9 @@ function DetailPanel({ node, onClose }: { node: BizEntity; onClose: () => void }
           </div>
         )}
 
-        {/* Attached policies — full governance detail per rule */}
+        {/* Attached policies — full governance detail per rule.
+            TEMPORARILY HIDDEN: re-enable by flipping SHOW_ATTACHED_POLICIES to true. */}
+        {SHOW_ATTACHED_POLICIES && (
         <div className="dg-detail-section">
           <div className="dg-detail-section-title">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -601,6 +611,7 @@ function DetailPanel({ node, onClose }: { node: BizEntity; onClose: () => void }
             );
           })}
         </div>
+        )}
 
         {/* Authorized roles */}
         {node.roles.length > 0 && (
@@ -820,7 +831,7 @@ export default function BusinessGraph({ catalog, datasourceId, rules = [], inten
           <Legend />
         </div>
 
-        {selectedNode ? (
+        {SHOW_DETAIL_PANEL && (selectedNode ? (
           <DetailPanel node={selectedNode} onClose={() => setSelectedId(null)} />
         ) : (
           <div className="dg-detail-panel dg-detail-empty" style={{ width: 280, minWidth: 280 }}>
@@ -835,7 +846,7 @@ export default function BusinessGraph({ catalog, datasourceId, rules = [], inten
             <div className="dg-detail-empty-title">Select a node</div>
             <div className="dg-detail-empty-sub">Click any entity, process, role, or governance node to see its description, mapped tables, and attached policies.</div>
           </div>
-        )}
+        ))}
       </div>
     </div>
   );
