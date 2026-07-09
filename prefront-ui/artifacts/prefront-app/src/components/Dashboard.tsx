@@ -14,15 +14,6 @@
 
 /* ── Fixtures (fudged SecureBank data) ───────────────────────────────────── */
 
-const HEALTH = {
-  score: 98.1,
-  label: "Excellent",
-  deltaPct: 1.4, // week over week
-  approvalsWaiting: 3, // transfers > $10k awaiting Bank Manager
-  blockedToday: 17,
-  criticalExecuted: 1, // a customer-directory read by a Bank Manager
-};
-
 const AGENT_ACTIVITY: { label: string; value: string; tone?: "green" | "red" | "amber" }[] = [
   { label: "Agents Active", value: "5" },
   { label: "Requests Today", value: "1,284" },
@@ -110,32 +101,6 @@ function RiskBadge({ risk }: { risk: Risk }) {
 export default function Dashboard() {
   return (
     <div className="pf-dash">
-      {/* ── Hero: Governance Health ── */}
-      <section className="pf-panel pf-dash-hero">
-        <div className="pf-dash-hero-score">
-          <div className="pf-dash-hero-label">Governance Health</div>
-          <div className="pf-dash-hero-value">{HEALTH.score}%</div>
-          <div className="pf-dash-hero-sub">
-            <span className="pf-dash-hero-grade">{HEALTH.label}</span>
-            <span className="pf-dash-hero-delta">↑ {HEALTH.deltaPct}% this week</span>
-          </div>
-        </div>
-        <div className="pf-dash-hero-counters">
-          <div className="pf-dash-counter">
-            <div className="pf-dash-counter-value amber">{HEALTH.approvalsWaiting}</div>
-            <div className="pf-dash-counter-label">Approval Requests Waiting</div>
-          </div>
-          <div className="pf-dash-counter">
-            <div className="pf-dash-counter-value red">{HEALTH.blockedToday}</div>
-            <div className="pf-dash-counter-label">Policy Violations Blocked Today</div>
-          </div>
-          <div className="pf-dash-counter">
-            <div className="pf-dash-counter-value">{HEALTH.criticalExecuted}</div>
-            <div className="pf-dash-counter-label">Critical-Risk Intents Executed</div>
-          </div>
-        </div>
-      </section>
-
       {/* ── Agent Activity + Decision Outcomes ── */}
       <div className="pf-dash-row pf-dash-row-2">
         <section className="pf-panel">
