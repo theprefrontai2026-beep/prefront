@@ -26,6 +26,17 @@ export interface FeedRow {
 
 export type FeedStatus = "loading" | "ready" | "error";
 
+// Cumulative, never-reset governance totals backing the Agent Activity panel.
+export interface AgentStats {
+  agentsActive: number;
+  total: number;
+  allowed: number;
+  masked: number;
+  blocked: number;
+  approval: number;
+  maskedFields: number;
+}
+
 // One persisted trace row as returned by GET /api/decisions.
 interface DecisionTrace {
   id: number;
@@ -86,15 +97,25 @@ function toFeedRow(t: DecisionTrace): FeedRow {
 /** Reads persisted governance traces newest-first; `populate()` seeds from the demo. */
 export function useDecisionFeed(limit = 50) {
   const [rows, setRows] = useState<FeedRow[]>([]);
+  const [stats, setStats] = useState<AgentStats | null>(null);
   const [status, setStatus] = useState<FeedStatus>("loading");
   const [error, setError] = useState("");
   const [populating, setPopulating] = useState(false);
+
+  const loadStats = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/stats`);
+      if (res.ok) setStats(await res.json());
+    } catch {
+      // stats are non-critical to the feed; leave prior value in place
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setStatus("loading");
     setError("");
     try {
-      const res = await fetch(`/api/decisions?limit=${limit}`);
+      const [res] = await Promise.all([fetch(`/api/decisions?limit=${limit}`), loadStats()]);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
       setRows((json.traces || []).map(toFeedRow));
@@ -103,7 +124,7 @@ export function useDecisionFeed(limit = 50) {
       setError(String(e?.message || e));
       setStatus("error");
     }
-  }, [limit]);
+  }, [limit, loadStats]);
 
   const clear = useCallback(async () => {
     setError("");
@@ -137,5 +158,5 @@ export function useDecisionFeed(limit = 50) {
     load();
   }, [load]);
 
-  return { rows, status, error, reload: load, populate, populating, clear };
+  return { rows, stats, status, error, reload: load, populate, populating, clear };
 }

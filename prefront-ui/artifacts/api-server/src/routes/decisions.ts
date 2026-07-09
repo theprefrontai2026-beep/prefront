@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../lib/db";
-import { decisionTrace, type InsertDecisionTrace } from "@workspace/db";
-import { desc, notInArray } from "drizzle-orm";
+import { decisionTrace, decisionStat, decisionAgent, type InsertDecisionTrace } from "@workspace/db";
+import { desc, notInArray, sql } from "drizzle-orm";
 
 const router = Router();
 
@@ -20,6 +20,51 @@ async function pruneOldTraces(): Promise<void> {
     .orderBy(desc(decisionTrace.createdAt), desc(decisionTrace.id))
     .limit(MAX_TRACES);
   await db.delete(decisionTrace).where(notInArray(decisionTrace.id, keep));
+}
+
+/**
+ * Fold a batch of just-inserted decisions into the FOREVER counters
+ * (`decision_stat`) and the distinct-agent set (`decision_agent`). These are
+ * never pruned or cleared, so the Agent Activity totals only ever grow.
+ */
+async function recordStats(rows: InsertDecisionTrace[]): Promise<void> {
+  if (!rows.length) return;
+
+  const delta: Record<string, number> = {
+    total: rows.length,
+    allowed: 0,
+    masked: 0,
+    blocked: 0,
+    approval: 0,
+    masked_fields: 0,
+  };
+  for (const r of rows) {
+    if (r.decision === "ALLOWED") delta.allowed++;
+    else if (r.decision === "MASKED") delta.masked++;
+    else if (r.decision === "BLOCKED") delta.blocked++;
+    else if (r.decision === "APPROVAL") delta.approval++;
+    if (Array.isArray(r.maskedFields)) delta.masked_fields += r.maskedFields.length;
+  }
+
+  // Atomic increment per metric key: INSERT … ON CONFLICT DO UPDATE count = count + n.
+  const counterRows = Object.entries(delta)
+    .filter(([, n]) => n > 0)
+    .map(([key, count]) => ({ key, count }));
+  if (counterRows.length) {
+    await db
+      .insert(decisionStat)
+      .values(counterRows)
+      .onConflictDoUpdate({
+        target: decisionStat.key,
+        set: { count: sql`${decisionStat.count} + excluded.count` },
+      });
+  }
+
+  // Remember every distinct caller identity (idempotent).
+  const agents = [...new Set(rows.map((r) => r.caller).filter(Boolean))].map((agent) => ({ agent }));
+  if (agents.length) {
+    await db.insert(decisionAgent).values(agents).onConflictDoNothing();
+  }
 }
 
 type DecisionLabel = "BLOCKED" | "APPROVAL" | "MASKED" | "ALLOWED";
@@ -70,6 +115,29 @@ router.get("/decisions", async (req, res) => {
   }
 });
 
+/** GET /api/stats — cumulative, never-reset governance totals (Agent Activity). */
+router.get("/stats", async (req, res) => {
+  try {
+    const counters = await db.select().from(decisionStat);
+    const m = Object.fromEntries(counters.map((c) => [c.key, Number(c.count)]));
+    const [{ agents }] = await db
+      .select({ agents: sql<number>`count(*)::int` })
+      .from(decisionAgent);
+    res.json({
+      agentsActive: agents ?? 0,
+      total: m.total ?? 0,
+      allowed: m.allowed ?? 0,
+      masked: m.masked ?? 0,
+      blocked: m.blocked ?? 0,
+      approval: m.approval ?? 0,
+      maskedFields: m.masked_fields ?? 0,
+    });
+  } catch (err) {
+    req.log.error({ err }, "stats fetch failed");
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
 /** DELETE /api/decisions — wipe every persisted trace (the dashboard Clear control). */
 router.delete("/decisions", async (req, res) => {
   try {
@@ -90,6 +158,7 @@ router.post("/decisions", async (req, res) => {
   }
   try {
     const [entry] = await db.insert(decisionTrace).values(row).returning();
+    await recordStats([row]);
     await pruneOldTraces();
     res.status(201).json({ trace: entry });
   } catch (err) {
@@ -116,6 +185,7 @@ router.post("/decisions/refresh", async (_req, res) => {
     const rows = diff.map(toInsert).filter((x): x is InsertDecisionTrace => x !== null);
     if (rows.length) {
       await db.insert(decisionTrace).values(rows);
+      await recordStats(rows);
       await pruneOldTraces();
     }
     res.json({ ok: true, count: rows.length });

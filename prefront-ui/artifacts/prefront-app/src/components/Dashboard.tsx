@@ -17,18 +17,32 @@
  */
 
 import { useDecisionFeed } from "../hooks/useDecisionFeed";
-import type { FeedDecision } from "../hooks/useDecisionFeed";
+import type { FeedDecision, AgentStats } from "../hooks/useDecisionFeed";
+
+/* ── Live: Agent Activity (cumulative, never-reset totals) ───────────────── */
+
+type StatTone = "green" | "red" | "amber";
+type Stat = { label: string; value: string; tone?: StatTone };
+
+const num = (n: number) => n.toLocaleString();
+
+// Cumulative counters from GET /api/stats → the Agent Activity tiles.
+// Zeros until the first decision is recorded (or while stats load).
+function agentActivity(s: AgentStats | null): Stat[] {
+  const z: AgentStats = s ?? {
+    agentsActive: 0, total: 0, allowed: 0, masked: 0, blocked: 0, approval: 0, maskedFields: 0,
+  };
+  return [
+    { label: "Agents Active", value: num(z.agentsActive) },
+    { label: "Total Requests", value: num(z.total) },
+    { label: "Successful", value: num(z.allowed + z.masked), tone: "green" },
+    { label: "Blocked", value: num(z.blocked), tone: "red" },
+    { label: "Approval Pending", value: num(z.approval), tone: "amber" },
+    { label: "Sensitive Fields Masked", value: num(z.maskedFields) },
+  ];
+}
 
 /* ── Fixtures (fudged SecureBank data) ───────────────────────────────────── */
-
-const AGENT_ACTIVITY: { label: string; value: string; tone?: "green" | "red" | "amber" }[] = [
-  { label: "Agents Active", value: "5" },
-  { label: "Requests Today", value: "1,284" },
-  { label: "Successful", value: "1,196", tone: "green" },
-  { label: "Blocked", value: "58", tone: "red" },
-  { label: "Approval Pending", value: "21", tone: "amber" },
-  { label: "Sensitive Fields Masked", value: "63" },
-];
 
 type OutcomeTone = "green" | "red" | "amber" | "purple";
 const OUTCOMES: { label: string; pct: number; tone: OutcomeTone }[] = [
@@ -99,7 +113,7 @@ export default function Dashboard() {
         <section className="pf-panel">
           <h2>Agent Activity</h2>
           <div className="pf-dash-stat-grid">
-            {AGENT_ACTIVITY.map((s) => (
+            {agentActivity(feed.stats).map((s) => (
               <div key={s.label} className="pf-dash-stat">
                 <div className={`pf-dash-stat-value ${s.tone ?? ""}`}>{s.value}</div>
                 <div className="pf-dash-stat-label">{s.label}</div>
