@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { db } from "../lib/db";
-import { decisionTrace, decisionStat, decisionAgent, type InsertDecisionTrace } from "@workspace/db";
+import {
+  decisionTrace,
+  decisionStat,
+  decisionAgent,
+  decisionPolicy,
+  type InsertDecisionTrace,
+} from "@workspace/db";
 import { desc, notInArray, sql } from "drizzle-orm";
 
 const router = Router();
@@ -65,6 +71,100 @@ async function recordStats(rows: InsertDecisionTrace[]): Promise<void> {
   if (agents.length) {
     await db.insert(decisionAgent).values(agents).onConflictDoNothing();
   }
+
+  await recordPolicies(rows);
+}
+
+type PolicyEffect = "block" | "mask" | "approval" | "allow";
+
+/** Map a rule's raw decision (or a row's normalized label) to a bar color. */
+function toEffect(raw: string): PolicyEffect {
+  const s = raw.toLowerCase();
+  if (s.startsWith("block")) return "block";
+  if (s.startsWith("mask")) return "mask";
+  if (s.startsWith("approval")) return "approval";
+  return "allow";
+}
+
+interface TriggeredPolicy {
+  policy: string;
+  effect: PolicyEffect;
+  kind: string;
+  reason: string;
+}
+
+/**
+ * The distinct governance policies a single decision triggered:
+ *   1. every rule in `rules_evaluated` that actually fired (authoritative),
+ *   2. plus engine authz/scoping reasons formatted "<rule_key>: <text>"
+ *      (e.g. role_not_permitted) that don't surface as declarative rules.
+ */
+function triggeredPolicies(row: InsertDecisionTrace): TriggeredPolicy[] {
+  const g: any = row.governance || {};
+  const out = new Map<string, TriggeredPolicy>();
+
+  for (const r of Array.isArray(g.rules_evaluated) ? g.rules_evaluated : []) {
+    if (r?.fired && r.rule_key) {
+      out.set(r.rule_key, {
+        policy: r.rule_key,
+        effect: toEffect(String(r.decision ?? row.decision)),
+        kind: String(r.rule_type ?? "policy"),
+        reason: String(r.reason ?? ""),
+      });
+    }
+  }
+
+  const reasons: string[] = Array.isArray(g.reasons)
+    ? g.reasons
+    : Array.isArray(row.reasons)
+      ? (row.reasons as string[])
+      : [];
+  for (const rs of reasons) {
+    const m = /^([a-z][a-z0-9_]+):\s*(.*)$/.exec(String(rs));
+    if (m && !out.has(m[1])) {
+      out.set(m[1], {
+        policy: m[1],
+        effect: toEffect(row.decision),
+        kind: "authorization",
+        reason: m[2],
+      });
+    }
+  }
+  return [...out.values()];
+}
+
+/** Fold triggered policies into the FOREVER per-policy counters. */
+async function recordPolicies(rows: InsertDecisionTrace[]): Promise<void> {
+  const agg = new Map<string, { count: number; effect: string; kind: string; reason: string }>();
+  for (const row of rows) {
+    for (const p of triggeredPolicies(row)) {
+      const cur = agg.get(p.policy);
+      if (cur) cur.count++;
+      else agg.set(p.policy, { count: 1, effect: p.effect, kind: p.kind, reason: p.reason });
+    }
+  }
+  if (!agg.size) return;
+
+  const values = [...agg.entries()].map(([policy, v]) => ({
+    policy,
+    count: v.count,
+    effect: v.effect,
+    kind: v.kind,
+    reason: v.reason,
+  }));
+  await db
+    .insert(decisionPolicy)
+    .values(values)
+    .onConflictDoUpdate({
+      target: decisionPolicy.policy,
+      set: {
+        count: sql`${decisionPolicy.count} + excluded.count`,
+        effect: sql`excluded.effect`,
+        kind: sql`excluded.kind`,
+        reason: sql`excluded.reason`,
+        lastSeen: sql`now()`,
+      },
+    });
 }
 
 type DecisionLabel = "BLOCKED" | "APPROVAL" | "MASKED" | "ALLOWED";
@@ -135,6 +235,20 @@ router.get("/stats", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "stats fetch failed");
     res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
+/** GET /api/policies — cumulative per-policy trigger counts, most-enforced first. */
+router.get("/policies", async (req, res) => {
+  try {
+    const rows = await db
+      .select()
+      .from(decisionPolicy)
+      .orderBy(desc(decisionPolicy.count), desc(decisionPolicy.lastSeen));
+    res.json({ policies: rows });
+  } catch (err) {
+    req.log.error({ err }, "policies fetch failed");
+    res.status(500).json({ error: "Failed to fetch policies" });
   }
 });
 

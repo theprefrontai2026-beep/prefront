@@ -37,6 +37,15 @@ export interface AgentStats {
   maskedFields: number;
 }
 
+// Cumulative per-policy trigger counts backing the Policies Enforced panel.
+export interface PolicyStat {
+  policy: string;
+  count: number;
+  effect: "block" | "mask" | "approval" | "allow" | null;
+  kind: string | null;
+  reason: string | null;
+}
+
 // One persisted trace row as returned by GET /api/decisions.
 interface DecisionTrace {
   id: number;
@@ -98,16 +107,18 @@ function toFeedRow(t: DecisionTrace): FeedRow {
 export function useDecisionFeed(limit = 50) {
   const [rows, setRows] = useState<FeedRow[]>([]);
   const [stats, setStats] = useState<AgentStats | null>(null);
+  const [policies, setPolicies] = useState<PolicyStat[]>([]);
   const [status, setStatus] = useState<FeedStatus>("loading");
   const [error, setError] = useState("");
   const [populating, setPopulating] = useState(false);
 
   const loadStats = useCallback(async () => {
     try {
-      const res = await fetch(`/api/stats`);
-      if (res.ok) setStats(await res.json());
+      const [sRes, pRes] = await Promise.all([fetch(`/api/stats`), fetch(`/api/policies`)]);
+      if (sRes.ok) setStats(await sRes.json());
+      if (pRes.ok) setPolicies((await pRes.json()).policies || []);
     } catch {
-      // stats are non-critical to the feed; leave prior value in place
+      // stats/policies are non-critical to the feed; leave prior values in place
     }
   }, []);
 
@@ -158,5 +169,5 @@ export function useDecisionFeed(limit = 50) {
     load();
   }, [load]);
 
-  return { rows, stats, status, error, reload: load, populate, populating, clear };
+  return { rows, stats, policies, status, error, reload: load, populate, populating, clear };
 }

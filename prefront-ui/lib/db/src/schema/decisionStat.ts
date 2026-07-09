@@ -1,4 +1,4 @@
-import { pgTable, varchar, bigint, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, varchar, bigint, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
  * Cumulative governance counters — persistent FOREVER.
@@ -23,5 +23,22 @@ export const decisionAgent = pgTable("decision_agent", {
   firstSeen: timestamp("first_seen", { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * Cumulative per-policy trigger counts — persistent FOREVER (like decision_stat).
+ * One row per governance rule that has ever fired (rule_key), so the Dashboard
+ * can rank policies by how often they're enforced. `effect` colors the bar
+ * (block | mask | approval | allow); `kind` is the rule category; `reason` is a
+ * representative human explanation (latest wins).
+ */
+export const decisionPolicy = pgTable("decision_policy", {
+  policy:   varchar("policy", { length: 128 }).primaryKey(),
+  count:    bigint("count", { mode: "number" }).notNull().default(0),
+  effect:   varchar("effect", { length: 16 }),
+  kind:     varchar("kind", { length: 32 }),
+  reason:   text("reason"),
+  lastSeen: timestamp("last_seen", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type DecisionStatRow = typeof decisionStat.$inferSelect;
 export type DecisionAgentRow = typeof decisionAgent.$inferSelect;
+export type DecisionPolicyRow = typeof decisionPolicy.$inferSelect;

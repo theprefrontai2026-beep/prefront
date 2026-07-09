@@ -17,7 +17,7 @@
  */
 
 import { useDecisionFeed } from "../hooks/useDecisionFeed";
-import type { FeedDecision, AgentStats } from "../hooks/useDecisionFeed";
+import type { FeedDecision, AgentStats, PolicyStat } from "../hooks/useDecisionFeed";
 
 /* ── Live: Agent Activity (cumulative, never-reset totals) ───────────────── */
 
@@ -76,15 +76,6 @@ const INTENTS: { intent: string; executions: number; risk: Risk }[] = [
   { intent: "view_users", executions: 14, risk: "Critical" },
 ];
 
-const POLICIES = [
-  { policy: "ssn_manager_only — SSN masked off-role", count: 63 },
-  { policy: "view_users_account_holder_block", count: 19 },
-  { policy: "transfer_requires_approval (> $10k)", count: 11 },
-  { policy: "loan_decision_manager_only", count: 8 },
-  { policy: "transfer_ceiling (> $250k)", count: 4 },
-  { policy: "transfer_from_suspended_account", count: 3 },
-];
-
 const PRECEDENTS: { title: string; children: string[] }[] = [
   { title: "transfer_requires_approval", children: ["$75,000 — acct 1042 (granted)", "$42,500 — acct 1001 (granted)", "$60,000 — acct 1002 (denied)"] },
   { title: "ssn_manager_only", children: ["view_user → Maria Lopez", "view_user → Sam Carter", "view_users → masked directory"] },
@@ -106,6 +97,54 @@ function RiskBadge({ risk }: { risk: Risk }) {
   const tone =
     risk === "Critical" ? "red" : risk === "High" ? "amber" : risk === "Medium" ? "teal" : "muted";
   return <span className={`pf-dash-risk ${tone}`}>{risk}</span>;
+}
+
+// block → red, mask → teal, approval → amber, allow → green.
+function effectTone(effect: PolicyStat["effect"]): string {
+  return effect === "block" ? "red"
+    : effect === "mask" ? "teal"
+    : effect === "approval" ? "amber"
+    : "green";
+}
+
+/**
+ * Policies Enforced — a cumulative leaderboard of every governance policy that
+ * has ever fired, ranked by trigger count. The #1 is emphasized; each row's bar
+ * width is proportional to the busiest policy, color-coded by effect.
+ */
+function PoliciesEnforced({ policies }: { policies: PolicyStat[] }) {
+  const max = policies[0]?.count || 1;
+  return (
+    <section className="pf-panel">
+      <div className="pf-dash-panel-head">
+        <h2>Policies Enforced</h2>
+        <span className="pf-dash-subtle">most-triggered · all-time</span>
+      </div>
+      {policies.length === 0 ? (
+        <div className="pf-dash-feed-status">No policies triggered yet.</div>
+      ) : (
+        <div className="pf-dash-pol">
+          {policies.map((p, i) => (
+            <div key={p.policy} className={`pf-dash-pol-row${i === 0 ? " top" : ""}`}>
+              <div className="pf-dash-pol-head">
+                <span className="pf-dash-pol-name">{p.policy}</span>
+                {i === 0 && <span className="pf-dash-pol-rank">most enforced</span>}
+                {p.effect && <span className={`pf-dash-chip ${effectTone(p.effect)}`}>{p.effect}</span>}
+                <span className="pf-dash-pol-count">{p.count.toLocaleString()}</span>
+              </div>
+              <div className="pf-dash-pol-track">
+                <div
+                  className={`pf-dash-pol-fill ${effectTone(p.effect)}`}
+                  style={{ width: `${Math.max((p.count / max) * 100, 4)}%` }}
+                />
+              </div>
+              {p.reason && <div className="pf-dash-pol-reason">{p.reason}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 /* ── Dashboard ───────────────────────────────────────────────────────────── */
@@ -244,22 +283,7 @@ export default function Dashboard() {
           </table>
         </section>
 
-        <section className="pf-panel">
-          <h2>Policies Triggered Today</h2>
-          <table className="pf-dash-table">
-            <thead>
-              <tr><th>Policy</th><th className="num">Count</th></tr>
-            </thead>
-            <tbody>
-              {POLICIES.map((p) => (
-                <tr key={p.policy}>
-                  <td>{p.policy}</td>
-                  <td className="num">{p.count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+        <PoliciesEnforced policies={feed.policies} />
       </div>
 
       {/* ── Context / Precedent Graph ── */}
