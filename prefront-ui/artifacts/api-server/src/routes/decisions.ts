@@ -1,13 +1,26 @@
 import { Router } from "express";
 import { db } from "../lib/db";
 import { decisionTrace, type InsertDecisionTrace } from "@workspace/db";
-import { desc } from "drizzle-orm";
+import { desc, notInArray } from "drizzle-orm";
 
 const router = Router();
 
 // Where the live governance catalog runs (the SecureBank demo orchestrator).
 // Same default hostname as the compose service; override via env.
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL ?? "http://securebank-orchestrator:8095";
+
+// Retention cap: keep only the newest N traces; older ones are pruned on write.
+const MAX_TRACES = 100;
+
+/** Delete everything but the newest MAX_TRACES rows. Runs after each insert. */
+async function pruneOldTraces(): Promise<void> {
+  const keep = db
+    .select({ id: decisionTrace.id })
+    .from(decisionTrace)
+    .orderBy(desc(decisionTrace.createdAt), desc(decisionTrace.id))
+    .limit(MAX_TRACES);
+  await db.delete(decisionTrace).where(notInArray(decisionTrace.id, keep));
+}
 
 type DecisionLabel = "BLOCKED" | "APPROVAL" | "MASKED" | "ALLOWED";
 
@@ -66,6 +79,7 @@ router.post("/decisions", async (req, res) => {
   }
   try {
     const [entry] = await db.insert(decisionTrace).values(row).returning();
+    await pruneOldTraces();
     res.status(201).json({ trace: entry });
   } catch (err) {
     req.log.error({ err }, "decision insert failed");
@@ -89,7 +103,10 @@ router.post("/decisions/refresh", async (_req, res) => {
       throw new Error(diff?.error || "orchestrator did not return a diff array");
     }
     const rows = diff.map(toInsert).filter((x): x is InsertDecisionTrace => x !== null);
-    if (rows.length) await db.insert(decisionTrace).values(rows);
+    if (rows.length) {
+      await db.insert(decisionTrace).values(rows);
+      await pruneOldTraces();
+    }
     res.json({ ok: true, count: rows.length });
   } catch (err) {
     _req.log.error({ err }, "decisions refresh failed");
