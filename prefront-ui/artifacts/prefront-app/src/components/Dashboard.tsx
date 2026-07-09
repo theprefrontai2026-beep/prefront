@@ -42,15 +42,21 @@ function agentActivity(s: AgentStats | null): Stat[] {
   ];
 }
 
-/* ── Fixtures (fudged SecureBank data) ───────────────────────────────────── */
+// Decision Outcomes: the four governed buckets as a share of all requests,
+// from the same cumulative stats. Zeros (0%) until the first decision lands.
+type OutcomeTone = "green" | "teal" | "red" | "amber";
+function decisionOutcomes(s: AgentStats | null): { label: string; pct: number; tone: OutcomeTone }[] {
+  const total = s?.total ?? 0;
+  const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
+  return [
+    { label: "Allowed", pct: pct(s?.allowed ?? 0), tone: "green" },
+    { label: "Masked", pct: pct(s?.masked ?? 0), tone: "teal" },
+    { label: "Blocked", pct: pct(s?.blocked ?? 0), tone: "red" },
+    { label: "Approval Required", pct: pct(s?.approval ?? 0), tone: "amber" },
+  ];
+}
 
-type OutcomeTone = "green" | "red" | "amber" | "purple";
-const OUTCOMES: { label: string; pct: number; tone: OutcomeTone }[] = [
-  { label: "Allowed", pct: 84, tone: "green" },
-  { label: "Blocked", pct: 9, tone: "red" },
-  { label: "Approval Required", pct: 6, tone: "amber" },
-  { label: "Overridden", pct: 1, tone: "purple" },
-];
+/* ── Fixtures (fudged SecureBank data) ───────────────────────────────────── */
 
 // Only `transfer_requires_approval` routes to a human — transfers in
 // ($10k, $250k] await a Bank Manager.
@@ -125,7 +131,7 @@ export default function Dashboard() {
         <section className="pf-panel">
           <h2>Decision Outcomes</h2>
           <div className="pf-dash-bars">
-            {OUTCOMES.map((o) => (
+            {decisionOutcomes(feed.stats).map((o) => (
               <div key={o.label} className="pf-dash-bar-row">
                 <div className="pf-dash-bar-label">{o.label}</div>
                 <div className="pf-dash-bar-track">

@@ -1342,6 +1342,7 @@ select { cursor: pointer; }
 .pf-dash-bar-fill.green  { background: var(--green); }
 .pf-dash-bar-fill.red    { background: var(--red); }
 .pf-dash-bar-fill.amber  { background: var(--amber); }
+.pf-dash-bar-fill.teal   { background: var(--teal); }
 .pf-dash-bar-fill.purple { background: var(--purple); }
 .pf-dash-bar-pct { font-size: 12px; font-weight: 700; color: var(--ink); text-align: right; }
 
