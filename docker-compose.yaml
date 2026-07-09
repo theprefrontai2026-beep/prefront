@@ -155,6 +155,8 @@ services:
       DATABASE_URL: postgresql://prefront:prefront@api-db:5432/prefront_audit
       PORT: "8080"
       NODE_ENV: production
+      # Where POST /api/decisions/refresh runs the live governance catalog.
+      ORCHESTRATOR_URL: http://securebank-orchestrator:8095
     ports: ["8080:8080"]
     depends_on:
       api-db:

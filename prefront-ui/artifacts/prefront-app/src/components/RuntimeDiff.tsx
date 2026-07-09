@@ -3,6 +3,17 @@ import DecisionTrace from "./DecisionTrace";
 
 const DEFAULT_SERVER = "http://localhost:8095";
 
+/** Persist one governed decision so it shows on the Dashboard's trace feed.
+ *  Best-effort: a logging failure must never break the runtime diff view. */
+function persistDecision(diff: any) {
+  if (!diff?.governed) return;
+  fetch("/api/decisions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(diff),
+  }).catch(() => {});
+}
+
 function verdictClass(outcome = "") {
   const o = outcome.toUpperCase();
   if (o.startsWith("BLOCK")) return "v-block";
@@ -130,7 +141,10 @@ export default function RuntimeDiff() {
       const res = await fetch(`${server}/api/diff?only=${encodeURIComponent(id)}`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      if (json[0]) setResults((m) => ({ ...m, [id]: json[0] }));
+      if (json[0]) {
+        setResults((m) => ({ ...m, [id]: json[0] }));
+        persistDecision(json[0]); // best-effort: log to the dashboard's trace DB
+      }
     } catch (e: any) {
       setResults((m) => ({ ...m, [id]: { _error: String(e.message || e) } }));
     } finally {

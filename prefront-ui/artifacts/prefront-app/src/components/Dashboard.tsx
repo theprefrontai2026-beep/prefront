@@ -9,10 +9,11 @@
  * Teller / Bank Manager), and the B1–B9 scenario personas (maria/sam/tom/
  * priya).
  *
- * The Live Decision Trace Feed is now wired to REAL data — it runs the demo
- * catalog through the Prefront pipeline (see useDecisionFeed). The remaining
- * panels are still presentational fixtures (below); swap each `const` for an
- * API call as the backend summary endpoints land.
+ * The Live Decision Trace Feed is now wired to REAL data — it reads persisted
+ * governance traces from the DB (GET /api/decisions; see useDecisionFeed) and
+ * never re-runs the LLM on load. The remaining panels are still presentational
+ * fixtures (below); swap each `const` for an API call as the backend summary
+ * endpoints land.
  */
 
 import { useDecisionFeed } from "../hooks/useDecisionFeed";
@@ -149,12 +150,14 @@ export default function Dashboard() {
         <section className="pf-panel">
           <div className="pf-dash-panel-head">
             <h2>Live Decision Trace Feed</h2>
-            {feed.status === "loading" ? (
+            {feed.populating ? (
               <span className="pf-dash-live"><span className="pf-dash-live-dot" />running…</span>
             ) : feed.status === "error" ? (
               <button className="pf-dash-link" type="button" onClick={feed.reload}>Retry ↻</button>
             ) : (
-              <button className="pf-dash-link" type="button" onClick={feed.reload}>Refresh ↻</button>
+              <button className="pf-dash-link" type="button" onClick={feed.reload} disabled={feed.status === "loading"}>
+                Refresh ↻
+              </button>
             )}
           </div>
           <div className="pf-dash-feed">
@@ -174,18 +177,21 @@ export default function Dashboard() {
                 </div>
               </div>
             ))}
-            {feed.status === "loading" && (
-              <div className="pf-dash-feed-status">
-                Running the SecureBank catalog through the Prefront pipeline…
-              </div>
+            {feed.status === "loading" && feed.rows.length === 0 && (
+              <div className="pf-dash-feed-status">Loading persisted decision traces…</div>
             )}
             {feed.status === "error" && (
               <div className="pf-dash-feed-status error">
-                Couldn’t reach the demo server ({feed.error}). Is the SecureBank orchestrator running on :8095?
+                Couldn’t load traces ({feed.error}). Is the api-server running?
               </div>
             )}
             {feed.status === "ready" && feed.rows.length === 0 && (
-              <div className="pf-dash-feed-status">No decisions returned by the demo server.</div>
+              <div className="pf-dash-feed-status">
+                No decisions recorded yet. Run scenarios in the Runtime tab, or{" "}
+                <button className="pf-dash-link" type="button" onClick={feed.populate} disabled={feed.populating}>
+                  {feed.populating ? "populating…" : "populate from the demo →"}
+                </button>
+              </div>
             )}
           </div>
         </section>
