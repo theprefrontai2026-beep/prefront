@@ -150,15 +150,22 @@ export default function Dashboard() {
         <section className="pf-panel">
           <div className="pf-dash-panel-head">
             <h2>Live Decision Trace Feed</h2>
-            {feed.populating ? (
-              <span className="pf-dash-live"><span className="pf-dash-live-dot" />running…</span>
-            ) : feed.status === "error" ? (
-              <button className="pf-dash-link" type="button" onClick={feed.reload}>Retry ↻</button>
-            ) : (
-              <button className="pf-dash-link" type="button" onClick={feed.reload} disabled={feed.status === "loading"}>
-                Refresh ↻
-              </button>
-            )}
+            <div className="pf-dash-feed-actions">
+              {feed.rows.length > 0 && !feed.populating && (
+                <button className="pf-dash-link danger" type="button" onClick={feed.clear}>
+                  Clear ✕
+                </button>
+              )}
+              {feed.populating ? (
+                <span className="pf-dash-live"><span className="pf-dash-live-dot" />running…</span>
+              ) : feed.status === "error" ? (
+                <button className="pf-dash-link" type="button" onClick={feed.reload}>Retry ↻</button>
+              ) : (
+                <button className="pf-dash-link" type="button" onClick={feed.reload} disabled={feed.status === "loading"}>
+                  Refresh ↻
+                </button>
+              )}
+            </div>
           </div>
           <div className="pf-dash-feed">
             {feed.rows.map((f) => (

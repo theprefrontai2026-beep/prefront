@@ -70,6 +70,17 @@ router.get("/decisions", async (req, res) => {
   }
 });
 
+/** DELETE /api/decisions — wipe every persisted trace (the dashboard Clear control). */
+router.delete("/decisions", async (req, res) => {
+  try {
+    await db.delete(decisionTrace);
+    res.json({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "decisions clear failed");
+    res.status(500).json({ error: "Failed to clear decision traces" });
+  }
+});
+
 /** POST /api/decisions — persist one governed decision (a `/api/diff` element). */
 router.post("/decisions", async (req, res) => {
   const row = toInsert(req.body);

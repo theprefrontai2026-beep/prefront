@@ -105,6 +105,19 @@ export function useDecisionFeed(limit = 50) {
     }
   }, [limit]);
 
+  const clear = useCallback(async () => {
+    setError("");
+    try {
+      const res = await fetch(`/api/decisions`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
+      setRows([]);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+      await load();
+    }
+  }, [load]);
+
   const populate = useCallback(async () => {
     setPopulating(true);
     setError("");
@@ -124,5 +137,5 @@ export function useDecisionFeed(limit = 50) {
     load();
   }, [load]);
 
-  return { rows, status, error, reload: load, populate, populating };
+  return { rows, status, error, reload: load, populate, populating, clear };
 }

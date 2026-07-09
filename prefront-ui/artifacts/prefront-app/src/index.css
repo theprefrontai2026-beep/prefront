@@ -1274,6 +1274,10 @@ select { cursor: pointer; }
   color: var(--blue); font-size: 12px; font-weight: 600; padding: 0;
 }
 .pf-dash-link:hover { color: var(--blue-hover); }
+.pf-dash-link:disabled { color: var(--muted); cursor: default; }
+.pf-dash-link.danger { color: var(--red); }
+.pf-dash-link.danger:hover { color: var(--red); text-decoration: underline; }
+.pf-dash-feed-actions { display: flex; align-items: center; gap: 14px; }
 .pf-dash-live {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 11px; color: var(--muted); text-transform: uppercase;
