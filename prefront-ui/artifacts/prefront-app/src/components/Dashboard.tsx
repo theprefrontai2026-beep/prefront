@@ -7,10 +7,16 @@
  * (view_users / initiate_transfer / decide_loan …), rules (ssn_manager_only,
  * transfer_requires_approval, $250k ceiling …), roles (Account Holder / Bank
  * Teller / Bank Manager), and the B1–B9 scenario personas (maria/sam/tom/
- * priya). v1 is presentational with hardcoded fixtures (below); swap each
- * `const` for an API call (/api/audit + governance summary) when the backend
- * lands — the component reads only from these shapes, so wiring is mechanical.
+ * priya).
+ *
+ * The Live Decision Trace Feed is now wired to REAL data — it runs the demo
+ * catalog through the Prefront pipeline (see useDecisionFeed). The remaining
+ * panels are still presentational fixtures (below); swap each `const` for an
+ * API call as the backend summary endpoints land.
  */
+
+import { useDecisionFeed } from "../hooks/useDecisionFeed";
+import type { FeedDecision } from "../hooks/useDecisionFeed";
 
 /* ── Fixtures (fudged SecureBank data) ───────────────────────────────────── */
 
@@ -37,25 +43,6 @@ const APPROVALS = [
   { request: "Transfer $75,000 — acct 1042 → 5005", owner: "Bank Manager", waiting: "6m" },
   { request: "Transfer $42,500 — acct 1001 → 8810", owner: "Bank Manager", waiting: "24m" },
   { request: "Transfer $18,200 — acct 1002 → 3140", owner: "Bank Manager", waiting: "1h 12m" },
-];
-
-type Decision = "BLOCKED" | "APPROVED" | "ALLOWED";
-const FEED: {
-  time: string;
-  decision: Decision;
-  agent: string;
-  intent: string;
-  reason: string;
-  source: string;
-}[] = [
-  { time: "10:21", decision: "BLOCKED", agent: "Teller Copilot · tom", intent: "view_users", reason: "Bulk customer export rejected — no over-broad reads", source: "validator · executable" },
-  { time: "10:19", decision: "ALLOWED", agent: "Teller Copilot · tom", intent: "view_user (Maria Lopez)", reason: "ssn_manager_only → ssn masked for Bank Teller", source: "policy.yaml · data_access" },
-  { time: "10:17", decision: "APPROVED", agent: "Teller Copilot · tom", intent: "initiate_transfer $75,000", reason: "transfer_requires_approval → granted by Bank Manager (priya)", source: "policy.yaml · approval_threshold" },
-  { time: "10:14", decision: "BLOCKED", agent: "Teller Copilot · tom", intent: "initiate_transfer $300,000", reason: "transfer_ceiling — $250k hard limit exceeded", source: "policy.yaml · restriction" },
-  { time: "10:09", decision: "BLOCKED", agent: "Customer Assistant · maria", intent: "view_users", reason: "view_users_account_holder_block — role not permitted", source: "policy.yaml · restriction" },
-  { time: "10:04", decision: "BLOCKED", agent: "Customer Assistant · maria", intent: "view_account 1042", reason: "own-data-only — account not owned by caller", source: "query_templates · scoping" },
-  { time: "09:58", decision: "BLOCKED", agent: "Teller Copilot · tom", intent: "decide_loan 7001", reason: "loan_decision_manager_only — Bank Manager required", source: "policy.yaml · restriction" },
-  { time: "09:52", decision: "ALLOWED", agent: "Customer Assistant · maria", intent: "view_accounts", reason: "scoped to caller_user_id — own accounts only", source: "query_templates · read" },
 ];
 
 type Risk = "Critical" | "High" | "Medium" | "Low";
@@ -85,8 +72,12 @@ const PRECEDENTS: { title: string; children: string[] }[] = [
 
 /* ── Small presentational helpers ────────────────────────────────────────── */
 
-function DecisionChip({ decision }: { decision: Decision }) {
-  const tone = decision === "BLOCKED" ? "red" : decision === "APPROVED" ? "amber" : "green";
+function DecisionChip({ decision }: { decision: FeedDecision }) {
+  const tone =
+    decision === "BLOCKED" ? "red"
+    : decision === "APPROVAL" ? "amber"
+    : decision === "MASKED" ? "teal"
+    : "green";
   return <span className={`pf-dash-chip ${tone}`}>{decision}</span>;
 }
 
@@ -99,6 +90,7 @@ function RiskBadge({ risk }: { risk: Risk }) {
 /* ── Dashboard ───────────────────────────────────────────────────────────── */
 
 export default function Dashboard() {
+  const feed = useDecisionFeed();
   return (
     <div className="pf-dash">
       {/* ── Agent Activity + Decision Outcomes ── */}
@@ -157,11 +149,17 @@ export default function Dashboard() {
         <section className="pf-panel">
           <div className="pf-dash-panel-head">
             <h2>Live Decision Trace Feed</h2>
-            <span className="pf-dash-live"><span className="pf-dash-live-dot" />live</span>
+            {feed.status === "loading" ? (
+              <span className="pf-dash-live"><span className="pf-dash-live-dot" />running…</span>
+            ) : feed.status === "error" ? (
+              <button className="pf-dash-link" type="button" onClick={feed.reload}>Retry ↻</button>
+            ) : (
+              <button className="pf-dash-link" type="button" onClick={feed.reload}>Refresh ↻</button>
+            )}
           </div>
           <div className="pf-dash-feed">
-            {FEED.map((f, i) => (
-              <div key={i} className="pf-dash-feed-row">
+            {feed.rows.map((f) => (
+              <div key={f.id} className="pf-dash-feed-row">
                 <div className="pf-dash-feed-time">{f.time}</div>
                 <div className="pf-dash-feed-body">
                   <div className="pf-dash-feed-top">
@@ -176,6 +174,19 @@ export default function Dashboard() {
                 </div>
               </div>
             ))}
+            {feed.status === "loading" && (
+              <div className="pf-dash-feed-status">
+                Running the SecureBank catalog through the Prefront pipeline…
+              </div>
+            )}
+            {feed.status === "error" && (
+              <div className="pf-dash-feed-status error">
+                Couldn’t reach the demo server ({feed.error}). Is the SecureBank orchestrator running on :8095?
+              </div>
+            )}
+            {feed.status === "ready" && feed.rows.length === 0 && (
+              <div className="pf-dash-feed-status">No decisions returned by the demo server.</div>
+            )}
           </div>
         </section>
       </div>
