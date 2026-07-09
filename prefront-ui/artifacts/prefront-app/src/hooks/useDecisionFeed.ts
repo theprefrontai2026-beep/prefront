@@ -10,7 +10,7 @@
  * as an explicit user action.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 export type FeedDecision = "BLOCKED" | "APPROVAL" | "MASKED" | "ALLOWED";
 
@@ -46,8 +46,15 @@ export interface PolicyStat {
   reason: string | null;
 }
 
+// Cumulative per-intent executions backing the Most Used Intents panel.
+export interface IntentStat {
+  intent: string;
+  executions: number;
+  risk: "Critical" | "High" | "Medium" | "Low";
+}
+
 // One persisted trace row as returned by GET /api/decisions.
-interface DecisionTrace {
+export interface Trace {
   id: number;
   scenarioId: string;
   caller: string;
@@ -59,6 +66,8 @@ interface DecisionTrace {
   outcome: string | null;
   status: string | null;
   reasons: string[] | null;
+  approverRoles: string[] | null;
+  policy: string | null;
   createdAt: string;
 }
 
@@ -75,7 +84,7 @@ function firstName(name: string): string {
 }
 
 // A compact, human-readable rendering of the governed intent + its key arg.
-function intentLabel(t: DecisionTrace): string {
+function intentLabel(t: Trace): string {
   const intent = t.intent || "no approved intent";
   const a = t.args || {};
   if (typeof a.amount === "number") return `${intent} $${a.amount.toLocaleString()}`;
@@ -91,7 +100,7 @@ function hhmm(iso: string): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function toFeedRow(t: DecisionTrace): FeedRow {
+function toFeedRow(t: Trace): FeedRow {
   return {
     id: String(t.id),
     time: hhmm(t.createdAt),
@@ -105,20 +114,28 @@ function toFeedRow(t: DecisionTrace): FeedRow {
 
 /** Reads persisted governance traces newest-first; `populate()` seeds from the demo. */
 export function useDecisionFeed(limit = 50) {
-  const [rows, setRows] = useState<FeedRow[]>([]);
+  const [traces, setTraces] = useState<Trace[]>([]);
   const [stats, setStats] = useState<AgentStats | null>(null);
   const [policies, setPolicies] = useState<PolicyStat[]>([]);
+  const [intents, setIntents] = useState<IntentStat[]>([]);
   const [status, setStatus] = useState<FeedStatus>("loading");
   const [error, setError] = useState("");
   const [populating, setPopulating] = useState(false);
 
+  const rows = useMemo(() => traces.map(toFeedRow), [traces]);
+
   const loadStats = useCallback(async () => {
     try {
-      const [sRes, pRes] = await Promise.all([fetch(`/api/stats`), fetch(`/api/policies`)]);
+      const [sRes, pRes, iRes] = await Promise.all([
+        fetch(`/api/stats`),
+        fetch(`/api/policies`),
+        fetch(`/api/intents`),
+      ]);
       if (sRes.ok) setStats(await sRes.json());
       if (pRes.ok) setPolicies((await pRes.json()).policies || []);
+      if (iRes.ok) setIntents((await iRes.json()).intents || []);
     } catch {
-      // stats/policies are non-critical to the feed; leave prior values in place
+      // aggregates are non-critical to the feed; leave prior values in place
     }
   }, []);
 
@@ -129,7 +146,7 @@ export function useDecisionFeed(limit = 50) {
       const [res] = await Promise.all([fetch(`/api/decisions?limit=${limit}`), loadStats()]);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
-      setRows((json.traces || []).map(toFeedRow));
+      setTraces(json.traces || []);
       setStatus("ready");
     } catch (e: any) {
       setError(String(e?.message || e));
@@ -143,7 +160,7 @@ export function useDecisionFeed(limit = 50) {
       const res = await fetch(`/api/decisions`, { method: "DELETE" });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
-      setRows([]);
+      setTraces([]);
     } catch (e: any) {
       setError(String(e?.message || e));
       await load();
@@ -169,5 +186,5 @@ export function useDecisionFeed(limit = 50) {
     load();
   }, [load]);
 
-  return { rows, stats, policies, status, error, reload: load, populate, populating, clear };
+  return { rows, traces, stats, policies, intents, status, error, reload: load, populate, populating, clear };
 }

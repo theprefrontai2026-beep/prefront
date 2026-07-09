@@ -27,6 +27,7 @@ export const decisionTrace = pgTable("decision_trace", {
   reasons:       jsonb("reasons"),                                  // string[]
   maskedFields:  jsonb("masked_fields"),                            // string[]
   approverRoles: jsonb("approver_roles"),                           // string[]
+  policy:        varchar("policy", { length: 128 }),                // primary triggered policy (for the precedent graph)
   governance:    jsonb("governance"),                               // full deterministic decision trace
   createdAt:     timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

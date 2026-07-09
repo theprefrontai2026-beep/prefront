@@ -39,6 +39,22 @@ export const decisionPolicy = pgTable("decision_policy", {
   lastSeen: timestamp("last_seen", { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * Cumulative per-intent execution counts — persistent FOREVER. Backs the
+ * "Most Used Intents" panel; the per-effect buckets let the UI derive a
+ * data-driven risk level (what governance actually did to this intent).
+ */
+export const decisionIntent = pgTable("decision_intent", {
+  intent:   varchar("intent", { length: 128 }).primaryKey(),
+  count:    bigint("count", { mode: "number" }).notNull().default(0),
+  allowed:  bigint("allowed", { mode: "number" }).notNull().default(0),
+  masked:   bigint("masked", { mode: "number" }).notNull().default(0),
+  blocked:  bigint("blocked", { mode: "number" }).notNull().default(0),
+  approval: bigint("approval", { mode: "number" }).notNull().default(0),
+  lastSeen: timestamp("last_seen", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type DecisionStatRow = typeof decisionStat.$inferSelect;
 export type DecisionAgentRow = typeof decisionAgent.$inferSelect;
 export type DecisionPolicyRow = typeof decisionPolicy.$inferSelect;
+export type DecisionIntentRow = typeof decisionIntent.$inferSelect;

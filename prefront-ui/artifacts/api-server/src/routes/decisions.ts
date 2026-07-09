@@ -5,6 +5,7 @@ import {
   decisionStat,
   decisionAgent,
   decisionPolicy,
+  decisionIntent,
   type InsertDecisionTrace,
 } from "@workspace/db";
 import { desc, notInArray, sql } from "drizzle-orm";
@@ -73,6 +74,42 @@ async function recordStats(rows: InsertDecisionTrace[]): Promise<void> {
   }
 
   await recordPolicies(rows);
+  await recordIntents(rows);
+}
+
+/** Fold executed intents into the FOREVER per-intent counters + effect buckets. */
+async function recordIntents(rows: InsertDecisionTrace[]): Promise<void> {
+  const agg = new Map<
+    string,
+    { count: number; allowed: number; masked: number; blocked: number; approval: number }
+  >();
+  for (const r of rows) {
+    if (!r.intent) continue;
+    const cur = agg.get(r.intent) ?? { count: 0, allowed: 0, masked: 0, blocked: 0, approval: 0 };
+    cur.count++;
+    if (r.decision === "ALLOWED") cur.allowed++;
+    else if (r.decision === "MASKED") cur.masked++;
+    else if (r.decision === "BLOCKED") cur.blocked++;
+    else if (r.decision === "APPROVAL") cur.approval++;
+    agg.set(r.intent, cur);
+  }
+  if (!agg.size) return;
+
+  const values = [...agg.entries()].map(([intent, v]) => ({ intent, ...v }));
+  await db
+    .insert(decisionIntent)
+    .values(values)
+    .onConflictDoUpdate({
+      target: decisionIntent.intent,
+      set: {
+        count: sql`${decisionIntent.count} + excluded.count`,
+        allowed: sql`${decisionIntent.allowed} + excluded.allowed`,
+        masked: sql`${decisionIntent.masked} + excluded.masked`,
+        blocked: sql`${decisionIntent.blocked} + excluded.blocked`,
+        approval: sql`${decisionIntent.approval} + excluded.approval`,
+        lastSeen: sql`now()`,
+      },
+    });
 }
 
 type PolicyEffect = "block" | "mask" | "approval" | "allow";
@@ -182,7 +219,7 @@ function normalizeDecision(g: any): DecisionLabel {
 function toInsert(d: any): InsertDecisionTrace | null {
   if (!d || d.id == null || !d.governed) return null;
   const g = d.governed;
-  return {
+  const row: InsertDecisionTrace = {
     scenarioId: String(d.id),
     caller: String(d.caller ?? ""),
     role: String(d.role ?? ""),
@@ -195,8 +232,12 @@ function toInsert(d: any): InsertDecisionTrace | null {
     reasons: g.reasons ?? null,
     maskedFields: g.masked_fields ?? null,
     approverRoles: g.approver_roles ?? null,
+    policy: null,
     governance: g.governance ?? null,
   };
+  // Stamp the primary triggered policy so the precedent graph can group by it.
+  row.policy = triggeredPolicies(row)[0]?.policy ?? null;
+  return row;
 }
 
 /** GET /api/decisions?limit=50 — newest-first governance traces for the dashboard. */
@@ -249,6 +290,32 @@ router.get("/policies", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "policies fetch failed");
     res.status(500).json({ error: "Failed to fetch policies" });
+  }
+});
+
+/**
+ * GET /api/intents — cumulative per-intent executions, busiest first, with a
+ * data-driven risk level derived from what governance actually did to it:
+ *   blocked & masked → Critical · blocked or approval → High · masked → Medium · else Low.
+ */
+router.get("/intents", async (req, res) => {
+  try {
+    const rows = await db
+      .select()
+      .from(decisionIntent)
+      .orderBy(desc(decisionIntent.count));
+    const intents = rows.map((r) => {
+      let risk: "Critical" | "High" | "Medium" | "Low";
+      if (r.blocked > 0 && r.masked > 0) risk = "Critical";
+      else if (r.blocked > 0 || r.approval > 0) risk = "High";
+      else if (r.masked > 0) risk = "Medium";
+      else risk = "Low";
+      return { intent: r.intent, executions: r.count, risk };
+    });
+    res.json({ intents });
+  } catch (err) {
+    req.log.error({ err }, "intents fetch failed");
+    res.status(500).json({ error: "Failed to fetch intents" });
   }
 });
 

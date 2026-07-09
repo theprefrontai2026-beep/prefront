@@ -17,7 +17,7 @@
  */
 
 import { useDecisionFeed } from "../hooks/useDecisionFeed";
-import type { FeedDecision, AgentStats, PolicyStat } from "../hooks/useDecisionFeed";
+import type { FeedDecision, AgentStats, PolicyStat, IntentStat, Trace } from "../hooks/useDecisionFeed";
 
 /* ── Live: Agent Activity (cumulative, never-reset totals) ───────────────── */
 
@@ -56,31 +56,72 @@ function decisionOutcomes(s: AgentStats | null): { label: string; pct: number; t
   ];
 }
 
-/* ── Fixtures (fudged SecureBank data) ───────────────────────────────────── */
+type Risk = IntentStat["risk"];
 
-// Only `transfer_requires_approval` routes to a human — transfers in
-// ($10k, $250k] await a Bank Manager.
-const APPROVALS = [
-  { request: "Transfer $75,000 — acct 1042 → 5005", owner: "Bank Manager", waiting: "6m" },
-  { request: "Transfer $42,500 — acct 1001 → 8810", owner: "Bank Manager", waiting: "24m" },
-  { request: "Transfer $18,200 — acct 1002 → 3140", owner: "Bank Manager", waiting: "1h 12m" },
-];
+/* ── Live derivations from persisted traces ──────────────────────────────── */
 
-type Risk = "Critical" | "High" | "Medium" | "Low";
-const INTENTS: { intent: string; executions: number; risk: Risk }[] = [
-  { intent: "view_accounts", executions: 612, risk: "Low" },
-  { intent: "view_account", executions: 284, risk: "Low" },
-  { intent: "initiate_transfer", executions: 96, risk: "High" },
-  { intent: "view_user", executions: 71, risk: "High" },
-  { intent: "decide_loan", executions: 23, risk: "Medium" },
-  { intent: "view_users", executions: 14, risk: "Critical" },
-];
+function timeAgo(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d`;
+}
 
-const PRECEDENTS: { title: string; children: string[] }[] = [
-  { title: "transfer_requires_approval", children: ["$75,000 — acct 1042 (granted)", "$42,500 — acct 1001 (granted)", "$60,000 — acct 1002 (denied)"] },
-  { title: "ssn_manager_only", children: ["view_user → Maria Lopez", "view_user → Sam Carter", "view_users → masked directory"] },
-  { title: "loan_decision_manager_only", children: ["Loan #7001 — approved (priya)", "Loan #7002 — rejected (priya)"] },
-];
+// Pending Approvals — decisions routed to a human (APPROVAL), most recent first.
+type Approval = { key: string; request: string; owner: string; waiting: string };
+function pendingApprovals(traces: Trace[]): Approval[] {
+  return traces
+    .filter((t) => t.decision === "APPROVAL")
+    .slice(0, 5)
+    .map((t) => {
+      const a = t.args || {};
+      const to = a.counterparty_account ?? a.to_account;
+      const request =
+        typeof a.amount === "number"
+          ? `Transfer $${a.amount.toLocaleString()} — acct ${a.account_id ?? "?"}${to ? ` → ${to}` : ""}`
+          : `${t.intent ?? "request"} · ${t.caller}`;
+      return {
+        key: String(t.id),
+        request,
+        owner: t.approverRoles?.[0] || "Bank Manager",
+        waiting: timeAgo(t.createdAt),
+      };
+    });
+}
+
+// Top Precedents — the busiest policies (by recent occurrence) with concrete
+// example decisions they've governed. A real "decision context graph".
+function precedentDetail(t: Trace): string {
+  const a = t.args || {};
+  let detail = t.intent || "decision";
+  if (typeof a.amount === "number") detail = `${t.intent} $${a.amount.toLocaleString()} — acct ${a.account_id ?? "?"}`;
+  else if (a.loan_id != null) detail = `${t.intent} #${a.loan_id}`;
+  else if (a.account_id != null) detail = `${t.intent} ${a.account_id}`;
+  else if (a.name_query) detail = `${t.intent} → ${a.name_query}`;
+  else if (a.user_id != null) detail = `${t.intent} → user ${a.user_id}`;
+  return `${detail} · ${t.decision.toLowerCase()}`;
+}
+function topPrecedents(traces: Trace[]): { title: string; children: string[] }[] {
+  const byPolicy = new Map<string, Trace[]>();
+  for (const t of traces) {
+    if (!t.policy) continue;
+    const list = byPolicy.get(t.policy);
+    if (list) list.push(t);
+    else byPolicy.set(t.policy, [t]);
+  }
+  return [...byPolicy.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 3)
+    .map(([title, ts]) => ({
+      title,
+      children: [...new Set(ts.map(precedentDetail))].slice(0, 4),
+    }));
+}
 
 /* ── Small presentational helpers ────────────────────────────────────────── */
 
@@ -190,20 +231,27 @@ export default function Dashboard() {
             <h2>Pending Approvals</h2>
             <button className="pf-dash-link" type="button">Review Queue →</button>
           </div>
-          <table className="pf-dash-table">
-            <thead>
-              <tr><th>Request</th><th>Owner</th><th className="num">Waiting</th></tr>
-            </thead>
-            <tbody>
-              {APPROVALS.map((a) => (
-                <tr key={a.request}>
-                  <td>{a.request}</td>
-                  <td className="muted">{a.owner}</td>
-                  <td className="num">{a.waiting}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {(() => {
+            const approvals = pendingApprovals(feed.traces);
+            return approvals.length === 0 ? (
+              <div className="pf-dash-feed-status">No approvals pending.</div>
+            ) : (
+              <table className="pf-dash-table">
+                <thead>
+                  <tr><th>Request</th><th>Owner</th><th className="num">Waiting</th></tr>
+                </thead>
+                <tbody>
+                  {approvals.map((a) => (
+                    <tr key={a.key}>
+                      <td>{a.request}</td>
+                      <td className="muted">{a.owner}</td>
+                      <td className="num">{a.waiting}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
         </section>
 
         <section className="pf-panel">
@@ -227,7 +275,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="pf-dash-feed">
-            {feed.rows.map((f) => (
+            {feed.rows.slice(0, 5).map((f) => (
               <div key={f.id} className="pf-dash-feed-row">
                 <div className="pf-dash-feed-time">{f.time}</div>
                 <div className="pf-dash-feed-body">
@@ -267,20 +315,24 @@ export default function Dashboard() {
       <div className="pf-dash-row pf-dash-row-2">
         <section className="pf-panel">
           <h2>Most Used Intents</h2>
-          <table className="pf-dash-table">
-            <thead>
-              <tr><th>Intent</th><th className="num">Executions</th><th>Risk</th></tr>
-            </thead>
-            <tbody>
-              {INTENTS.map((it) => (
-                <tr key={it.intent}>
-                  <td>{it.intent}</td>
-                  <td className="num">{it.executions}</td>
-                  <td><RiskBadge risk={it.risk} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {feed.intents.length === 0 ? (
+            <div className="pf-dash-feed-status">No intents executed yet.</div>
+          ) : (
+            <table className="pf-dash-table">
+              <thead>
+                <tr><th>Intent</th><th className="num">Executions</th><th>Risk</th></tr>
+              </thead>
+              <tbody>
+                {feed.intents.map((it) => (
+                  <tr key={it.intent}>
+                    <td>{it.intent}</td>
+                    <td className="num">{it.executions.toLocaleString()}</td>
+                    <td><RiskBadge risk={it.risk} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </section>
 
         <PoliciesEnforced policies={feed.policies} />
@@ -292,18 +344,25 @@ export default function Dashboard() {
           <h2>Top Precedents Influencing Decisions</h2>
           <span className="pf-dash-subtle">Decision context graph</span>
         </div>
-        <div className="pf-dash-tree-grid">
-          {PRECEDENTS.map((p) => (
-            <div key={p.title} className="pf-dash-tree">
-              <div className="pf-dash-tree-root">{p.title}</div>
-              <ul className="pf-dash-tree-children">
-                {p.children.map((c) => (
-                  <li key={c} className="pf-dash-tree-child">{c}</li>
-                ))}
-              </ul>
+        {(() => {
+          const precedents = topPrecedents(feed.traces);
+          return precedents.length === 0 ? (
+            <div className="pf-dash-feed-status">No precedents yet — run the demo to build decision context.</div>
+          ) : (
+            <div className="pf-dash-tree-grid">
+              {precedents.map((p) => (
+                <div key={p.title} className="pf-dash-tree">
+                  <div className="pf-dash-tree-root">{p.title}</div>
+                  <ul className="pf-dash-tree-children">
+                    {p.children.map((c) => (
+                      <li key={c} className="pf-dash-tree-child">{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          );
+        })()}
       </section>
     </div>
   );
