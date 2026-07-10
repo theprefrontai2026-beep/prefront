@@ -42,13 +42,28 @@ export function deriveKind(name: string): { category: string; icon: string } {
   return { category: "_default", icon: "🗄" };
 }
 
+/**
+ * Canonical display form for a role literal. Different rule sources spell the
+ * same role differently — e.g. the LLM-extracted in-app rules emit
+ * `account_holder` while the published bundle uses `Account Holder`. Normalizing
+ * to one label lets callers dedupe them (otherwise the Business Graph renders a
+ * separate role node per spelling).
+ */
+export function canonRole(s: string): string {
+  return String(s || "")
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function deriveRoles(conditions: any[]): string[] {
   const out: string[] = [];
   for (const c of conditions || []) {
     if (typeof c?.field === "string" && c.field.toLowerCase().endsWith("role")) {
       const v = c.value;
-      if (Array.isArray(v)) out.push(...v.map(String));
-      else if (v != null) out.push(String(v));
+      if (Array.isArray(v)) out.push(...v.map((x) => canonRole(String(x))));
+      else if (v != null) out.push(canonRole(String(v)));
     }
   }
   return Array.from(new Set(out));

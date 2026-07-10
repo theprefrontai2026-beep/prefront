@@ -10,7 +10,7 @@ import ReactFlow, {
   type NodeProps,
 } from "reactflow";
 import { getPolicy } from "../api";
-import { buildPolicyIndex, deriveKind, deriveRoles, DECISION_LABEL, DECISION_SEV, type AppliedPolicy } from "./policyIndex";
+import { buildPolicyIndex, deriveKind, deriveRoles, canonRole, DECISION_LABEL, DECISION_SEV, type AppliedPolicy } from "./policyIndex";
 import RuleProvenance from "./RuleProvenance";
 
 // ── Business Graph: live domain model derived from the connected catalog +
@@ -163,13 +163,13 @@ function buildGraph(
       key: row?.rule?.rule_key,
       intents: (row?.rule?.applies_to_intents || []) as string[],
       roles: deriveRoles(row?.rule?.conditions),
-      approver: row?.rule?.effect?.approver_role as string | undefined,
+      approver: row?.rule?.effect?.approver_role ? canonRole(String(row.rule.effect.approver_role)) : undefined,
     })),
     ...((bound?.rules || []) as any[]).map((br: any) => ({
       key: br.rule_key,
       intents: (br.intents || []) as string[],
       roles: deriveRoles(br.conditions),
-      approver: br.effect?.approver_role as string | undefined,
+      approver: br.effect?.approver_role ? canonRole(String(br.effect.approver_role)) : undefined,
     })),
   ].filter((r) => r.key);
 
@@ -272,7 +272,14 @@ function buildGraph(
     }
   }
 
-  const roles: BizEntity[] = Array.from(roleNames).map((r) => {
+  // Only surface roles that actually govern a data entity. A role referenced
+  // solely by a rule that maps to no table (e.g. a stray "Authenticated User"
+  // from an ungrounded policy clause) would otherwise render as a role node with
+  // no entity attachment — floating in the graph. Drop those: a caller that
+  // governs no entity has nothing to show here.
+  const connectedRoles = Array.from(roleNames).filter((r) => (roleToEnts.get(r)?.size ?? 0) > 0);
+
+  const roles: BizEntity[] = connectedRoles.map((r) => {
     const dom = roleDomain(r);
     const entLabels = Array.from(roleToEnts.get(r) || [])
       .map((id) => entById.get(id)?.label).filter(Boolean) as string[];
