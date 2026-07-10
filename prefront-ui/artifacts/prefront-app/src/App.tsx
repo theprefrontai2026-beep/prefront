@@ -158,22 +158,10 @@ export default function App() {
     setTimeout(() => setRemoteRuleUpdates(prev => prev.filter(e => e !== evt)), 100);
   }, []);
 
-  const { connected, reviewers, myId, focus, broadcastRuleStatus, identify } =
+  const { connected, reviewers, myId, focus, broadcastRuleStatus } =
     useReviewSync({ onRuleStatus: handleRuleStatus });
 
-  const [named, setNamed] = useState(false);
-  useEffect(() => {
-    if (connected && !named) {
-      setNamed(true);
-      const stored = sessionStorage.getItem("pf.reviewer.name");
-      if (stored) { identify(stored); return; }
-      const n = window.prompt("Your reviewer name (leave blank for auto-assign):", "");
-      if (n?.trim()) {
-        sessionStorage.setItem("pf.reviewer.name", n.trim());
-        identify(n.trim());
-      }
-    }
-  }, [connected, named, identify]);
+  // Reviewer names are always auto-assigned by the server on connect — no prompt.
 
   function onSchema(s: any) {
     setSchema(s);

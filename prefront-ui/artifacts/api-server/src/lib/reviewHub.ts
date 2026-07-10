@@ -8,10 +8,10 @@ import { ruleAuditLog } from "@workspace/db";
 const COLORS = ["#8f6443", "#5f6b4d", "#97712f", "#5a7a8b", "#8b5a8b", "#5a8b7a", "#8b6b8b", "#6b8b5a"];
 let colorIdx = 0;
 const NAMES = ["Alex", "Blake", "Casey", "Drew", "Emery", "Finley", "Gray", "Harper"];
-let nameIdx = 0;
 
 function nextColor() { return COLORS[colorIdx++ % COLORS.length]; }
-function nextName() { return NAMES[nameIdx++ % NAMES.length]; }
+// Reviewer names are always auto-assigned at random (no client prompt).
+function nextName() { return NAMES[Math.floor(Math.random() * NAMES.length)]; }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
 // ── Reviewer state ─────────────────────────────────────────────────────────
