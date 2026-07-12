@@ -30,12 +30,12 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | skill-builder | `skill-builder/skillbuilder` | 8000 | **policy compiler**: policy doc → clauses → LLM candidate rules → human review → published skill (FastAPI) |
 | semantic-layer-api | `semantic-layer/semanticlayer` | 8010 | design-time API: schema introspect/parse, build/publish templates, bind+publish policy |
 | semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call. Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`) |
-| api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`) + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
+| api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080 |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
-- `api-db` — Drizzle, `rule_audit_log` only (`:5432` inside Docker, different named volume)
+- `api-db` — Drizzle, `rule_audit_log` + the decision-trace tables (`decision_trace`, `decision_stat`, `decision_agent`, `decision_policy`, `decision_intent`); schema is applied by `drizzle-kit push-force` on api-server start (no migration files) (`:5432` inside Docker, different named volume)
 - **SecureBank** Postgres inside Docker at `:5434` — the in-repo runtime/demo datasource (`securebank-demo/db/`)
 
 The `semantic-layer` LLM mapper is the **only** agentic step; everything it emits is candidate output gated by schema validation + human approval. The runtime loads only published YAML.
@@ -61,6 +61,16 @@ A retail-banking example that ships **inside this repo** and runs from the same 
 The curated artifacts (`securebank-demo/policy/query_templates.yaml`, `policy.yaml`) are committed. The `securebank-seed` one-shot service copies them into the shared `artifacts` volume at startup. `OpenAI API key` required for the ungoverned and orchestrator services.
 
 The test-case catalog lives in `securebank-demo/scenarios.py` (`CALLERS` dict + `get_scenarios()`). `demo_server.py` serves `GET /api/scenarios` (metadata only) and `GET /api/diff?only=B1,B4` (live run both ways). `governed_agent.py` implements the full OpenAI tool-calling loop: LLM picks an MCP tool → Prefront enforces policy → tool result passed back to LLM for natural-language synthesis → `decision["answer"]` set. The Runtime tab (`RuntimeDiff.tsx`) points at `http://localhost:8095` by default (configurable in the UI).
+
+- **Concurrency flake + fix**: each governed run opens its own MCP SSE connection; firing all scenarios at once (the UI's old "Run all") flakes the transport (the `NoneType`/`ExceptionGroup` issue below), surfacing as random `ERROR` scenarios. Governance itself is fine — all pass sequentially. Mitigations in place: `governed_agent.run_agent` **retries** the MCP interaction (a governed decision returns a dict and never raises, so a raised exception is always a transient transport failure; reads/prechecks are idempotent), and `RuntimeDiff.runAll` **caps concurrency** to a small worker pool.
+
+## Dashboard & decision-trace persistence (`api-server` + `decision_*` tables)
+
+Governed decisions are persisted so the Dashboard and Decision Traces page read history from the DB rather than re-running the LLM on every load. Flow: the Runtime tab (`RuntimeDiff.tsx`) best-effort `POST`s each run to `/api/decisions`, and `POST /api/decisions/refresh` runs the whole SecureBank catalog server-side (via `ORCHESTRATOR_URL`) and stores every result. All routes live in `prefront-ui/artifacts/api-server/src/routes/decisions.ts`.
+
+- **`decision_trace`** — one row per decision (append-only). **Capped at 100**, oldest pruned on every write (`pruneOldTraces`). `GET /api/decisions?limit=N` returns newest-first. `DELETE /api/decisions` (the Dashboard "Clear" control) wipes only this table.
+- **Cumulative counters, persistent FOREVER** — never pruned, never reset by Clear: `decision_stat` (per-metric totals → Agent Activity + Decision Outcomes), `decision_agent` (distinct callers → "Agents Active"), `decision_policy` (per-policy trigger counts → the Policies Enforced leaderboard, extracted from the governance trace's fired `rules_evaluated[].rule_key` plus engine-authz reasons), `decision_intent` (per-intent counts + effect buckets → Most Used Intents, with a data-derived risk level). `recordStats`/`recordPolicies`/`recordIntents` fold each insert in via atomic `ON CONFLICT DO UPDATE`.
+- `useDecisionFeed` (in `hooks/`) is the shared hook: reads `/api/decisions` + `/api/stats` + `/api/policies` + `/api/intents`, exposes `rows`/`traces`/`stats`/`policies`/`intents` plus `clear`/`populate`. The engine stays domain-neutral — this vocabulary is the SecureBank UI layer, not the runtime.
 
 ## Runtime governance pipeline (`semantic-mcp-server/semanticmcp/governance/`)
 
@@ -125,6 +135,24 @@ pnpm -r --filter ./artifacts/prefront-app run dev   # Vite dev server (needs API
 pnpm --filter ./lib/api-spec run codegen   # runs orval + typecheck:libs
 ```
 
+**Typechecking gotchas (WSL):** the host `node` may be a Windows shim that fails under WSL (`exec format error`), so `pnpm run typecheck` can't run directly. Run `tsc` in a container instead (host `node_modules` are mounted):
+```bash
+docker run --rm -v "$PWD":/w -w /w/artifacts/prefront-app node:24-slim \
+  node /w/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
+```
+`api-server` and `prefront-app` are **composite TS projects that consume `@workspace/db`'s emitted `dist/*.d.ts`** (project references), *not* its src — so after editing a `lib/db` schema, rebuild declarations first or the app typecheck won't see new exports:
+```bash
+docker run --rm -v "$PWD":/w -w /w node:24-slim node /w/node_modules/typescript/bin/tsc --build lib/db lib/api-zod
+```
+(The runtime esbuild bundle and `drizzle-kit push` both read `lib/db` *src* directly, so the stale `dist` only affects typechecking.)
+
+**Verifying UI changes in a browser** (no local browser/node): drive the running app with the Playwright image over host networking — install the `playwright` npm package into it (the image ships browsers only) and point at the preinstalled browsers:
+```bash
+docker run --rm --network host -v /tmp/pf:/work -w /work -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+  mcr.microsoft.com/playwright:v1.48.0-jammy bash -lc \
+  'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i playwright@1.48.0 >/dev/null 2>&1; node drive.mjs'
+```
+
 ### Hot-patching running containers
 Python services have no build step — copy + restart suffices:
 ```bash
@@ -144,9 +172,9 @@ Artifacts reach the runtime by HTTP, then land in the shared `artifacts` volume 
 
 ## UI tab architecture (`prefront-ui/artifacts/prefront-app/src/`)
 
-`App.tsx` owns a single `useState("dashboard")` for the active tab. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. The tab order mirrors the dependency pipeline: **Dashboard → Data Connector → Data Graph → Business Graph → Policy Studio → Semantic → Runtime**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` owns a single `useState("dashboard")` for the active tab (in the `TABS` array — the source of truth for nav order). All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Runtime → Decision Traces**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
-`Dashboard.tsx` is currently **presentational with hardcoded fixtures** (SecureBank governance vocabulary: intents, rules, roles, B1–B9 scenario personas). The comment at the top of that file marks each `const` fixture for replacement with a real API call once the backend summary endpoint lands.
+`Dashboard.tsx` is **wired to real persisted data** (via `useDecisionFeed`, `/api/*` — see the persistence section below), not fixtures. `DecisionTraces.tsx` (the last tab) is a filterable log over the latest traces; the Dashboard feed's "View all →" navigates to it.
 
 The `skill-builder/CLAUDE.md` is a **sub-CLAUDE.md** with skill-builder-specific architecture notes (pipeline vs API dual-path, domain-pack layering, downstream contract). Read it when working on that service.
 
