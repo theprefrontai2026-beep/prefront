@@ -73,7 +73,7 @@ export default function DecisionTraces({ active = true }: { active?: boolean }) 
     setStatus("loading");
     setError("");
     try {
-      const res = await fetch(`/api/decisions?limit=100`);
+      const res = await fetch(`/api/decisions?limit=30`);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
       setTraces(json.traces || []);
