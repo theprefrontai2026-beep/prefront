@@ -152,8 +152,19 @@ export default function RuntimeDiff() {
     }
   }
 
+  // Bounded concurrency: each run opens an MCP SSE connection, and firing all
+  // scenarios at once can flake the transport. Run a few at a time instead.
   async function runAll() {
-    if (scenarios) await Promise.all(scenarios.map((s) => runOne(s.id)));
+    if (!scenarios) return;
+    const LIMIT = 3;
+    const queue = [...scenarios];
+    const worker = async () => {
+      while (queue.length) {
+        const s = queue.shift();
+        if (s) await runOne(s.id);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(LIMIT, queue.length) }, worker));
   }
 
   useEffect(() => { loadCatalog(); }, []); // eslint-disable-line

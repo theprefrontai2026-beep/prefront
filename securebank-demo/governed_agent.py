@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
+import time
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -135,12 +137,28 @@ async def _run_async(question: str, url: str, act_as: str) -> dict:
 
 
 def run_agent(question: str, caller_key: str) -> dict:
-    """Connect to the ONE Prefront MCP server as `caller` and return its decision."""
+    """Connect to the ONE Prefront MCP server as `caller` and return its decision.
+
+    The MCP SSE transport can flake under concurrent connections (the UI's
+    "Run all" opens one per scenario at once), surfacing as an ExceptionGroup /
+    JSONDecodeError from a server-side ``TypeError: 'NoneType' object is not
+    callable``. That is a transport issue, not a governance decision — a
+    governed block/mask/approval returns a dict, it never raises — so a failed
+    attempt is always safe to retry. Reads and prechecks are read-only and
+    idempotent, so re-running is harmless. Retry with a jittered backoff to
+    stagger the concurrent reconnections."""
     email = CALLER_EMAIL.get(caller_key)
     if not email:
         return {"outcome": "ERROR", "error": f"unknown caller {caller_key!r}"}
-    try:
-        return asyncio.run(_run_async(question, MCP_URL, email))
-    except Exception as e:  # MCP transport / LLM error — surface it, don't crash the demo
-        return {"outcome": "ERROR", "error": f"{type(e).__name__}: {e}",
-                "intent": None, "args": {}}
+    attempts = max(1, int(os.environ.get("GOVERNED_MCP_RETRIES", "4")))
+    last_err: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return asyncio.run(_run_async(question, MCP_URL, email))
+        except Exception as e:  # transient MCP transport / LLM error — retry, don't surface yet
+            last_err = e
+            if attempt < attempts - 1:
+                time.sleep(0.3 * (attempt + 1) + random.uniform(0, 0.4))
+    return {"outcome": "ERROR",
+            "error": f"{type(last_err).__name__}: {last_err} (after {attempts} attempts)",
+            "intent": None, "args": {}}
