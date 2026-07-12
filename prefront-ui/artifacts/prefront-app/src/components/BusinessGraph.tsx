@@ -19,13 +19,13 @@ import RuleProvenance from "./RuleProvenance";
 // the published bound bundle when one exists). Engine stays domain-independent:
 // every label/heuristic is cosmetic, no table/role/policy is hardcoded.
 
-// Temporarily hide the "Attached Policies" fly-out section on the detail panel.
-// Flip to true to re-enable.
-const SHOW_ATTACHED_POLICIES = false;
+// Show the "Attached Policies" fly-out section on the detail panel (the policies
+// governing each node, with full per-rule detail).
+const SHOW_ATTACHED_POLICIES = true;
 
-// Temporarily hide the side detail panel entirely (canvas takes full width).
-// Flip to true to re-enable.
-const SHOW_DETAIL_PANEL = false;
+// Show the side detail panel (hosts the description, mapped tables, attached
+// policies, and authorized roles for the selected node).
+const SHOW_DETAIL_PANEL = true;
 
 // ── Domain palette ────────────────────────────────────────────────────────────
 const DOMAIN: Record<string, { bg: string; border: string; text: string; badge: string }> = {
