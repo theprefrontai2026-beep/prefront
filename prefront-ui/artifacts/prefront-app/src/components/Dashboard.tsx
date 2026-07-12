@@ -190,7 +190,7 @@ function PoliciesEnforced({ policies }: { policies: PolicyStat[] }) {
 
 /* ── Dashboard ───────────────────────────────────────────────────────────── */
 
-export default function Dashboard() {
+export default function Dashboard({ onViewAllTraces }: { onViewAllTraces?: () => void }) {
   const feed = useDecisionFeed();
   return (
     <div className="pf-dash">
@@ -258,6 +258,11 @@ export default function Dashboard() {
           <div className="pf-dash-panel-head">
             <h2>Live Decision Trace Feed</h2>
             <div className="pf-dash-feed-actions">
+              {onViewAllTraces && (
+                <button className="pf-dash-link" type="button" onClick={onViewAllTraces}>
+                  View all →
+                </button>
+              )}
               {feed.rows.length > 0 && !feed.populating && (
                 <button className="pf-dash-link danger" type="button" onClick={feed.clear}>
                   Clear ✕

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Dashboard from "./components/Dashboard";
+import DecisionTraces from "./components/DecisionTraces";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
 import DataGraph from "./components/DataGraph";
@@ -24,6 +25,7 @@ function loadJSON(key: string) {
 // Icons live on each tab so order changes can't desync the icon row.
 const TABS = [
   { id: "dashboard",label: "Overview",        sub: "Governance at a glance",   icon: IconHome },
+  { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "data",     label: "Data Connector",  sub: "Connect datasource",       icon: IconDatabase },
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
@@ -32,6 +34,14 @@ const TABS = [
 ];
 
 /* ── Sidebar icons ── */
+function IconList() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+      <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+    </svg>
+  );
+}
 function IconHome() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -113,6 +123,7 @@ function IconSettings() {
 
 const PAGE_META: Record<string, { title: string; desc: string }> = {
   dashboard:{ title: "Overview",          desc: "Decision intelligence — can I trust what my agents are doing right now?" },
+  traces:   { title: "Decision Traces",  desc: "The full governance decision log — filter every recorded decision by outcome, caller, role, intent, or policy." },
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
   graph:    { title: "Data Graph",       desc: "Interactive map of tables, relationships, sensitive columns, and applied governance policies." },
   bizgraph: { title: "Business Graph",   desc: "Domain model showing business entities, processes, roles, and applied governance policies." },
@@ -268,7 +279,10 @@ export default function App() {
         {/* Tab bodies */}
         <div className="pf-body">
           <div className={tab === "dashboard" ? "" : "tab-hidden"}>
-            <Dashboard />
+            <Dashboard onViewAllTraces={() => setTab("traces")} />
+          </div>
+          <div className={tab === "traces" ? "" : "tab-hidden"}>
+            <DecisionTraces active={tab === "traces"} />
           </div>
           <div className={tab === "data" ? "" : "tab-hidden"}>
             <DataConnector active={tab === "data"} onSchema={onSchema} onDisconnect={onDisconnect} restored={schema} />

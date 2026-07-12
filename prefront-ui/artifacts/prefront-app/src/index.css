@@ -1386,6 +1386,49 @@ select { cursor: pointer; }
 .pf-dash-feed-status { font-size: 12px; color: var(--muted); padding: 14px 0; }
 .pf-dash-feed-status.error { color: var(--red); }
 
+/* ── Decision Traces (filterable log) ─────────────────────────────────────── */
+.pf-tr-filters {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; margin-top: 12px;
+}
+.pf-tr-chips { display: flex; gap: 6px; }
+.pf-tr-chip {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface-alt); color: var(--muted);
+  opacity: 0.7; transition: all 0.12s;
+}
+.pf-tr-chip:hover { opacity: 1; }
+.pf-tr-chip.on { opacity: 1; border-color: transparent; }
+.pf-tr-chip.on.green { color: var(--green); background: var(--green-light); }
+.pf-tr-chip.on.red   { color: var(--red);   background: var(--red-light); }
+.pf-tr-chip.on.amber { color: var(--amber); background: var(--amber-light); }
+.pf-tr-chip.on.teal  { color: var(--teal);  background: var(--teal-light); }
+.pf-tr-selects { display: flex; flex-wrap: wrap; gap: 12px; }
+.pf-tr-select { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.pf-tr-select select {
+  font-size: 12px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); color: var(--ink); min-width: 130px;
+}
+.pf-tr-search {
+  flex: 1; min-width: 200px; font-size: 12px; padding: 7px 10px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink);
+}
+.pf-tr-summary {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft);
+}
+.pf-tr-count { font-size: 14px; font-weight: 700; color: var(--ink); }
+.pf-tr-count .muted { font-weight: 400; }
+.pf-tr-tally { display: flex; gap: 6px; flex-wrap: wrap; margin-right: auto; }
+.pf-tr-table td { vertical-align: top; }
+.pf-tr-when { font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pf-tr-agent { font-weight: 600; font-size: 12.5px; }
+.pf-tr-intent, .pf-tr-policy {
+  font-size: 12px; background: var(--surface-alt); padding: 1px 6px; border-radius: 4px;
+}
+.pf-tr-args { font-size: 11px; margin-left: 6px; }
+.pf-tr-reason { font-size: 12px; color: var(--muted); max-width: 320px; }
+
 /* Policies Enforced — cumulative leaderboard */
 .pf-dash-pol { display: flex; flex-direction: column; gap: 12px; }
 .pf-dash-pol-row { padding: 2px 0; }
