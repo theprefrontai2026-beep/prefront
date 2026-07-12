@@ -56,6 +56,7 @@ export interface IntentStat {
 // One persisted trace row as returned by GET /api/decisions.
 export interface Trace {
   id: number;
+  sessionId: string | null;
   scenarioId: string;
   caller: string;
   role: string;

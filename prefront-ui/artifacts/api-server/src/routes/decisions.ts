@@ -215,11 +215,18 @@ function normalizeDecision(g: any): DecisionLabel {
   return "ALLOWED";
 }
 
+// A session groups the decisions from one Run-all / refresh batch, so the
+// Intent Flows page can reconstruct ordered per-user intent sequences.
+function newSessionId(): string {
+  return "sess_" + Math.random().toString(36).slice(2, 10);
+}
+
 /** Turn one `/api/diff` element into an insertable trace row, or null if unusable. */
-function toInsert(d: any): InsertDecisionTrace | null {
+function toInsert(d: any, sessionId?: string): InsertDecisionTrace | null {
   if (!d || d.id == null || !d.governed) return null;
   const g = d.governed;
   const row: InsertDecisionTrace = {
+    sessionId: sessionId ?? d.sessionId ?? null,
     scenarioId: String(d.id),
     caller: String(d.caller ?? ""),
     role: String(d.role ?? ""),
@@ -330,9 +337,10 @@ router.delete("/decisions", async (req, res) => {
   }
 });
 
-/** POST /api/decisions — persist one governed decision (a `/api/diff` element). */
+/** POST /api/decisions — persist one governed decision (a `/api/diff` element).
+ *  `sessionId` in the body ties runs from one Run-all together; else a fresh one. */
 router.post("/decisions", async (req, res) => {
-  const row = toInsert(req.body);
+  const row = toInsert(req.body, req.body?.sessionId || newSessionId());
   if (!row) {
     res.status(400).json({ error: "invalid decision payload (need id + governed)" });
     return;
@@ -363,7 +371,8 @@ router.post("/decisions/refresh", async (_req, res) => {
     if (!Array.isArray(diff)) {
       throw new Error(diff?.error || "orchestrator did not return a diff array");
     }
-    const rows = diff.map(toInsert).filter((x): x is InsertDecisionTrace => x !== null);
+    const sid = newSessionId(); // the whole refreshed catalog is one session
+    const rows = diff.map((d) => toInsert(d, sid)).filter((x): x is InsertDecisionTrace => x !== null);
     if (rows.length) {
       await db.insert(decisionTrace).values(rows);
       await recordStats(rows);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Dashboard from "./components/Dashboard";
 import DecisionTraces from "./components/DecisionTraces";
+import IntentFlows from "./components/IntentFlows";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
 import DataGraph from "./components/DataGraph";
@@ -31,9 +32,19 @@ const TABS = [
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconDiff },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
+  { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
 ];
 
 /* ── Sidebar icons ── */
+function IconFlow() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="6" height="5" rx="1"/><rect x="15" y="4" width="6" height="5" rx="1"/>
+      <rect x="9" y="15" width="6" height="5" rx="1"/>
+      <path d="M9 6.5h3a2 2 0 0 1 2 2V15"/><path d="M15 6.5h-3a2 2 0 0 0-2 2V15"/>
+    </svg>
+  );
+}
 function IconList() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -124,6 +135,7 @@ function IconSettings() {
 const PAGE_META: Record<string, { title: string; desc: string }> = {
   dashboard:{ title: "Overview",          desc: "Decision intelligence — can I trust what my agents are doing right now?" },
   traces:   { title: "Decision Traces",  desc: "The full governance decision log — filter every recorded decision by outcome, caller, role, intent, or policy." },
+  flows:    { title: "Intent Flows",     desc: "Profile which intents each user invokes, in what order, within a session." },
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
   graph:    { title: "Data Graph",       desc: "Interactive map of tables, relationships, sensitive columns, and applied governance policies." },
   bizgraph: { title: "Business Graph",   desc: "Domain model showing business entities, processes, roles, and applied governance policies." },
@@ -283,6 +295,9 @@ export default function App() {
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
             <DecisionTraces active={tab === "traces"} />
+          </div>
+          <div className={tab === "flows" ? "" : "tab-hidden"}>
+            <IntentFlows active={tab === "flows"} />
           </div>
           <div className={tab === "data" ? "" : "tab-hidden"}>
             <DataConnector active={tab === "data"} onSchema={onSchema} onDisconnect={onDisconnect} restored={schema} />

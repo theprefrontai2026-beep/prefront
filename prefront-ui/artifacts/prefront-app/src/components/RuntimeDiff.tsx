@@ -3,14 +3,17 @@ import DecisionTrace from "./DecisionTrace";
 
 const DEFAULT_SERVER = "http://localhost:8095";
 
+const newSessionId = () => "sess_" + Math.random().toString(36).slice(2, 10);
+
 /** Persist one governed decision so it shows on the Dashboard's trace feed.
- *  Best-effort: a logging failure must never break the runtime diff view. */
-function persistDecision(diff: any) {
+ *  `sessionId` ties one "Run all" (or a single run) into one session for the
+ *  Intent Flows page. Best-effort: a logging failure must never break the view. */
+function persistDecision(diff: any, sessionId: string) {
   if (!diff?.governed) return;
   fetch("/api/decisions", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(diff),
+    body: JSON.stringify({ ...diff, sessionId }),
   }).catch(() => {});
 }
 
@@ -135,7 +138,8 @@ export default function RuntimeDiff() {
     }
   }
 
-  async function runOne(id: string) {
+  // A single "Run" click is its own session; "Run all" passes one shared id.
+  async function runOne(id: string, sessionId: string = newSessionId()) {
     setRunning((r) => ({ ...r, [id]: true }));
     try {
       const res = await fetch(`${server}/api/diff?only=${encodeURIComponent(id)}`);
@@ -143,7 +147,7 @@ export default function RuntimeDiff() {
       if (json.error) throw new Error(json.error);
       if (json[0]) {
         setResults((m) => ({ ...m, [id]: json[0] }));
-        persistDecision(json[0]); // best-effort: log to the dashboard's trace DB
+        persistDecision(json[0], sessionId); // best-effort: log to the trace DB
       }
     } catch (e: any) {
       setResults((m) => ({ ...m, [id]: { _error: String(e.message || e) } }));
@@ -156,12 +160,13 @@ export default function RuntimeDiff() {
   // scenarios at once can flake the transport. Run a few at a time instead.
   async function runAll() {
     if (!scenarios) return;
+    const sessionId = newSessionId(); // the whole Run-all is one session
     const LIMIT = 3;
     const queue = [...scenarios];
     const worker = async () => {
       while (queue.length) {
         const s = queue.shift();
-        if (s) await runOne(s.id);
+        if (s) await runOne(s.id, sessionId);
       }
     };
     await Promise.all(Array.from({ length: Math.min(LIMIT, queue.length) }, worker));
