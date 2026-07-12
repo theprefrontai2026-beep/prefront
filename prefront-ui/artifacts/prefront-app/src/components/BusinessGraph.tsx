@@ -202,6 +202,43 @@ function buildGraph(
   const infoFor = (keys: string[]): AppliedPolicy[] =>
     keys.map((k) => ruleDetail.get(k) || { rule_key: k, status: "approved", source: "rule" as const, columns: [] });
 
+  // ── Supplementary attachment by name ───────────────────────────────────────
+  // Candidate rules are frequently *unbound* (role-only conditions, no column),
+  // so the column-based policyIndex above misses the resource they actually
+  // govern — e.g. every `*_accounts` rule attaches to nothing. Attach a rule to
+  // an entity when the entity's table name (singular/plural) appears in the rule
+  // key/message, after stripping every known role phrase so a role like
+  // "Account Holder" never spuriously matches the accounts table. Domain-neutral:
+  // it keys off the real table names, not any hardcoded vocabulary.
+  const allRoleNames = new Set<string>();
+  allRules.forEach((r) => { r.roles.forEach((x) => allRoleNames.add(x)); if (r.approver) allRoleNames.add(r.approver); });
+  const roleStripVariants = [...allRoleNames].flatMap((r) => {
+    const b = r.toLowerCase();
+    const base = [b, b.replace(/\s+/g, "_"), b.replace(/\s+/g, "")];
+    return [...base, ...base.map((x) => `${x}s`)];
+  }).sort((a, b) => b.length - a.length);
+  const namesFor = (t: string) => (t.toLowerCase().endsWith("s") ? [t.toLowerCase(), t.toLowerCase().slice(0, -1)] : [t.toLowerCase(), `${t.toLowerCase()}s`]);
+  function ruleNamesTable(p: AppliedPolicy, tableNames: string[]): boolean {
+    let hay = `${p.rule_key} ${p.message || ""}`.toLowerCase();
+    for (const v of roleStripVariants) hay = hay.split(v).join(" ");
+    return tableNames.some((nm) => new RegExp(`(^|[^a-z])${nm}([^a-z]|$)`).test(hay));
+  }
+  for (const e of entities) {
+    const tbl = e.tables[0];
+    if (!tbl) continue;
+    const tableNames = namesFor(tbl);
+    const have = new Set(e.policies);
+    const extra = [...ruleDetail.values()].filter((p) => !have.has(p.rule_key) && ruleNamesTable(p, tableNames));
+    if (!extra.length) continue;
+    e.policyInfo = [...e.policyInfo, ...extra];
+    e.policies = [...e.policies, ...extra.map((p) => p.rule_key)];
+    const rset = new Set(e.roles);
+    for (const p of extra) (p.roles || []).forEach((r) => rset.add(humanize(r)));
+    e.roles = Array.from(rset);
+    const n = e.policies.length;
+    e.description = e.description.replace(/\d+ governance rules? attached\./, `${n} governance ${n === 1 ? "rule" : "rules"} attached.`);
+  }
+
   // intent -> tables it touches (from attached policies)
   const intentToTables = new Map<string, Set<string>>();
   for (const [tbl, pols] of policyIndex) {
@@ -262,6 +299,11 @@ function buildGraph(
       if (!roleToEnts.has(r)) roleToEnts.set(r, new Set());
       roleToEnts.get(r)!.add(entId);
     }
+  }
+  // Include the name-based attachments above so their roles link to the entity too.
+  for (const e of entities) for (const r of e.roles) {
+    if (!roleToEnts.has(r)) roleToEnts.set(r, new Set());
+    roleToEnts.get(r)!.add(e.id);
   }
   const roleToProcs = new Map<string, Set<string>>();
   for (const [intent, info] of intentToRules) {
