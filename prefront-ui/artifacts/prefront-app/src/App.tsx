@@ -25,12 +25,12 @@ function loadJSON(key: string) {
 // Icons live on each tab so order changes can't desync the icon row.
 const TABS = [
   { id: "dashboard",label: "Overview",        sub: "Governance at a glance",   icon: IconHome },
-  { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "data",     label: "Data Connector",  sub: "Connect datasource",       icon: IconDatabase },
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconDiff },
+  { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
 ];
 
 /* ── Sidebar icons ── */
