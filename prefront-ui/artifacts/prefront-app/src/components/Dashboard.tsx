@@ -18,6 +18,7 @@
 
 import { useDecisionFeed } from "../hooks/useDecisionFeed";
 import type { FeedDecision, AgentStats, PolicyStat, IntentStat, Trace } from "../hooks/useDecisionFeed";
+import type { DemoConfig } from "../demos";
 
 /* ── Live: Agent Activity (cumulative, never-reset totals) ───────────────── */
 
@@ -74,7 +75,7 @@ function timeAgo(iso: string): string {
 
 // Pending Approvals — decisions routed to a human (APPROVAL), most recent first.
 type Approval = { key: string; request: string; owner: string; waiting: string };
-function pendingApprovals(traces: Trace[]): Approval[] {
+function pendingApprovals(traces: Trace[], defaultApprover: string): Approval[] {
   return traces
     .filter((t) => t.decision === "APPROVAL")
     .slice(0, 5)
@@ -84,11 +85,13 @@ function pendingApprovals(traces: Trace[]): Approval[] {
       const request =
         typeof a.amount === "number"
           ? `Transfer $${a.amount.toLocaleString()} — acct ${a.account_id ?? "?"}${to ? ` → ${to}` : ""}`
-          : `${t.intent ?? "request"} · ${t.caller}`;
+          : a.loan_id != null
+            ? `Decide loan #${a.loan_id} · ${t.caller}`
+            : `${t.intent ?? "request"} · ${t.caller}`;
       return {
         key: String(t.id),
         request,
-        owner: t.approverRoles?.[0] || "Bank Manager",
+        owner: t.approverRoles?.[0] || defaultApprover,
         waiting: timeAgo(t.createdAt),
       };
     });
@@ -190,8 +193,8 @@ function PoliciesEnforced({ policies }: { policies: PolicyStat[] }) {
 
 /* ── Dashboard ───────────────────────────────────────────────────────────── */
 
-export default function Dashboard({ onViewAllTraces }: { onViewAllTraces?: () => void }) {
-  const feed = useDecisionFeed();
+export default function Dashboard({ demo, onViewAllTraces }: { demo: DemoConfig; onViewAllTraces?: () => void }) {
+  const feed = useDecisionFeed(demo);
   return (
     <div className="pf-dash">
       {/* ── Agent Activity + Decision Outcomes ── */}
@@ -232,7 +235,7 @@ export default function Dashboard({ onViewAllTraces }: { onViewAllTraces?: () =>
             <button className="pf-dash-link" type="button">Review Queue →</button>
           </div>
           {(() => {
-            const approvals = pendingApprovals(feed.traces);
+            const approvals = pendingApprovals(feed.traces, demo.defaultApprover);
             return approvals.length === 0 ? (
               <div className="pf-dash-feed-status">No approvals pending.</div>
             ) : (

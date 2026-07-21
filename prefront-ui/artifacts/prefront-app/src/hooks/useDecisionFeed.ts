@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { DemoConfig } from "../demos";
 
 export type FeedDecision = "BLOCKED" | "APPROVAL" | "MASKED" | "ALLOWED";
 
@@ -72,14 +73,6 @@ export interface Trace {
   createdAt: string;
 }
 
-// Each role fronts a different agent surface in the SecureBank story; the caller
-// is the human identity Prefront resolves per connection.
-const ROLE_AGENT: Record<string, string> = {
-  "Account Holder": "Customer Assistant",
-  "Bank Teller": "Teller Copilot",
-  "Bank Manager": "Manager Console",
-};
-
 function firstName(name: string): string {
   return (name.split(" ")[0] || name).toLowerCase();
 }
@@ -91,6 +84,7 @@ function intentLabel(t: Trace): string {
   if (typeof a.amount === "number") return `${intent} $${a.amount.toLocaleString()}`;
   if (a.account_id != null) return `${intent} ${a.account_id}`;
   if (a.loan_id != null) return `${intent} ${a.loan_id}`;
+  if (a.applicant_id != null) return `${intent} ${a.applicant_id}`;
   if (a.user_id != null) return `${intent} (user ${a.user_id})`;
   return intent;
 }
@@ -101,20 +95,23 @@ function hhmm(iso: string): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function toFeedRow(t: Trace): FeedRow {
+// Each role fronts a different agent surface in the demo's story (demo.roleAgents);
+// the caller is the human identity Prefront resolves per connection.
+function toFeedRow(t: Trace, roleAgents: Record<string, string>): FeedRow {
   return {
     id: String(t.id),
     time: hhmm(t.createdAt),
     decision: t.decision,
-    agent: `${ROLE_AGENT[t.role] || "Agent"} · ${firstName(t.caller || "")}`,
+    agent: `${roleAgents[t.role] || "Agent"} · ${firstName(t.caller || "")}`,
     intent: intentLabel(t),
     reason: (Array.isArray(t.reasons) && t.reasons[0]) || t.outcome || t.status || "—",
     source: t.capability || "policy.yaml",
   };
 }
 
-/** Reads persisted governance traces newest-first; `populate()` seeds from the demo. */
-export function useDecisionFeed(limit = 50) {
+/** Reads persisted governance traces newest-first, scoped to `demo`; `populate()`
+ *  seeds from the demo's orchestrator. */
+export function useDecisionFeed(demo: DemoConfig, limit = 50) {
   const [traces, setTraces] = useState<Trace[]>([]);
   const [stats, setStats] = useState<AgentStats | null>(null);
   const [policies, setPolicies] = useState<PolicyStat[]>([]);
@@ -123,14 +120,16 @@ export function useDecisionFeed(limit = 50) {
   const [error, setError] = useState("");
   const [populating, setPopulating] = useState(false);
 
-  const rows = useMemo(() => traces.map(toFeedRow), [traces]);
+  const rows = useMemo(() => traces.map((t) => toFeedRow(t, demo.roleAgents)), [traces, demo.roleAgents]);
+
+  const q = `demo=${encodeURIComponent(demo.id)}`;
 
   const loadStats = useCallback(async () => {
     try {
       const [sRes, pRes, iRes] = await Promise.all([
-        fetch(`/api/stats`),
-        fetch(`/api/policies`),
-        fetch(`/api/intents`),
+        fetch(`/api/stats?${q}`),
+        fetch(`/api/policies?${q}`),
+        fetch(`/api/intents?${q}`),
       ]);
       if (sRes.ok) setStats(await sRes.json());
       if (pRes.ok) setPolicies((await pRes.json()).policies || []);
@@ -138,13 +137,13 @@ export function useDecisionFeed(limit = 50) {
     } catch {
       // aggregates are non-critical to the feed; leave prior values in place
     }
-  }, []);
+  }, [q]);
 
   const load = useCallback(async () => {
     setStatus("loading");
     setError("");
     try {
-      const [res] = await Promise.all([fetch(`/api/decisions?limit=${limit}`), loadStats()]);
+      const [res] = await Promise.all([fetch(`/api/decisions?limit=${limit}&${q}`), loadStats()]);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
       setTraces(json.traces || []);
@@ -153,12 +152,12 @@ export function useDecisionFeed(limit = 50) {
       setError(String(e?.message || e));
       setStatus("error");
     }
-  }, [limit, loadStats]);
+  }, [limit, loadStats, q]);
 
   const clear = useCallback(async () => {
     setError("");
     try {
-      const res = await fetch(`/api/decisions`, { method: "DELETE" });
+      const res = await fetch(`/api/decisions?${q}`, { method: "DELETE" });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
       setTraces([]);
@@ -166,13 +165,17 @@ export function useDecisionFeed(limit = 50) {
       setError(String(e?.message || e));
       await load();
     }
-  }, [load]);
+  }, [load, q]);
 
   const populate = useCallback(async () => {
     setPopulating(true);
     setError("");
     try {
-      const res = await fetch(`/api/decisions/refresh`, { method: "POST" });
+      const res = await fetch(`/api/decisions/refresh`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ demo: demo.id }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
     } catch (e: any) {
@@ -181,7 +184,7 @@ export function useDecisionFeed(limit = 50) {
       setPopulating(false);
       await load();
     }
-  }, [load]);
+  }, [load, demo.id]);
 
   useEffect(() => {
     load();

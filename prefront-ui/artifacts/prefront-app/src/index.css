@@ -1521,3 +1521,88 @@ select { cursor: pointer; }
   content: ""; position: absolute; left: 0; top: 0; height: 50%; width: 1px;
   background: var(--line);
 }
+
+/* ── Demo switcher: sidebar pill + initial chooser overlay ─────────────────── */
+.pf-demo-pill {
+  width: 46px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 2px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 11px;
+  background: rgba(255,255,255,0.05);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, transform .1s;
+  flex-shrink: 0;
+}
+.pf-demo-pill:hover { background: rgba(255,255,255,0.11); border-color: var(--demo-accent, rgba(255,255,255,0.3)); }
+.pf-demo-pill:active { transform: scale(0.96); }
+.pf-demo-pill-glyph { font-size: 17px; line-height: 1; }
+.pf-demo-pill-label {
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.02em;
+  color: rgba(255,255,255,0.72);
+  max-width: 42px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.pf-demo-chooser {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(9, 14, 26, 0.72);
+  backdrop-filter: blur(6px);
+  display: grid; place-items: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+.pf-demo-chooser-inner {
+  width: 100%; max-width: 760px;
+  background: var(--surface);
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+  padding: 36px;
+}
+.pf-demo-chooser-head { text-align: center; margin-bottom: 26px; }
+.pf-demo-chooser-head .pf-logo-wordmark {
+  justify-content: center; font-size: 30px; margin-bottom: 14px;
+}
+.pf-demo-chooser-head .pf-logo-p { color: var(--blue); }
+.pf-demo-chooser-head .pf-logo-f { color: transparent; -webkit-text-stroke: 1.3px var(--blue); text-stroke: 1.3px var(--blue); }
+.pf-demo-chooser-head h1 { font-size: 22px; font-weight: 700; color: var(--ink); margin: 0 0 8px; }
+.pf-demo-chooser-head p { font-size: 13.5px; color: var(--muted); margin: 0 auto; max-width: 520px; line-height: 1.5; }
+
+.pf-demo-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.pf-demo-card {
+  --demo-accent: var(--blue);
+  text-align: left; cursor: pointer;
+  background: var(--surface-alt);
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  display: flex; flex-direction: column; gap: 6px;
+  transition: border-color .15s, transform .1s, box-shadow .15s;
+}
+.pf-demo-card:hover {
+  border-color: var(--demo-accent);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.10);
+}
+.pf-demo-card.active { border-color: var(--demo-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--demo-accent) 22%, transparent); }
+.pf-demo-card-glyph {
+  width: 44px; height: 44px; border-radius: 12px;
+  display: grid; place-items: center; font-size: 24px;
+  background: color-mix(in srgb, var(--demo-accent) 14%, transparent);
+  margin-bottom: 4px;
+}
+.pf-demo-card-label { font-size: 17px; font-weight: 700; color: var(--ink); }
+.pf-demo-card-tag { font-size: 12px; font-weight: 600; color: var(--demo-accent); }
+.pf-demo-card-blurb { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.pf-demo-card-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.pf-demo-card-count {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line);
+  padding: 2px 8px; border-radius: 20px;
+}
+.pf-demo-card-current {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: #fff; background: var(--demo-accent);
+  padding: 2px 8px; border-radius: 20px;
+}

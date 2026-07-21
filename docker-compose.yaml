@@ -105,6 +105,8 @@ services:
       # /artifacts/<datasource_id>/ under this path's grandparent (/artifacts).
       SEMANTICLAYER_PUBLISH_PATH: /artifacts/example/query_templates.yaml
       SEMANTICLAYER_POLICY_PUBLISH_PATH: /artifacts/example/policy.yaml
+      # Bundled demo baselines that a datasource "reset" must never wipe.
+      SEMANTICLAYER_KEEP_DATASOURCES: securebank-demo,loanpro-demo
     volumes:
       - semanticlayer_data:/data
       - artifacts:/artifacts          # publish writes the approved templates here
@@ -155,8 +157,12 @@ services:
       DATABASE_URL: postgresql://prefront:prefront@api-db:5432/prefront_audit
       PORT: "8080"
       NODE_ENV: production
-      # Where POST /api/decisions/refresh runs the live governance catalog.
+      # Where POST /api/decisions/refresh runs the live governance catalog. One
+      # orchestrator per bundled demo; the request's ?demo= selects which. The
+      # bare ORCHESTRATOR_URL is the default (securebank) for legacy callers.
       ORCHESTRATOR_URL: http://securebank-orchestrator:8095
+      ORCHESTRATOR_URL_SECUREBANK: http://securebank-orchestrator:8095
+      ORCHESTRATOR_URL_LOANPRO: http://loanpro-orchestrator:8098
     ports: ["8080:8080"]
     depends_on:
       api-db:
@@ -268,6 +274,92 @@ services:
       securebank-ungoverned: {condition: service_started}
       securebank-mcp: {condition: service_started}
 
+  # ==========================================================================
+  # LoanPro demo (in-repo under ./loanpro-demo) — the SECOND worked example, a
+  # retail loan-origination shop. Same engine image, different domain: its own
+  # Postgres + curated artifacts + an app-layer "before" agent + ONE Prefront MCP
+  # server + the orchestrator the UI's Runtime tab points at when the LoanPro
+  # demo is selected (http://localhost:8098). Shares the engine's `artifacts`
+  # volume; the demo owns /artifacts/loanpro-demo/.
+  # ==========================================================================
+
+  # ---- LoanPro sample datasource (schema + seed auto-apply on first boot)
+  loanpro-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: loanpro
+      POSTGRES_PASSWORD: loanpro
+      POSTGRES_DB: loanpro
+    volumes:
+      - ./loanpro-demo/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./loanpro-demo/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+      - loanpro_pgdata:/var/lib/postgresql/data
+    ports: ["5435:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loanpro -d loanpro"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- the "before": app-layer agent — typed functions, no access-control policy ----
+  loanpro-ungoverned:
+    build: ./loanpro-demo
+    command: ["python", "ungoverned_server.py"]
+    environment:
+      <<: *llm-env                       # OPENAI_API_KEY (same key Prefront uses)
+      LOANPRO_DSN: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
+      UNGOVERNED_MODEL: gpt-4o-mini
+      UNGOVERNED_PORT: "8097"
+      LOANPRO_READONLY: "on"             # writes attempted but rolled back
+    ports: ["8097:8097"]
+    depends_on:
+      loanpro-db: {condition: service_healthy}
+
+  # ---- seed the curated LoanPro artifacts the MCP serves ----
+  loanpro-seed:
+    image: alpine
+    command:
+      - sh
+      - -c
+      - mkdir -p /artifacts/loanpro-demo &&
+        ([ -f /artifacts/loanpro-demo/query_templates.yaml ] ||
+         cp /src/query_templates.yaml /src/policy.yaml /artifacts/loanpro-demo/) &&
+        echo "loanpro curated artifacts ready in /artifacts/loanpro-demo"
+    volumes:
+      - artifacts:/artifacts
+      - ./loanpro-demo/policy:/src:ro
+    restart: "no"
+
+  # ---- Prefront, exposed as ONE MCP server (the single endpoint the LLM uses)
+  loanpro-mcp:
+    build: ./semantic-mcp-server
+    command: ["--templates=/artifacts/loanpro-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
+    environment:
+      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
+      DATABASE_URL: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
+      POLICY_PATH: /artifacts/loanpro-demo/policy.yaml
+    volumes:
+      - artifacts:/artifacts:ro          # shared with the engine; read-only here
+    ports: ["8101:8090"]                 # host 8101 (engine MCP owns 8090, securebank 8100)
+    depends_on:
+      loanpro-db: {condition: service_healthy}
+      loanpro-seed: {condition: service_completed_successfully}
+
+  # ---- the "after" orchestrator: gpt-4o-mini as an MCP CLIENT of the server
+  loanpro-orchestrator:
+    build: ./loanpro-demo
+    command: ["python", "demo_server.py"]
+    environment:
+      <<: *llm-env                       # OPENAI_API_KEY
+      GOVERNED_MODEL: gpt-4o-mini
+      LOANPRO_DEMO_PORT: "8098"
+      UNGOVERNED_URL: http://loanpro-ungoverned:8097/run
+      GOVERNED_MCP_URL: http://loanpro-mcp:8090/sse
+    ports: ["8098:8098"]
+    depends_on:
+      loanpro-ungoverned: {condition: service_started}
+      loanpro-mcp: {condition: service_started}
+
 volumes:
   skillbuilder_db:
   api_db:
@@ -275,3 +367,4 @@ volumes:
   mcp_data:
   artifacts:
   securebank_pgdata:
+  loanpro_pgdata:

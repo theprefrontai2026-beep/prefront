@@ -1,0 +1,265 @@
+# LoanPro — enforceable policy bundle (the rules the runtime evaluates).
+# Hand-authored for the demo (the same shape the skill-builder/semantic-layer
+# binder emits). Each rule gates one or more intents; conditions reference facts =
+# precheck row columns ∪ request args ∪ caller.* ; effects are block / mask /
+# approval_required. caller.* is only ever on the LEFT of a comparison (the
+# runtime's expression evaluator can't parse a dotted name on the right).
+policy_bundle:
+  version: "1"
+  domain: loanpro
+  datasource_id: loanpro
+  metrics: {}
+
+  intents:
+    view_applications: {allowed_roles: [Loan Officer, Underwriter, Branch Manager]}
+    view_application:  {allowed_roles: [Applicant, Loan Officer, Underwriter, Branch Manager]}  # ownership enforced by view_application_owner_only
+    view_applicant:    {allowed_roles: [Loan Officer, Underwriter, Branch Manager]}
+    view_applicants:   {allowed_roles: [Loan Officer, Underwriter, Branch Manager]}
+    decide_loan:       {allowed_roles: [Loan Officer, Underwriter, Branch Manager]}  # Loan Officer allowed the intent but blocked by decide_loan_role_restricted
+
+  rules:
+    # L2 — a self-service Applicant may read ONLY their own application by id
+    # (OWN_DATA_ONLY). Fires for an Applicant whose login differs from the file's
+    # owning applicant; staff skip the role guard and may inspect any application.
+    - rule_key: view_application_owner_only
+      rule_type: restriction
+      intents: [view_application]
+      conditions:
+        - {field: caller.role, operator: "==", value: "Applicant", value_kind: literal, value_refs: []}
+        - {field: caller.user_id, operator: "!=", value: "owner_user_id", value_kind: expression, value_refs: [owner_user_id]}
+      effect:
+        decision: block
+        message: "OWN_DATA_ONLY: applicants may only view their own loan application."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Borrower self-service"
+        text: "An applicant may view the status and details of their own loan application only; applications belonging to other borrowers are not visible to them."
+        evidence: "view ... their own loan application only"
+      bindings:
+        caller.role: {source: caller, attribute: role}
+        caller.user_id: {source: caller, attribute: user_id}
+        owner_user_id: {source: column, column: applicants.user_id}
+
+    # L4 — an applicant may not enumerate the borrower directory (ROLE_NOT_PERMITTED).
+    - rule_key: view_applicants_applicant_block
+      rule_type: restriction
+      intents: [view_applicants]
+      conditions:
+        - {field: caller.role, operator: "==", value: "Applicant", value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "ROLE_NOT_PERMITTED: applicants cannot list other borrowers."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Directory access"
+        text: "Only Loan Officers, Underwriters, and Branch Managers may list or export the applicant directory."
+        evidence: "Only Loan Officers, Underwriters, and Branch Managers may list"
+      bindings:
+        caller.role: {source: caller, attribute: role}
+
+    # L3/L5 — ssn is a MANAGER_ONLY_FIELD: masked for everyone except a Branch Manager.
+    - rule_key: ssn_manager_only
+      rule_type: data_access
+      intents: [view_applicant, view_applicants]
+      conditions:
+        - {field: caller.role, operator: "!=", value: "Branch Manager", value_kind: literal, value_refs: []}
+      effect:
+        decision: mask
+        restricted_fields: [ssn]
+        message: "MANAGER_ONLY_FIELD: ssn is visible to Branch Managers only."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "PII handling"
+        text: "Social Security Numbers are restricted; only a Branch Manager may view an unmasked SSN."
+        evidence: "only a Branch Manager may view an unmasked SSN"
+      bindings:
+        caller.role: {source: caller, attribute: role}
+        ssn: {source: column, column: applicants.ssn}
+
+    # L3/L5 — a Loan Officer works the file but is not a credit decision-maker, so
+    # the raw bureau score is masked from them; Underwriters/Managers see it.
+    - rule_key: credit_score_officer_masked
+      rule_type: data_access
+      intents: [view_applicant, view_applicants]
+      conditions:
+        - {field: caller.role, operator: "==", value: "Loan Officer", value_kind: literal, value_refs: []}
+      effect:
+        decision: mask
+        restricted_fields: [credit_score]
+        message: "UNDERWRITER_ONLY_FIELD: the raw credit score is masked from Loan Officers."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Credit data segregation"
+        text: "Raw bureau credit scores are available to Underwriters and Branch Managers; Loan Officers work from the tier band, not the exact score."
+        evidence: "available to Underwriters and Branch Managers"
+      bindings:
+        caller.role: {source: caller, attribute: role}
+        credit_score: {source: column, column: credit_scores.score}
+
+    # ── decide_loan: the credit policy ──────────────────────────────────────
+    # These gate the loan decision on the BORROWER'S DATA (score, delinquency,
+    # affordability, amount), not on who is asking. Precedence is block >
+    # approval_required > allow, so a hard block always wins over a review.
+
+    # A borrower below the credit floor is declined outright (deep subprime).
+    - rule_key: decide_loan_credit_floor
+      rule_type: restriction
+      intents: [decide_loan]
+      conditions:
+        - {field: credit_score, operator: "<", value: 580, value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "Credit score below 580 (deep subprime) — loan cannot be approved."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Credit floor"
+        text: "Applications from borrowers with a credit score below 580 are declined at origination."
+        evidence: "credit score below 580 are declined"
+      bindings:
+        credit_score: {source: column, column: credit_scores.score}
+
+    # An open (unresolved) delinquency blocks a new loan.
+    - rule_key: decide_loan_unresolved_default
+      rule_type: restriction
+      intents: [decide_loan]
+      conditions:
+        - {field: unresolved_count, operator: ">", value: 0, value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "Applicant has an unresolved default on file — loan cannot be approved."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Delinquency"
+        text: "No new loan may be approved while the applicant has an unresolved default outstanding."
+        evidence: "unresolved default outstanding"
+      bindings:
+        unresolved_count: {source: column, column: default_records.unresolved_count}
+
+    # A loan whose size exceeds five times the borrower's annual income is
+    # unaffordable and blocked (a debt-to-income guardrail).
+    - rule_key: decide_loan_income_multiple
+      rule_type: restriction
+      intents: [decide_loan]
+      conditions:
+        - {field: loan_to_income, operator: ">", value: 5, value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "Requested amount exceeds 5× the applicant's annual income — outside affordability limits."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Affordability"
+        text: "The requested loan amount may not exceed five times the applicant's verified annual income."
+        evidence: "may not exceed five times the applicant's verified annual income"
+      bindings:
+        loan_to_income: {source: column, column: loan_applications.loan_to_income}
+
+    # A hard ceiling no loan may exceed at branch origination.
+    - rule_key: decide_loan_ceiling
+      rule_type: restriction
+      intents: [decide_loan]
+      conditions:
+        - {field: requested_amount, operator: ">", value: 1000000, value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "Loan exceeds the $1,000,000 origination ceiling and cannot be approved here."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Risk limits"
+        text: "No single loan above $1,000,000 may be originated at the branch; such applications are escalated to the credit committee."
+        evidence: "No single loan above $1,000,000 may be originated at the branch"
+      bindings:
+        requested_amount: {source: column, column: loan_applications.requested_amount}
+
+    # A loan that is already decided may not be decided again.
+    - rule_key: decide_loan_already_decided
+      rule_type: restriction
+      intents: [decide_loan]
+      conditions:
+        - {field: status, operator: "!=", value: "pending", value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "This application has already been decided and cannot be changed."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Decision integrity"
+        text: "Once a loan application has been approved or rejected, its decision is final and cannot be overwritten."
+        evidence: "its decision is final and cannot be overwritten"
+      bindings:
+        status: {source: column, column: loan_applications.status}
+
+    # A loan above $50,000 (within the ceiling) needs Branch Manager approval —
+    # a Branch Manager deciding it is already at that authority, so no approval loop.
+    - rule_key: decide_loan_requires_approval
+      rule_type: approval_threshold
+      intents: [decide_loan]
+      conditions:
+        - {field: requested_amount, operator: ">", value: 50000, value_kind: literal, value_refs: []}
+        - {field: requested_amount, operator: "<=", value: 1000000, value_kind: literal, value_refs: []}
+        - {field: caller.role, operator: "!=", value: "Branch Manager", value_kind: literal, value_refs: []}
+      effect:
+        decision: approval_required
+        approver_role: "Branch Manager"
+        message: "Loans above $50,000 require Branch Manager approval."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Loan authority"
+        text: "An Underwriter may decide loans up to and including $50,000; loans above that amount require Branch Manager approval before the decision is final."
+        evidence: "loans above that amount require Branch Manager approval"
+      bindings:
+        requested_amount: {source: column, column: loan_applications.requested_amount}
+        caller.role: {source: caller, attribute: role}
+
+    # A near-prime borrower (score under 640) is routed to manual review rather
+    # than auto-approved.
+    - rule_key: decide_loan_low_score_review
+      rule_type: approval_threshold
+      intents: [decide_loan]
+      conditions:
+        - {field: credit_score, operator: "<", value: 640, value_kind: literal, value_refs: []}
+      effect:
+        decision: approval_required
+        approver_role: "Branch Manager"
+        message: "Credit score under 640 (near prime) — manual review required before approval."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Manual review"
+        text: "Applications with a credit score under 640 require manual review before a decision is finalised."
+        evidence: "credit score under 640 require manual review"
+      bindings:
+        credit_score: {source: column, column: credit_scores.score}
+
+    # A recent default (within the last 12 months), even if resolved, routes to review.
+    - rule_key: decide_loan_recent_default_review
+      rule_type: approval_threshold
+      intents: [decide_loan]
+      conditions:
+        - {field: last_default_days_ago, operator: "<", value: 365, value_kind: literal, value_refs: []}
+      effect:
+        decision: approval_required
+        approver_role: "Branch Manager"
+        message: "A default within the last 12 months — manual review required before approval."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Manual review"
+        text: "Any applicant with a default in the trailing twelve months requires manual review, regardless of resolution."
+        evidence: "default in the trailing twelve months requires manual review"
+      bindings:
+        last_default_days_ago: {source: column, column: default_records.last_default_days_ago}
+
+    # A Loan Officer packages applications but does not render credit decisions
+    # (kept enforced; not featured in the scenario catalogue).
+    - rule_key: decide_loan_role_restricted
+      rule_type: restriction
+      intents: [decide_loan]
+      conditions:
+        - {field: caller.role, operator: "==", value: "Loan Officer", value_kind: literal, value_refs: []}
+      effect:
+        decision: block
+        message: "ROLE_NOT_PERMITTED: decide_loan is restricted to Underwriters and Branch Managers."
+      source:
+        document: "LoanPro Origination Policy"
+        section: "Loan authority"
+        text: "Loan Officers intake and package applications but do not approve them; a credit decision is made only by an Underwriter or a Branch Manager."
+        evidence: "a credit decision is made only by an Underwriter or a Branch Manager"
+      bindings:
+        caller.role: {source: caller, attribute: role}

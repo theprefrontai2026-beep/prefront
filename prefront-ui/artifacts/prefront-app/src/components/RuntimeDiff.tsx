@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import DecisionTrace from "./DecisionTrace";
-
-const DEFAULT_SERVER = "http://localhost:8095";
+import type { DemoConfig } from "../demos";
 
 const newSessionId = () => "sess_" + Math.random().toString(36).slice(2, 10);
 
 /** Persist one governed decision so it shows on the Dashboard's trace feed.
  *  `sessionId` ties one "Run all" (or a single run) into one session for the
- *  Intent Flows page. Best-effort: a logging failure must never break the view. */
-function persistDecision(diff: any, sessionId: string) {
+ *  Intent Flows page; `demo` scopes it to the active demo. Best-effort: a
+ *  logging failure must never break the view. */
+function persistDecision(diff: any, sessionId: string, demo: string) {
   if (!diff?.governed) return;
   fetch("/api/decisions", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...diff, sessionId }),
+    body: JSON.stringify({ ...diff, sessionId, demo }),
   }).catch(() => {});
 }
 
@@ -115,8 +115,8 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
   );
 }
 
-export default function RuntimeDiff() {
-  const [server, setServer] = useState(DEFAULT_SERVER);
+export default function RuntimeDiff({ demo }: { demo: DemoConfig }) {
+  const [server, setServer] = useState(demo.orchestratorUrl);
   const [scenarios, setScenarios] = useState<any[] | null>(null);
   const [results, setResults] = useState<Record<string, any>>({});
   const [running, setRunning] = useState<Record<string, boolean>>({});
@@ -147,7 +147,7 @@ export default function RuntimeDiff() {
       if (json.error) throw new Error(json.error);
       if (json[0]) {
         setResults((m) => ({ ...m, [id]: json[0] }));
-        persistDecision(json[0], sessionId); // best-effort: log to the trace DB
+        persistDecision(json[0], sessionId, demo.id); // best-effort: log to the trace DB
       }
     } catch (e: any) {
       setResults((m) => ({ ...m, [id]: { _error: String(e.message || e) } }));
@@ -175,10 +175,10 @@ export default function RuntimeDiff() {
   useEffect(() => { loadCatalog(); }, []); // eslint-disable-line
 
   const sensitive = useMemo(() => {
-    const s = new Set<string>();
+    const s = new Set<string>(demo.sensitiveFields);
     for (const d of Object.values(results)) for (const f of (d as any).governed?.masked_fields || []) s.add(f as string);
     return s;
-  }, [results]);
+  }, [results, demo.sensitiveFields]);
 
   const tally = useMemo(() => {
     const t = { run: 0, block: 0, appr: 0, mask: 0, allow: 0 };

@@ -1,0 +1,153 @@
+# LoanPro — approved query templates (the only ways an agent may touch data).
+# Loaded by the Prefront runtime (semanticmcp). `:caller_*` placeholders are
+# injected from the trusted identity (never from the agent). Read templates scope
+# rows in SQL (ownership); precheck templates gather facts for the policy decision
+# and carry a declarative write_action executed only on an ALLOW (dry-run unless
+# ENABLE_WRITES=1). Same schema as securebank-demo — the engine is domain-neutral.
+query_templates:
+
+  # L1 — a Loan Officer sees ONLY the applications assigned to them (ownership via
+  # SQL scope). Underwriters/Managers scope to their own assigned pipeline too.
+  tmpl_view_applications_v1:
+    intent_id: view_applications
+    description: "List the loan applications assigned to the caller (their own pipeline), with amount, term and status."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT loan_id, applicant_id, requested_amount, term_months, status
+      FROM loan_applications
+      WHERE assigned_officer = :caller_user_id
+      ORDER BY loan_id
+    parameters: []
+    required_caller_context: [user_id]
+    result_columns:
+      - {name: loan_id, sensitivity: normal}
+      - {name: applicant_id, sensitivity: normal}
+      - {name: requested_amount, sensitivity: normal}
+      - {name: term_months, sensitivity: normal}
+      - {name: status, sensitivity: normal}
+    status: published
+
+  # L2 — a specific application by id. A guarded read (precheck, no write_action):
+  # it fetches the row UNSCOPED and joins the applicant's owning login so
+  # owner_user_id is a fact, then the ownership rule blocks a self-service
+  # Applicant reading someone else's application. Staff skip the role guard.
+  tmpl_view_application_v1:
+    intent_id: view_application
+    description: "Get one loan application's details (amount, term, status) by its numeric loan_id."
+    kind: precheck
+    dialect: postgres
+    sql: |-
+      SELECT la.loan_id, la.status, la.requested_amount, la.applicant_id,
+             la.assigned_officer, a.user_id AS owner_user_id
+      FROM loan_applications la
+      JOIN applicants a ON a.applicant_id = la.applicant_id
+      WHERE la.loan_id = :loan_id
+    parameters:
+      - {name: loan_id, type: integer, required: true}
+    decision_inputs:
+      - {name: owner_user_id, sensitivity: normal}
+      - {name: assigned_officer, sensitivity: normal}
+      - {name: requested_amount, sensitivity: normal}
+      - {name: status, sensitivity: normal}
+    status: published
+
+  # L3 — a single applicant record by name; ssn masked unless the caller is a
+  # Branch Manager, credit_score masked from a Loan Officer.
+  tmpl_view_applicant_v1:
+    intent_id: view_applicant
+    description: "Look up an applicant by name (name_query). Returns their profile including ssn and credit score. Use this for any request about a named applicant's details, SSN, or credit score."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT a.applicant_id, a.full_name, a.email, a.annual_income,
+             a.employment_years, a.ssn, c.score AS credit_score, c.bureau
+      FROM applicants a
+      LEFT JOIN credit_scores c ON c.applicant_id = a.applicant_id
+      WHERE a.full_name ILIKE :name_query
+      LIMIT 10
+    parameters:
+      - {name: name_query, type: string, required: true}
+    result_columns:
+      - {name: ssn, sensitivity: restricted}
+      - {name: credit_score, sensitivity: restricted}
+    status: published
+
+  # L4/L5 — the applicant directory: staff-only (role rule), ssn masked, bounded.
+  tmpl_view_applicants_v1:
+    intent_id: view_applicants
+    description: "List the full applicant directory (every borrower on file). Use for requests to list/enumerate/export applicants or borrowers."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT a.applicant_id, a.full_name, a.email, a.annual_income, a.ssn,
+             c.score AS credit_score
+      FROM applicants a
+      LEFT JOIN credit_scores c ON c.applicant_id = a.applicant_id
+      ORDER BY a.applicant_id
+      LIMIT 100
+    parameters: []
+    result_columns:
+      - {name: ssn, sensitivity: restricted}
+      - {name: credit_score, sensitivity: restricted}
+    status: published
+
+  # The loan decision — the policy centrepiece. The precheck reads the
+  # application AND joins the applicant's credit signals (score, defaults,
+  # income) so the credit policy decides on the borrower's real data: credit
+  # floor, active/recent delinquency, income multiple, amount approval, hard
+  # ceiling. Every gating fact is a DB value, never agent-supplied. The status
+  # write runs only on an ALLOW.
+  #   loan_to_income  = requested_amount / annual_income (borrower affordability)
+  #   unresolved_count = open delinquencies; last_default_days_ago = recency
+  #     (99999 when the borrower has no defaults, so the recency rule is well-defined)
+  tmpl_decide_loan_precheck_v1:
+    intent_id: decide_loan
+    description: "Approve or reject a loan application by loan_id (decision = 'approved' or 'rejected')."
+    kind: precheck
+    dialect: postgres
+    sql: |-
+      SELECT
+        la.loan_id,
+        la.status,
+        la.requested_amount,
+        la.applicant_id,
+        a.annual_income,
+        ROUND(la.requested_amount / NULLIF(a.annual_income, 0), 2) AS loan_to_income,
+        c.score AS credit_score,
+        COALESCE(d.default_count, 0)      AS default_count,
+        COALESCE(d.unresolved_count, 0)   AS unresolved_count,
+        COALESCE(d.last_default_days_ago, 99999) AS last_default_days_ago
+      FROM loan_applications la
+      JOIN applicants a ON a.applicant_id = la.applicant_id
+      LEFT JOIN credit_scores c ON c.applicant_id = la.applicant_id
+      LEFT JOIN (
+        SELECT applicant_id,
+               COUNT(*)                                 AS default_count,
+               COUNT(*) FILTER (WHERE NOT resolved)     AS unresolved_count,
+               (CURRENT_DATE - MAX(default_date))::int  AS last_default_days_ago
+        FROM default_records
+        GROUP BY applicant_id
+      ) d ON d.applicant_id = la.applicant_id
+      WHERE la.loan_id = :loan_id
+    parameters:
+      - {name: loan_id, type: integer, required: true}
+      - {name: decision, type: string, required: true}
+    decision_inputs:
+      - {name: status, sensitivity: normal}
+      - {name: requested_amount, sensitivity: normal}
+      - {name: loan_to_income, sensitivity: normal}
+      - {name: credit_score, sensitivity: normal}
+      - {name: default_count, sensitivity: normal}
+      - {name: unresolved_count, sensitivity: normal}
+      - {name: last_default_days_ago, sensitivity: normal}
+    write_action:
+      table: loan_applications
+      kind: update
+      params: [loan_id, decision]
+      key_columns: [loan_id]
+      column_map: {decision: status}
+    status: published

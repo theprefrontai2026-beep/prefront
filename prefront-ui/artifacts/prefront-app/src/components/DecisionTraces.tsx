@@ -11,18 +11,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FeedDecision, Trace } from "../hooks/useDecisionFeed";
+import type { DemoConfig } from "../demos";
 
 const DECISIONS: FeedDecision[] = ["ALLOWED", "MASKED", "APPROVAL", "BLOCKED"];
 
 function chipTone(d: FeedDecision): string {
   return d === "BLOCKED" ? "red" : d === "APPROVAL" ? "amber" : d === "MASKED" ? "teal" : "green";
 }
-
-const ROLE_AGENT: Record<string, string> = {
-  "Account Holder": "Customer Assistant",
-  "Bank Teller": "Teller Copilot",
-  "Bank Manager": "Manager Console",
-};
 
 function fmtWhen(iso: string): string {
   const d = new Date(iso);
@@ -56,7 +51,8 @@ function Select({ label, value, options, onChange }: {
   );
 }
 
-export default function DecisionTraces({ active = true }: { active?: boolean }) {
+export default function DecisionTraces({ active = true, demo }: { active?: boolean; demo: DemoConfig }) {
+  const roleAgents = demo.roleAgents;
   const [traces, setTraces] = useState<Trace[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -73,7 +69,7 @@ export default function DecisionTraces({ active = true }: { active?: boolean }) 
     setStatus("loading");
     setError("");
     try {
-      const res = await fetch(`/api/decisions?limit=30`);
+      const res = await fetch(`/api/decisions?limit=30&demo=${encodeURIComponent(demo.id)}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
       setTraces(json.traces || []);
@@ -82,7 +78,7 @@ export default function DecisionTraces({ active = true }: { active?: boolean }) 
       setError(String(e?.message || e));
       setStatus("error");
     }
-  }, []);
+  }, [demo.id]);
 
   useEffect(() => { load(); }, [load]);
   // Refetch when the tab becomes visible again — newly-run scenarios show up.
@@ -216,7 +212,7 @@ export default function DecisionTraces({ active = true }: { active?: boolean }) 
                   <td className="pf-tr-when">{fmtWhen(t.createdAt)}</td>
                   <td><span className={`pf-dash-chip ${chipTone(t.decision)}`}>{t.decision}</span></td>
                   <td>
-                    <div className="pf-tr-agent">{ROLE_AGENT[t.role] || "Agent"}</div>
+                    <div className="pf-tr-agent">{roleAgents[t.role] || "Agent"}</div>
                     <div className="muted">{t.caller} · {t.role}</div>
                   </td>
                   <td>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Dashboard from "./components/Dashboard";
 import DecisionTraces from "./components/DecisionTraces";
 import IntentFlows from "./components/IntentFlows";
@@ -8,6 +8,8 @@ import DataGraph from "./components/DataGraph";
 import BusinessGraph from "./components/BusinessGraph";
 import Semantic from "./components/Semantic";
 import RuntimeDiff from "./components/RuntimeDiff";
+import DemoChooser from "./components/DemoChooser";
+import { useDemo } from "./DemoContext";
 import { parseKV } from "./util";
 import { useReviewSync, type ReviewEvent } from "./hooks/useReviewSync";
 
@@ -157,19 +159,15 @@ function ReviewerDot({ name, color, focused }: { name: string; color: string; fo
 }
 
 export default function App() {
+  const { demo, demoId, openChooser } = useDemo();
   const [tab, setTab] = useState("dashboard");
   const [graphMounted, setGraphMounted] = useState(false);
   const [bizGraphMounted, setBizGraphMounted] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
   const [domain, setDomain] = useState("");
   const [schema, setSchema] = useState<any>(() => loadJSON(SCHEMA_KEY));
-  const [metricsText, setMetricsText] = useState(
-    "available_credit = credit_limit - current_balance\n" +
-    "credit_utilization_pct = current_balance / credit_limit * 100"
-  );
-  const [callerScopeText, setCallerScopeText] = useState(
-    "region = region_id\nrep_id = rep_id"
-  );
+  const [metricsText, setMetricsText] = useState(demo.defaultMetrics);
+  const [callerScopeText, setCallerScopeText] = useState(demo.defaultCallerScope);
   const [intents, setIntents] = useState<string>(() => {
     try { return localStorage.getItem(INTENTS_KEY) || ""; } catch { return ""; }
   });
@@ -210,6 +208,20 @@ export default function App() {
     } catch { /* quota */ }
   }, [intents]);
 
+  // Switching demos: schema/rules/intents are per-datasource, so clear them and
+  // reset the design-time defaults to the newly-selected demo's. Only fires on an
+  // actual change (not first mount), so a reload keeps the demo you were in.
+  const prevDemo = useRef(demoId);
+  useEffect(() => {
+    if (prevDemo.current === demoId) return;
+    prevDemo.current = demoId;
+    onDisconnect();
+    setRules([]);
+    setDomain("");
+    setMetricsText(demo.defaultMetrics);
+    setCallerScopeText(demo.defaultCallerScope);
+  }, [demoId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const completedTabs = new Set<string>();
   if (schema?.datasourceId) completedTabs.add("data");
   if (rules.some(r => r.review_status === "approved")) completedTabs.add("policy");
@@ -218,6 +230,8 @@ export default function App() {
   const meta = PAGE_META[tab];
 
   return (
+    <>
+    <DemoChooser />
     <div className="pf-shell">
       {/* ── Left icon sidebar ── */}
       <aside className="pf-sidebar">
@@ -227,6 +241,17 @@ export default function App() {
             <span className="pf-logo-p">p</span><span className="pf-logo-f">f</span>
           </span>
         </div>
+
+        {/* Active-demo pill — click to reopen the demo switcher */}
+        <button
+          className="pf-demo-pill"
+          style={{ ["--demo-accent" as any]: demo.accent }}
+          title={`Demo: ${demo.label} — click to switch`}
+          onClick={openChooser}
+        >
+          <span className="pf-demo-pill-glyph" aria-hidden>{demo.glyph}</span>
+          <span className="pf-demo-pill-label">{demo.label}</span>
+        </button>
 
         {/* Nav icons */}
         {TABS.map((t) => {
@@ -288,19 +313,19 @@ export default function App() {
           </div>
         </header>
 
-        {/* Tab bodies */}
-        <div className="pf-body">
+        {/* Tab bodies — keyed on the active demo so per-tab state resets on switch */}
+        <div className="pf-body" key={demoId}>
           <div className={tab === "dashboard" ? "" : "tab-hidden"}>
-            <Dashboard onViewAllTraces={() => setTab("traces")} />
+            <Dashboard demo={demo} onViewAllTraces={() => setTab("traces")} />
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
-            <DecisionTraces active={tab === "traces"} />
+            <DecisionTraces active={tab === "traces"} demo={demo} />
           </div>
           <div className={tab === "flows" ? "" : "tab-hidden"}>
-            <IntentFlows active={tab === "flows"} />
+            <IntentFlows active={tab === "flows"} demo={demo} />
           </div>
           <div className={tab === "data" ? "" : "tab-hidden"}>
-            <DataConnector active={tab === "data"} onSchema={onSchema} onDisconnect={onDisconnect} restored={schema} />
+            <DataConnector active={tab === "data"} demo={demo} onSchema={onSchema} onDisconnect={onDisconnect} restored={schema} />
           </div>
           {graphMounted && (
             <div className={tab === "graph" ? "" : "tab-hidden"}>
@@ -347,10 +372,11 @@ export default function App() {
             />
           </div>
           <div className={tab === "runtime" ? "" : "tab-hidden"}>
-            <RuntimeDiff />
+            <RuntimeDiff demo={demo} />
           </div>
         </div>
       </div>
     </div>
+    </>
   );
 }

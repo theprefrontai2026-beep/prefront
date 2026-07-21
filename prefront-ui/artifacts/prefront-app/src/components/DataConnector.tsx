@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { introspect, parseSchema, resetDatasources, analyzePii } from "../api";
+import type { DemoConfig } from "../demos";
 
 type Progress = { phase: "schema" | "pii" | "done"; tables: number; pii: number };
 
@@ -32,6 +33,7 @@ function ConnectProgress({ p }: { p: Progress }) {
 
 interface Props {
   active: boolean;
+  demo: DemoConfig;
   onSchema: (s: any) => void;
   onDisconnect: () => void;
   restored: any;
@@ -39,11 +41,11 @@ interface Props {
 
 const DSN_PLACEHOLDER = "postgresql://user:pass@host:5432/db";
 
-export default function DataConnector({ onSchema, onDisconnect, restored }: Props) {
+export default function DataConnector({ demo, onSchema, onDisconnect, restored }: Props) {
   const [mode, setMode] = useState<"dsn" | "ddl" | "catalog">("dsn");
   const [dsn, setDsn] = useState("");
   const [dbSchema, setDbSchema] = useState("public");
-  const [datasourceId, setDatasourceId] = useState("securebank");
+  const [datasourceId, setDatasourceId] = useState(restored?.datasourceId || demo.datasourceId);
   const [ddl, setDdl] = useState("");
   const [ddlFileName, setDdlFileName] = useState("");
   const [catalogJson, setCatalogJson] = useState("");
@@ -61,7 +63,7 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
     if (!window.confirm(
       "Disconnect and forget everything?\n\n" +
       "This clears the connected datasource and its generated query templates " +
-      "on the server (the bundled securebank demo is kept), and " +
+      "on the server (the bundled demo baselines are kept), and " +
       "clears the schema cached in this browser. This cannot be undone."
     )) return;
     setError(""); setStatus(""); setBusy(true);
@@ -246,7 +248,7 @@ export default function DataConnector({ onSchema, onDisconnect, restored }: Prop
               <textarea
                 value={ddl}
                 onChange={(e) => { setDdl(e.target.value); if (!e.target.value) setDdlFileName(""); }}
-                placeholder={"CREATE TABLE customers (\n  id SERIAL PRIMARY KEY,\n  email TEXT,\n  credit_limit NUMERIC\n);\n\nCREATE TABLE accounts (\n  id SERIAL PRIMARY KEY,\n  customer_id INTEGER REFERENCES customers(id),\n  balance NUMERIC\n);"}
+                placeholder={demo.ddlPlaceholder}
                 rows={10}
               />
             </label>
