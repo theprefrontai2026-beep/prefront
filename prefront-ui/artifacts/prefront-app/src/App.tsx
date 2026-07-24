@@ -13,8 +13,17 @@ import { useDemo } from "./DemoContext";
 import { parseKV } from "./util";
 import { useReviewSync, type ReviewEvent } from "./hooks/useReviewSync";
 
-const SCHEMA_KEY = "prefront.schema";
-const INTENTS_KEY = "prefront.intents";
+// Schema + intents are per-datasource, so their browser caches are namespaced by
+// demo id. A global key (as these once were) desyncs from the persisted demo
+// choice on reload — the reset-on-switch effect below is skipped on first mount —
+// so one demo's schema/intents would load under another, e.g. LoanPro's loan
+// tables surfacing as entities in the SecureBank Business Graph.
+const schemaKey  = (demoId: string) => `prefront.schema.${demoId}`;
+const intentsKey = (demoId: string) => `prefront.intents.${demoId}`;
+
+// One-time cleanup of the old un-namespaced keys (their contents belonged to no
+// particular demo, so there is nothing to migrate — just stop them from lingering).
+try { localStorage.removeItem("prefront.schema"); localStorage.removeItem("prefront.intents"); } catch { /* ignore */ }
 
 function loadJSON(key: string) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; }
@@ -165,11 +174,11 @@ export default function App() {
   const [bizGraphMounted, setBizGraphMounted] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
   const [domain, setDomain] = useState("");
-  const [schema, setSchema] = useState<any>(() => loadJSON(SCHEMA_KEY));
+  const [schema, setSchema] = useState<any>(() => loadJSON(schemaKey(demoId)));
   const [metricsText, setMetricsText] = useState(demo.defaultMetrics);
   const [callerScopeText, setCallerScopeText] = useState(demo.defaultCallerScope);
   const [intents, setIntents] = useState<string>(() => {
-    try { return localStorage.getItem(INTENTS_KEY) || ""; } catch { return ""; }
+    try { return localStorage.getItem(intentsKey(demoId)) || ""; } catch { return ""; }
   });
 
   const [remoteRuleUpdates, setRemoteRuleUpdates] = useState<ReviewEvent[]>([]);
@@ -186,7 +195,7 @@ export default function App() {
 
   function onSchema(s: any) {
     setSchema(s);
-    try { localStorage.setItem(SCHEMA_KEY, JSON.stringify(s)); } catch { /* quota */ }
+    try { localStorage.setItem(schemaKey(demoId), JSON.stringify(s)); } catch { /* quota */ }
     if (s?.suggestedIntents?.length && !intents.trim()) {
       setIntents(s.suggestedIntents.join(", "));
     }
@@ -196,26 +205,34 @@ export default function App() {
     setSchema(null);
     setIntents("");
     try {
-      localStorage.removeItem(SCHEMA_KEY);
-      localStorage.removeItem(INTENTS_KEY);
+      localStorage.removeItem(schemaKey(demoId));
+      localStorage.removeItem(intentsKey(demoId));
     } catch { /* ignore */ }
   }
 
+  // Persist intents to the active demo's key. Skip the render on which the demo
+  // just changed: `intents` still holds the previous demo's value there, and the
+  // switch effect below is about to load the new demo's cache — writing now would
+  // clobber the new demo's saved intents with the old demo's.
+  const persistDemo = useRef(demoId);
   useEffect(() => {
+    if (persistDemo.current !== demoId) { persistDemo.current = demoId; return; }
     try {
-      if (intents) localStorage.setItem(INTENTS_KEY, intents);
-      else localStorage.removeItem(INTENTS_KEY);
+      if (intents) localStorage.setItem(intentsKey(demoId), intents);
+      else localStorage.removeItem(intentsKey(demoId));
     } catch { /* quota */ }
-  }, [intents]);
+  }, [intents, demoId]);
 
-  // Switching demos: schema/rules/intents are per-datasource, so clear them and
-  // reset the design-time defaults to the newly-selected demo's. Only fires on an
-  // actual change (not first mount), so a reload keeps the demo you were in.
+  // Switching demos: schema/rules/intents are per-datasource, so swap them out for
+  // the newly-selected demo's own cache (each demo remembers its own connection)
+  // and reset the design-time defaults. Only fires on an actual change (not first
+  // mount), so a reload keeps the demo you were in with its own schema/intents.
   const prevDemo = useRef(demoId);
   useEffect(() => {
     if (prevDemo.current === demoId) return;
     prevDemo.current = demoId;
-    onDisconnect();
+    setSchema(loadJSON(schemaKey(demoId)));
+    try { setIntents(localStorage.getItem(intentsKey(demoId)) || ""); } catch { setIntents(""); }
     setRules([]);
     setDomain("");
     setMetricsText(demo.defaultMetrics);
