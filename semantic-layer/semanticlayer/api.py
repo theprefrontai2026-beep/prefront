@@ -52,11 +52,11 @@ _store: Optional[Store] = None
 # server actually serves (securebank-mcp -> /artifacts/securebank-demo). NB: the
 # default datasource id "securebank" writes to /artifacts/securebank — a USER
 # connection, not a baseline, so it is intentionally NOT kept. Override with a
-# space-separated env list; empty wipes the baselines too.
+# comma- or space-separated env list; empty wipes the baselines too.
 _KEEP_DATASOURCES = [
-    s for s in os.environ.get(
+    s for s in re.split(r"[,\s]+", os.environ.get(
         "SEMANTICLAYER_KEEP_DATASOURCES", "securebank-demo"
-    ).split() if s
+    )) if s
 ]
 
 
