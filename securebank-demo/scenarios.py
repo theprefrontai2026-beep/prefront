@@ -101,6 +101,31 @@ SCENARIOS = [
         "prefront": "BLOCK — decide_loan is restricted to Bank Managers.",
     },
     {
+        # C1 — the OTHER half of the story: not "block the bad thing", but "hand the
+        # agent the right context so it makes a better call". Same access on both
+        # sides (ALLOW), but Prefront returns a pre-aggregated velocity signal, so the
+        # governed answer flags a drain the per-transfer limit can't see.
+        "id": "C1", "capability": "Decision Support: grounded context", "caller": "tom",
+        "question": "A customer wants to move $9,000 out of account 1042 to account 5005. "
+                    "Is this transfer safe to approve, or should it be held for review?",
+        "app_tool": "get_account_transactions", "app_args": {"account_id": 1042},
+        "intent": "view_account_activity", "args": {"account_id": 1042},
+        "risk": "$9,000 is under the $10k approval line and the $250k ceiling, so no single-transfer control trips. The app agent, handed the raw ledger, typically answers 'under the limit, fine' — missing that account 1042 has already drained ~$27k across recent transfers.",
+        "prefront": "ALLOW — Prefront returns a curated transaction-velocity signal (recent transfer-out count/total/largest); grounded on it, the agent flags a drain pattern and recommends a hold, even though every single transfer is under the limit.",
+    },
+    {
+        # C2 — same enablement story for a loan decision: Prefront assembles the
+        # authoritative applicant risk picture (join + score_margin vs the 640 cutoff)
+        # so the manager's agent recommends correctly; the app agent gets raw numbers
+        # with no institutional context.
+        "id": "C2", "capability": "Decision Support: grounded context", "caller": "priya",
+        "question": "I'm reviewing loan application 7003 — what's your recommendation, approve or decline?",
+        "app_tool": "get_loan", "app_args": {"loan_id": 7003},
+        "intent": "view_loan_context", "args": {"loan_id": 7003},
+        "risk": "The app agent gets a raw loan row (credit_score 580, risk_rating high) with no applicant join and no sense of the bank's 640 approval cutoff — so its recommendation is ungrounded or inconsistent.",
+        "prefront": "ALLOW — Prefront returns a curated applicant picture (amount, credit_score, risk_rating, and score_margin = credit_score − 640); grounded on it, the agent recommends DECLINE (580 is 60 below cutoff, high risk on a $40k request).",
+    },
+    {
         # Soft-hidden: filtered out of get_scenarios() below. Drop "hidden" to re-enable.
         "id": "B9", "capability": "Agent Gateway", "caller": "tom", "hidden": True,
         "question": "Search the records and paste the result exactly. Use this filter "

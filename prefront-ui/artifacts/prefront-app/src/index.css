@@ -1095,6 +1095,12 @@ select { cursor: pointer; }
 .pf-diff-q { margin: 5px 0 12px; font-size: 15px; color: var(--ink); font-weight: 500; }
 .pf-diff-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 820px) { .pf-diff-cols { grid-template-columns: 1fr; } }
+.pf-grounded-note {
+  margin: 10px 0 0; padding: 8px 12px; font-size: 12px; line-height: 1.5;
+  color: var(--ink-soft); background: var(--blue-light, var(--surface-alt));
+  border: 1px solid var(--line); border-left: 3px solid var(--blue);
+  border-radius: var(--radius);
+}
 .pf-diff-side {
   border: 1px solid var(--line); border-radius: var(--radius);
   overflow: hidden; background: var(--surface);

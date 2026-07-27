@@ -148,6 +148,20 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_loan",
+            "description": "Get a loan application's details (amount, status, credit score, risk rating) by loan ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "loan_id": {"type": "integer", "description": "The loan application ID."},
+                },
+                "required": ["loan_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "approve_loan",
             "description": "Approve or reject a loan application.",
             "parameters": {
@@ -283,6 +297,16 @@ def _dispatch(name: str, args: dict, caller_uid: int | None) -> tuple[str, dict]
         return sql, _run_sql(sql, {
             "from_account": from_account, "to_account": to_account, "amount": amount,
         })
+
+    if name == "get_loan":
+        loan_id = int(args.get("loan_id", 0))
+        # No role check and no curation — raw row of one loan. The app agent gets the
+        # numbers but not the bank's cutoff context (score_margin) or the applicant
+        # join Prefront's view_loan_context assembles, so its recommendation is
+        # ungrounded next to the governed side.
+        sql = ("SELECT loan_id, user_id, amount, status, credit_score, risk_rating, decided_by "
+               "FROM loans WHERE loan_id = %(loan_id)s")
+        return sql, _run_sql(sql, {"loan_id": loan_id})
 
     if name == "approve_loan":
         loan_id  = int(args.get("loan_id", 0))

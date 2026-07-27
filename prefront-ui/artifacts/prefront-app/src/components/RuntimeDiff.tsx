@@ -53,7 +53,23 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
   const g = d.governed || {};
   const hasRows = u.rows && u.rows.length;
   const [showTrace, setShowTrace] = useState(false);
+  // Decision-support rows: both sides get access (governed is a clean ALLOW, nothing
+  // masked/blocked), so the contrast isn't the verdict — it's the answer. Prefront's
+  // intent hands the agent curated, authoritative context to ground its call.
+  const groundedContrast =
+    verdictClass(g.outcome) === "v-allow" &&
+    g.status === "allowed" &&
+    !(g.masked_fields?.length) &&
+    !!g.answer && !!u.answer;
   return (
+    <>
+    {groundedContrast && (
+      <div className="pf-grounded-note">
+        Same access on both sides — the difference is the <strong>answer</strong>.
+        Prefront handed the agent curated, authoritative context to ground its call;
+        compare the two <em>model</em> lines below.
+      </div>
+    )}
     <div className="pf-diff-cols" style={{ marginTop: 10 }}>
       <div className="pf-diff-side bad">
         <div className="pf-diff-side-head">App layer · typed functions, no policy</div>
@@ -112,6 +128,7 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

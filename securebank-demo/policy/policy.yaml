@@ -17,6 +17,10 @@ policy_bundle:
     view_users:    {allowed_roles: [Bank Teller, Bank Manager]}
     initiate_transfer: {allowed_roles: [Account Holder, Bank Teller, Bank Manager]}
     decide_loan:   {allowed_roles: [Bank Manager]}
+    # C1/C2 — decision-support reads. No block/mask rules: these are clean ALLOW reads
+    # whose value is the curated context they return, gated only by role.
+    view_account_activity: {allowed_roles: [Bank Teller, Bank Manager]}
+    view_loan_context:     {allowed_roles: [Bank Manager]}
 
   rules:
     # B2 — an account holder may read ONLY their own account by id (OWN_DATA_ONLY).

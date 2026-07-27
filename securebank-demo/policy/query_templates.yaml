@@ -111,6 +111,70 @@ query_templates:
       autofill: {txn_id: next_int, created_at: current_date}
     status: published
 
+  # C1 — decision support: transaction-velocity context for a transfer judgment.
+  # A staff read that AGGREGATES the account's ledger into one trustworthy signal
+  # (recent transfer-out count / total / largest). No caller scoping (staff-only via
+  # the intent role gate). The value is enablement, not restriction: the agent gets a
+  # pre-computed behavioural signal it would otherwise have to derive from raw rows —
+  # so it can flag a drain pattern the per-transfer $10k limit never sees.
+  tmpl_view_account_activity_v1:
+    intent_id: view_account_activity
+    description: "Summarise recent outflow activity for an account_id: how many recent transfers out, their total, and the largest. Use this to judge whether a further transfer looks like a drain/velocity risk."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT
+        :account_id                                                       AS account_id,
+        COUNT(*) FILTER (WHERE txn_type = 'transfer_out')                 AS recent_transfer_out_count,
+        COALESCE(SUM(amount) FILTER (WHERE txn_type = 'transfer_out'), 0) AS recent_transfer_out_total,
+        COALESCE(MAX(amount) FILTER (WHERE txn_type = 'transfer_out'), 0) AS largest_transfer_out
+      FROM transactions
+      WHERE account_id = :account_id
+    parameters:
+      - {name: account_id, type: integer, required: true}
+    result_columns:
+      - {name: account_id, sensitivity: normal}
+      - {name: recent_transfer_out_count, sensitivity: normal}
+      - {name: recent_transfer_out_total, sensitivity: normal}
+      - {name: largest_transfer_out, sensitivity: normal}
+    status: published
+
+  # C2 — decision support: a curated loan-applicant picture for a Bank Manager.
+  # Joins the loan to its applicant and adds score_margin = credit_score - 640 (the
+  # bank's approval cutoff), encoding institutional context the raw numbers don't
+  # carry. Manager-only via the intent role gate. Same story: Prefront assembles the
+  # authoritative, decision-relevant context so the agent's recommendation is grounded.
+  tmpl_view_loan_context_v1:
+    intent_id: view_loan_context
+    description: "Get the full risk picture for a loan application by loan_id: amount, applicant, credit_score, risk_rating, status, and score_margin (credit_score minus the 640 approval cutoff). Use this to recommend approve/decline on a loan."
+    kind: read
+    read_only: true
+    dialect: postgres
+    sql: |-
+      SELECT
+        l.loan_id,
+        u.name AS applicant_name,
+        l.amount,
+        l.credit_score,
+        l.risk_rating,
+        l.status,
+        (l.credit_score - 640) AS score_margin
+      FROM loans l
+      JOIN users u ON u.user_id = l.user_id
+      WHERE l.loan_id = :loan_id
+    parameters:
+      - {name: loan_id, type: integer, required: true}
+    result_columns:
+      - {name: loan_id, sensitivity: normal}
+      - {name: applicant_name, sensitivity: normal}
+      - {name: amount, sensitivity: normal}
+      - {name: credit_score, sensitivity: normal}
+      - {name: risk_rating, sensitivity: normal}
+      - {name: status, sensitivity: normal}
+      - {name: score_margin, sensitivity: normal}
+    status: published
+
   # B8 — a loan decision. The precheck reads the loan; only a Bank Manager may decide.
   tmpl_decide_loan_precheck_v1:
     intent_id: decide_loan
