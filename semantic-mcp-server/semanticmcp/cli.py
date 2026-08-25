@@ -21,6 +21,7 @@ import os
 import sys
 
 from . import db
+from . import prefront_tracing as tracing
 from .server import call_template, load_templates, serve, serve_http
 
 DEFAULT_TEMPLATES = "../semantic-layer/out/example/query_templates.yaml"
@@ -31,6 +32,10 @@ def _dsn(args: argparse.Namespace) -> str:
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
+    # Optional tracing — a no-op unless a collector endpoint is configured.
+    # Installed before serving so the MCP instrumentor can adopt an incoming
+    # agent's trace context and parent the governance spans under it.
+    tracing.setup("prefront-semantic-mcp")
     # Governance config flows via env so the whole stack (server, identity,
     # writes, traces) reads one source of truth.
     if args.policy:

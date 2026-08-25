@@ -8,6 +8,7 @@ import DataGraph from "./components/DataGraph";
 import BusinessGraph from "./components/BusinessGraph";
 import Semantic from "./components/Semantic";
 import RuntimeDiff from "./components/RuntimeDiff";
+import Observability from "./components/Observability";
 import DemoChooser from "./components/DemoChooser";
 import { useDemo } from "./DemoContext";
 import { parseKV } from "./util";
@@ -44,9 +45,17 @@ const TABS = [
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconDiff },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
+  { id: "oob",      label: "Observability",   sub: "Traces, LLM, cost (OOB)",   icon: IconPulse },
 ];
 
 /* ── Sidebar icons ── */
+function IconPulse() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12h4l2-6 4 12 2-6h6"/>
+    </svg>
+  );
+}
 function IconFlow() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -153,6 +162,7 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   policy:   { title: "Policy Studio",   desc: "Upload policy documents, extract rules, and manage the review pipeline." },
   semantic: { title: "Semantic Layer",  desc: "Build governed SQL interfaces from approved rules and your schema." },
   runtime:  { title: "Runtime Diff",    desc: "Compare governed vs. ungoverned query results across test scenarios." },
+  oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: the app agent's runs, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
 };
 
 function ReviewerDot({ name, color, focused }: { name: string; color: string; focused: boolean }) {
@@ -390,6 +400,9 @@ export default function App() {
           </div>
           <div className={tab === "runtime" ? "" : "tab-hidden"}>
             <RuntimeDiff demo={demo} />
+          </div>
+          <div className={tab === "oob" ? "" : "tab-hidden"}>
+            <Observability active={tab === "oob"} />
           </div>
         </div>
       </div>

@@ -21,10 +21,13 @@ from typing import Any, Optional
 import yaml
 
 from . import db
+from . import prefront_tracing as tracing
 from .governance import PolicyRegistry, govern, resolve_caller
 from .governance import identity as identity_mod
 from .governance import trace as trace_mod
 from .governance import writes as writes_mod
+
+_tracer = tracing.get_tracer("prefront.governance")
 
 
 class _Registry:
@@ -120,7 +123,75 @@ def call_governed(
     args: dict[str, Any],
     policy: PolicyRegistry,
 ) -> dict:
-    """Run one tool call through the governance pipeline, executing only on allow."""
+    """Run one tool call through the governance pipeline, executing only on allow.
+
+    Emits one tracing span per governed call (a no-op unless a collector is
+    configured — see ``prefront_tracing``). The span carries the DECISION, not
+    the data: outcome, reasons, which rules fired, masked field names, row
+    count. With the agent side instrumented too, a trace shows the LLM picking
+    a tool and this decision gating it, in one tree.
+    """
+    with _tracer.start_as_current_span(f"govern {tool.get('intent') or tool['name']}") as span:
+        try:
+            result = _call_governed(tool, dsn, args, policy)
+        except Exception as e:  # a crash here is a real error, unlike a block
+            tracing.record_error(span, e)
+            raise
+        _annotate_decision(span, tool, args, result)
+        return result
+
+
+def _annotate_decision(span: Any, tool: dict, args: dict[str, Any], result: dict) -> None:
+    """Project the governance trace onto span attributes (engine vocabulary only)."""
+    t = result.get("governance") or {}
+    rules = t.get("rules_evaluated") or []
+    caller = t.get("caller") or {}
+    execution_status = t.get("execution_status")
+    tracing.set_attributes(span, {
+        tracing.SPAN_KIND: "TOOL",
+        tracing.INPUT_VALUE: tracing.as_json(args or {}),
+        tracing.INPUT_MIME: tracing.JSON_MIME,
+        tracing.OUTPUT_VALUE: tracing.as_json({
+            "status": result.get("status"),
+            "execution_status": execution_status,
+            "row_count": result.get("row_count"),
+            "reasons": result.get("reasons"),
+            "masked_fields": result.get("masked_fields"),
+        }),
+        tracing.OUTPUT_MIME: tracing.JSON_MIME,
+        "tool.name": tool.get("name"),
+        "prefront.intent": t.get("matched_intent") or tool.get("intent"),
+        "prefront.template_id": tool.get("template_id"),
+        "prefront.template_kind": tool.get("kind", "read"),
+        "prefront.trace_id": t.get("trace_id"),
+        "prefront.decision": result.get("status"),
+        "prefront.execution_status": execution_status,
+        "prefront.reasons": result.get("reasons"),
+        "prefront.approver_roles": result.get("approver_roles"),
+        "prefront.masked_fields": result.get("masked_fields"),
+        "prefront.row_count": result.get("row_count"),
+        # Contract attributes only — the full caller bag can hold PII and stays
+        # in the durable trace (TRACE_PATH), not in the exported span.
+        "prefront.caller.role": caller.get("role"),
+        "prefront.caller.region": caller.get("region"),
+        "prefront.rules.evaluated": len(rules),
+        "prefront.rules.fired": [r.get("rule_key") for r in rules if r.get("fired")],
+        "prefront.rules.indeterminate": [
+            r.get("rule_key") for r in rules if r.get("indeterminate")
+        ],
+    })
+    # A block / approval_required is a CORRECT outcome, not a span error. Only a
+    # failed precheck, query, or write marks the span failed.
+    if execution_status in ("error", "write_error"):
+        tracing.mark_error(span, "; ".join(result.get("reasons") or []) or execution_status)
+
+
+def _call_governed(
+    tool: dict,
+    dsn: str,
+    args: dict[str, Any],
+    policy: PolicyRegistry,
+) -> dict:
     intent, kind = tool["intent"], tool.get("kind", "read")
     caller = resolve_caller(dsn)
     bundle = policy.bundle

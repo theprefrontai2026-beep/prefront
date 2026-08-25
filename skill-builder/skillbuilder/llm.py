@@ -24,6 +24,7 @@ from typing import Iterable, Optional
 
 from pydantic import ValidationError
 
+from . import prefront_tracing as tracing
 from .schema import CandidateRule, Clause
 
 log = logging.getLogger(__name__)
@@ -303,12 +304,22 @@ class RuleExtractor:
 
         ``skipped`` clauses never hit the network. ``max_workers <= 1`` runs
         sequentially (useful for deterministic debugging).
+
+        Tracing context is thread-local, so it is snapshotted here and
+        re-attached in each worker — otherwise every clause's LLM span would be
+        orphaned instead of hanging under the extraction run.
         """
         clauses = list(clauses)
         if self.max_workers <= 1 or len(clauses) <= 1:
             return [self.extract_clause(c, ctx) for c in clauses]
+        parent = tracing.current_context()
+
+        def _work(c: Clause) -> ClauseExtraction:
+            with tracing.use_context(parent):
+                return self.extract_clause(c, ctx)
+
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-            return list(pool.map(lambda c: self.extract_clause(c, ctx), clauses))
+            return list(pool.map(_work, clauses))
 
     # -- internals ------------------------------------------------------------
 

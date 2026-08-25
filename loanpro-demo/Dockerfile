@@ -2,6 +2,8 @@
 # The Prefront engine package (semanticmcp) is NOT copied — it's mounted at
 # /engine so the governed agent always runs the live engine code.
 FROM python:3.12-slim
-RUN pip install --no-cache-dir "openai>=1.40" "psycopg[binary]>=3.1" pyyaml "mcp>=1.0"
+RUN pip install --no-cache-dir "openai>=1.40" "psycopg[binary]>=3.1" pyyaml "mcp>=1.24,<2" \
+    "arize-phoenix-otel>=0.6" "openinference-instrumentation-openai>=0.1.20" \
+    "openinference-instrumentation-mcp>=1.1"
 WORKDIR /app
 COPY . /app

@@ -38,6 +38,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import psycopg
 from openai import OpenAI
 
+import prefront_tracing as tracing
+
+_tracer = tracing.get_tracer("loanpro.ungoverned")
+
 PORT   = int(os.environ.get("UNGOVERNED_PORT", "8097"))
 DSN    = os.environ.get("LOANPRO_DSN",
                         "postgresql://loanpro:loanpro@localhost:5435/loanpro")
@@ -268,6 +272,35 @@ def _dispatch(name: str, args: dict, caller_uid: int | None) -> tuple[str, dict]
 
 
 def run_agent(question: str, caller: dict | None = None) -> dict:
+    """Traced entry point — the "before" side of a scenario.
+
+    The span records what the app-layer agent actually did (which typed function,
+    which SQL, how many rows came back) so it sits next to the governed decision
+    in the same trace. There is no policy to record here — that is the point.
+    """
+    with _tracer.start_as_current_span("ungoverned agent") as span:
+        tracing.set_attributes(span, {
+            tracing.SPAN_KIND: "AGENT",
+            tracing.INPUT_VALUE: question,
+            "app.caller.user_id": (caller or {}).get("user_id"),
+        })
+        try:
+            out = _run_agent(question, caller)
+        except Exception as e:
+            tracing.record_error(span, e)
+            raise
+        tracing.set_attributes(span, {
+            "app.tool": out.get("tool"),
+            "app.sql": out.get("sql"),
+            "app.row_count": out.get("row_count"),
+            tracing.OUTPUT_VALUE: out.get("answer"),
+        })
+        if out.get("error"):
+            tracing.mark_error(span, str(out["error"]))
+        return out
+
+
+def _run_agent(question: str, caller: dict | None = None) -> dict:
     """Let the LLM pick a business function. Return the called tool and its result."""
     caller_uid  = caller.get("user_id") if caller else None
     caller_name = caller.get("name", "an unknown user") if caller else "an unknown user"
@@ -358,12 +391,17 @@ class Handler(BaseHTTPRequestHandler):
             question = body.get("question", "")
             if not question:
                 return self._send(400, json.dumps({"error": "missing question"}))
-            return self._send(200, json.dumps(run_agent(question, body.get("caller"))))
+            # Continue the orchestrator's trace (W3C traceparent header) so both
+            # sides of a scenario appear under one root instead of two.
+            with tracing.remote_context(self.headers):
+                result = run_agent(question, body.get("caller"))
+            return self._send(200, json.dumps(result))
         except Exception as e:
             return self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}))
 
 
 def main() -> int:
+    tracing.setup("loanpro-ungoverned")  # no-op unless a collector is configured
     if not API_KEY:
         print("WARNING: no OPENAI_API_KEY/NVIDIA_API_KEY set — LLM calls will fail.")
     print(f"LoanPro APP-LAYER agent ({MODEL}) → http://localhost:{PORT}  read_only={READONLY}")

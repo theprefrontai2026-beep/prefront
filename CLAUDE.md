@@ -32,6 +32,9 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call. Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080 |
+| phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
+| clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
+| oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
@@ -91,7 +94,131 @@ Template kinds: `read` (execute SELECT, then mask restricted fields) and `preche
 - **A rule fires by the template *supplying its fact*, not by listing it.** A template's `required_policies` is documentation only; `evaluate()` keys off the rule's `intents` + whether its condition symbols are present in facts. A precheck that doesn't SELECT the column a rule needs ⇒ that rule goes indeterminate ⇒ fail-safe approval (or never blocks).
 - **A symbol must resolve at publish AND match a fact at runtime.** `publish-policy` binds rule symbols against columns / declared request params / metrics / `caller.*` (unresolved ⇒ rejected). At runtime the fact is keyed by the literal column name or the *request-arg name* — so a request param must be named for its column, or it binds but never fires. Over-limit-style conditions need a **simple symbol on the left** (`x > metric`), since the evaluator looks up the left side rather than evaluating an arithmetic expression there.
 - **The artifacts volume is read-only in the MCP containers.** `docker exec <mcp-server> cp …` into `/artifacts` fails silently. Edit via a RW helper: `docker run --rm -v <artifacts-vol>:/artifacts -v $PWD/file:/in:ro alpine cp /in /artifacts/<path>`.
+- **`mcp` must stay `<2`.** mcp 2.0 removed the low-level `Server.list_tools()` /
+  `call_tool()` decorators `semanticmcp/server.py` is built on — every MCP container
+  dies at startup with `AttributeError: 'Server' object has no attribute 'list_tools'`.
+  The requirement was an unpinned `mcp>=1.0`, so ANY cache-invalidating rebuild
+  floated it to 2.x. Now pinned `mcp>=1.24,<2` in `semantic-mcp-server/`,
+  `semantic-layer/`, the root `requirements.txt`, and both demo Dockerfiles.
 - **The MCP SSE transport can flake on slower calls** (a precheck + multi-rule eval), dying with `TypeError: 'NoneType' object is not callable` server-side → an `ExceptionGroup`/`JSONDecodeError` at the client. It's a transport issue, not a governance bug. Verify decisions deterministically by calling the pipeline **in-process** inside a server container: load `PolicyRegistry` + `resolve_caller` + a precheck row and call `govern(...)`.
+
+## Tracing (Arize Phoenix)
+
+Optional OpenTelemetry instrumentation, **on by default in the bundled compose**
+(collector + UI at `http://localhost:6006`). All Python services report to ONE
+Phoenix project (`prefront`) so a demo scenario reads as one trace:
+`scenario B4` → (`ungoverned agent` + `govern <intent>` under `governed agent`),
+with the OpenAI calls nested under each agent.
+
+- **Implementation**: `tracing/prefront_tracing.py` is the CANONICAL copy,
+  **vendored** into `skillbuilder/`, `semanticlayer/`, `semanticmcp/`,
+  `securebank-demo/`, `loanpro-demo/` (each has its own Docker build context, so
+  they cannot share an import). Edit the canonical file and run
+  `sh tracing/sync.sh`; `sh tracing/sync.sh --check` reports drift.
+- **Inert unless configured.** No `PHOENIX_COLLECTOR_ENDPOINT` (or
+  `PREFRONT_TRACING=0`) ⇒ nothing is imported and every call site is a no-op, so
+  the tracing packages are never required to run a service from a bare venv. It
+  is also never fatal: a missing package / unreachable collector degrades to "no
+  traces", never to a failed request.
+- **LLM spans come free** via `openinference-instrumentation-openai` (patches the
+  OpenAI client) — no call-site changes in `skillbuilder/llm.py`,
+  `semanticlayer/llm.py`, or the demo agents. `skillbuilder/llm.py`'s
+  `extract_clauses` ThreadPoolExecutor **does** carry context explicitly
+  (`tracing.current_context()` / `use_context`), or every clause's span would be
+  orphaned.
+- **`semanticmcp/server.py:call_governed`** wraps `_call_governed` in one
+  `govern <intent>` span, annotated from the governance trace: decision, reasons,
+  `prefront.rules.fired` / `.indeterminate`, masked field names, approver roles,
+  row count. It exports the **decision, never the rows**, and only role/region
+  from the caller bag (the full bag can hold PII and stays in `TRACE_PATH`).
+  A `blocked`/`approval_required` outcome is *correct*, so the span is not marked
+  failed — only `execution_status in (error, write_error)` is.
+- **Continuity across hops**: `openinference-instrumentation-mcp` propagates
+  context agent → MCP server; `demo_server._ungoverned` injects a W3C
+  `traceparent` header and `ungoverned_server.do_POST` re-attaches it, so both
+  sides of a before/after scenario share a root.
+- **`governed_agent.py` must import `mcp.client.sse` as a MODULE.** The
+  instrumentor patches `mcp.client.sse.sse_client`; a `from … import sse_client`
+  binds the original before `setup()` runs, so the governed call silently starts
+  a NEW trace instead of continuing the agent's. Symptom: `govern <intent>`
+  appears as its own single-span trace. Same trap for any future
+  `from <instrumented_module> import <symbol>`.
+- **Phoenix's 6006/4317 are commonly already taken** by a Phoenix you run
+  locally; the bundled service then fails to attach to `prefront_default` and
+  every service gets a DNS failure for `phoenix`. Move it with
+  `PHOENIX_UI_PORT` / `PHOENIX_GRPC_PORT`, or drop it and set
+  `PHOENIX_COLLECTOR_ENDPOINT=http://host.docker.internal:6006`.
+- Caveat: the OpenAI instrumentor records prompts/completions, which for the
+  demos include governed rows — `OPENINFERENCE_HIDE_INPUTS/_HIDE_OUTPUTS=true`
+  suppress them.
+- The Node `api-server` is **not** instrumented (no LLM calls); the `@opentelemetry`
+  entries in `build.mjs` / `pnpm-lock.yaml` are unrelated (an esbuild external and
+  a drizzle optional peer dep).
+
+## OOB observability (`oob-ingest/` + ClickHouse + the Observability tab)
+
+Out-of-band = never on a governed call's request path. A dead ClickHouse or
+oob-ingest changes no decision; the services keep exporting to Phoenix.
+
+- **Two sources, one table.** `phoenix_source.PhoenixPoller` pages
+  `GET {PHOENIX_URL}/v1/projects/{p}/spans?start_time=<watermark − lookback>&cursor=…`
+  every `PHOENIX_POLL_SECONDS` for every Phoenix project (or `PHOENIX_PROJECTS`),
+  keeping a per-project watermark in `prefront.ingest_state` and an in-memory
+  seen-set so the lookback overlap re-reads but never re-inserts. `otlp.py`
+  decodes `POST /v1/traces` (protobuf or JSON) from the tracing module's
+  `PREFRONT_TRACE_FANOUT` — set in compose on the **app agents only**
+  (`securebank-ungoverned` / `loanpro-ungoverned`, via the `x-oob-tap-env`
+  anchor), never on Prefront's own services. Both normalize to `model.SpanRow`; `version` = 1
+  (phoenix) / 2 (otlp), so the ReplacingMergeTree resolves a span seen twice to
+  the OTLP copy. **Reads must use `FINAL`** (`ch.T`) or duplicates leak into counts.
+- **Nothing inline is ingested.** `model.is_inline` + `model.drop_inline` drop any
+  span with a `prefront.*` attribute or named `governed agent` / `govern …`
+  **plus its whole subtree** (the governed agent's LLM calls are inline too), on
+  both the pull and push paths. `drop_inline` carries a persistent `dropped` set
+  of excluded span ids so a child arriving in a later batch than its excluded
+  parent is still excluded. Rules: `OOB_EXCLUDE_ATTR_PREFIXES` /
+  `OOB_EXCLUDE_SPAN_NAMES` / `OOB_EXCLUDE_SERVICES`; counts surface in
+  `/oob/status` and the Ingestion view. **There is deliberately no governance
+  view or decision column here** — governed decisions live in Decision Traces /
+  the Dashboard (`/api/decisions`). Do not re-add `prefront.*` to this surface.
+- **Two subtleties the exclusion needs, both load-bearing:**
+  1. *Attribute scrub* (`model.scrub`, `OOB_STRIP_ATTR_PREFIXES`, default
+     `scenario.governed_,scenario.expected`): the demo harness's `scenario <id>`
+     root is KEPT (it is what gives the app agent's spans a trace root) but it
+     annotates both sides of the run, so its governed-side attributes are
+     stripped rather than dropping the whole root.
+  2. *Unprovable ancestry* (`PhoenixPoller._hold_orphans`): Phoenix pages are not
+     parent-before-child, so a governed-agent LLM call can arrive in an earlier
+     batch than the `governed agent` parent that excludes it — it carries no
+     `prefront.*` of its own and would slip through as `service: unknown`. A span
+     whose parent is neither in the batch, nor already stored, nor known-dropped
+     is HELD (up to `ORPHAN_MAX_TRIES` polls) and then dropped — never admitted
+     on a guess.
+- **A "tool call" in OOB** is `kind='TOOL' OR tool_name != ''` — the inline MCP
+  TOOL spans are excluded, so the app agent's own span (carrying `app.tool`) is
+  what counts.
+- **Phoenix's REST omits `service.name`.** Pulled spans get `model.infer_service`
+  (keyed on *engine* vocabulary: `prefront.*` ⇒ `semantic-mcp-server`,
+  `scenario.*`/`governed agent` ⇒ `orchestrator`, `app.*` ⇒ `ungoverned-agent`)
+  and children inherit from their parent (`inherit_services`, which also looks
+  up already-stored parents). The fan-out copy carries the real name and wins.
+- **ClickHouse alias trap (bit twice):** `SELECT sum(x) AS x, avg(x)` fails with
+  `ILLEGAL_AGGREGATION` — the alias shadows the column for the whole query. Never
+  alias an aggregate to a column name another expression in the same SELECT reads
+  (`list_traces` aliases to `t_start`/`t_end` and renames in an outer SELECT).
+- **Lifted columns** (`model.lift`): `input/output.value`, `llm.model_name`,
+  `llm.token_count.*`, `scenario.id`, `tool.name`/`app.tool`. The `decision`,
+  `intent`, `caller_role`, `caller_key` columns still exist in the table (the
+  schema predates the exclusion) but are never populated now — nothing carrying
+  them survives ingestion.
+- Cost is a list-price estimate from `config.price_for` (prefix match on model
+  name; `OOB_MODEL_PRICES` JSON overrides). Unknown model ⇒ $0.
+- UI: `components/Observability.tsx` (tab id `oob`; views Overview / Traces /
+  LLM / Ingestion), CSS under `.pf-oob-*`. Vite
+  dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
+- Quick checks: `curl :8110/oob/status` (both sources + counts),
+  `curl -X POST :8110/oob/sync` (pull now), `docker exec prefront-clickhouse-1
+  clickhouse-client -q "SELECT service, count() FROM prefront.spans FINAL GROUP BY service"`.
 
 ## Commands
 
@@ -174,7 +301,7 @@ Artifacts reach the runtime by HTTP, then land in the shared `artifacts` volume 
 
 ## UI tab architecture (`prefront-ui/artifacts/prefront-app/src/`)
 
-`App.tsx` owns a single `useState("dashboard")` for the active tab (in the `TABS` array — the source of truth for nav order). All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Runtime → Decision Traces**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` owns a single `useState("dashboard")` for the active tab (in the `TABS` array — the source of truth for nav order). All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Runtime → Decision Traces → Intent Flows → Observability**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
 `Dashboard.tsx` is **wired to real persisted data** (via `useDecisionFeed`, `/api/*` — see the persistence section below), not fixtures. `DecisionTraces.tsx` (the last tab) is a filterable log over the latest traces; the Dashboard feed's "View all →" navigates to it.
 

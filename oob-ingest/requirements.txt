@@ -1,0 +1,8 @@
+# Prefront — OOB (out-of-band) trace ingestion: Phoenix/OTLP -> ClickHouse
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+clickhouse-connect>=0.7
+# OTLP/HTTP receiver (protobuf + JSON encodings)
+opentelemetry-proto>=1.24
+protobuf>=4.25

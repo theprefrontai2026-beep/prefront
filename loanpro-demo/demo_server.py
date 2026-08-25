@@ -29,7 +29,10 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 import governed_agent  # the governed "after" — LLM → real Prefront pipeline, in-process
+import prefront_tracing as tracing
 from scenarios import CALLERS, get_scenarios
+
+_tracer = tracing.get_tracer("loanpro.demo")
 
 HERE = Path(__file__).parent
 PORT = int(os.environ.get("LOANPRO_DEMO_PORT", "8098"))
@@ -69,7 +72,9 @@ def _ungoverned(question: str, caller: dict | None = None) -> dict:
     `caller` is the signed-in user the app knows — no enforcement."""
     req = urllib.request.Request(
         UNGOVERNED_URL, data=json.dumps({"question": question, "caller": caller}).encode("utf-8"),
-        headers={"Content-Type": "application/json"})
+        # tracing.inject adds the W3C traceparent header (nothing when tracing is
+        # off) so the ungoverned run joins this scenario's trace.
+        headers=tracing.inject({"Content-Type": "application/json"}))
     try:
         with urllib.request.urlopen(req, timeout=150) as resp:
             return json.load(resp)
@@ -84,8 +89,27 @@ def build_diff(only=None) -> list[dict]:
     out = []
     for s in get_scenarios(only):
         c = CALLERS[s["caller"]]
-        u = _ungoverned(s["question"], {"name": c["name"], "user_id": c["user_id"]})
-        g = governed_agent.run_agent(s["question"], s["caller"])  # caller key → identity over MCP
+        # One span per test case, parenting BOTH runs — the before/after contrast
+        # the demo is built around, readable as a single trace.
+        with _tracer.start_as_current_span(f"scenario {s['id']}") as span:
+            tracing.set_attributes(span, {
+                tracing.SPAN_KIND: "CHAIN",
+                tracing.INPUT_VALUE: s["question"],
+                "scenario.id": s["id"],
+                "scenario.caller": c["name"],
+                "scenario.role": c["role"],
+                "scenario.capability": s["capability"],
+                "scenario.risk": s["risk"],
+                "scenario.expected": s["prefront"],
+            })
+            u = _ungoverned(s["question"], {"name": c["name"], "user_id": c["user_id"]})
+            g = governed_agent.run_agent(s["question"], s["caller"])  # caller key → identity over MCP
+            tracing.set_attributes(span, {
+                "scenario.ungoverned_tool": u.get("tool"),
+                "scenario.ungoverned_row_count": u.get("row_count"),
+                "scenario.governed_intent": g.get("intent"),
+                "scenario.governed_outcome": g.get("outcome"),
+            })
         out.append({
             "id": s["id"],
             "caller": c["name"],
@@ -164,6 +188,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    tracing.setup("loanpro-orchestrator")  # no-op unless a collector is configured
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"LoanPro demo → http://localhost:{PORT}  (Ctrl-C to stop)")
     try:

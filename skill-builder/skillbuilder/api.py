@@ -29,6 +29,7 @@ from typing import Optional
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
 
+from . import prefront_tracing as tracing
 from . import unresolved as unresolved_mod
 from .artifacts import SkillMeta, write_run_artifacts, write_skill_artifacts
 from .atoms import extract_atoms
@@ -57,7 +58,9 @@ from .tests_gen import generate_test_cases, untestable_rules
 from .validation import run_all
 
 setup_logging()  # honors SKILLBUILDER_LOG_LEVEL so UI-driven runs show the trace
+tracing.setup("prefront-skill-builder")  # no-op unless a collector is configured
 log = logging.getLogger(__name__)
+_tracer = tracing.get_tracer("prefront.skillbuilder")
 
 app = FastAPI(title="Prefront Skill Builder", version="0.1.0")
 
@@ -353,9 +356,24 @@ def extract_rules(document_id: str, body: ExtractRulesBody = Body(default=Extrac
 
     candidates: list[CandidateRule] = []
     errors: list[str] = []
-    for res in extractor.extract_clauses(clauses, ctx):
-        candidates.extend(res.candidates)
-        errors.extend(f"{res.clause.clause_id}: {e}" for e in res.errors)
+    # One parent span over the whole fan-out, so the per-clause LLM spans read
+    # as a single extraction run rather than N unrelated completions.
+    with _tracer.start_as_current_span("extract-rules") as span:
+        tracing.set_attributes(span, {
+            tracing.SPAN_KIND: "CHAIN",
+            "skillbuilder.document_id": document_id,
+            "skillbuilder.domain": ctx.domain,
+            "skillbuilder.clauses": len(clauses),
+            "skillbuilder.model": extractor.model,
+            "skillbuilder.provider": extractor.provider,
+        })
+        for res in extractor.extract_clauses(clauses, ctx):
+            candidates.extend(res.candidates)
+            errors.extend(f"{res.clause.clause_id}: {e}" for e in res.errors)
+        tracing.set_attributes(span, {
+            "skillbuilder.candidate_rules": len(candidates),
+            "skillbuilder.errors": len(errors),
+        })
 
     # Persist structure too so approved_policy_rules' FK target always exists,
     # even if the caller skipped the explicit /segment step.

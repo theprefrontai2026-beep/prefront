@@ -22,11 +22,13 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from . import prefront_tracing as tracing
 from .catalog import build_catalog, build_catalog_from_dsn
 from .logutil import get_logger
 from .store import Store
 
 log = get_logger(__name__)
+tracing.setup("prefront-semantic-layer")  # no-op unless a collector is configured
 
 app = FastAPI(title="Prefront Semantic Layer API", version="0.1.0")
 

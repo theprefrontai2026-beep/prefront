@@ -2,10 +2,15 @@
 openai>=1.0
 pydantic>=2.0
 pyyaml>=6.0
-mcp>=1.0
+mcp>=1.24,<2           # <2: the 2.0 low-level Server API is incompatible
 sqlglot>=25.0          # design-time SQL §14 validation (AST checks)
 # Data Connector API (catalog parse / live introspection)
 fastapi>=0.110
 uvicorn>=0.29
 python-multipart>=0.0.9
 psycopg[binary]>=3.2
+
+# --- optional: OpenTelemetry / Arize Phoenix tracing ------------------------
+# Inert unless PHOENIX_COLLECTOR_ENDPOINT is set (see tracing/prefront_tracing.py).
+arize-phoenix-otel>=0.6
+openinference-instrumentation-openai>=0.1.20

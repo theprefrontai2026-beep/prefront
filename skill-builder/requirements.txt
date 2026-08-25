@@ -12,3 +12,8 @@ psycopg[binary]>=3.1
 # dev / test
 pytest>=8.0
 httpx>=0.27
+
+# --- optional: OpenTelemetry / Arize Phoenix tracing ------------------------
+# Inert unless PHOENIX_COLLECTOR_ENDPOINT is set (see tracing/prefront_tracing.py).
+arize-phoenix-otel>=0.6
+openinference-instrumentation-openai>=0.1.20

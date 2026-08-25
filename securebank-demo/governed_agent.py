@@ -21,8 +21,16 @@ import random
 import time
 
 from mcp import ClientSession
-from mcp.client.sse import sse_client
+# Imported as a MODULE, not `from ... import sse_client`: tracing instruments MCP
+# by patching `mcp.client.sse.sse_client`, and a name bound at import time would
+# keep pointing at the unpatched original — the governed call would then start a
+# NEW trace instead of continuing the agent's.
+from mcp.client import sse as mcp_sse
 from openai import AsyncOpenAI
+
+import prefront_tracing as tracing
+
+_tracer = tracing.get_tracer("securebank.governed")
 
 MODEL = os.environ.get("GOVERNED_MODEL", "gpt-4o-mini")
 BASE_URL = os.environ.get("GOVERNED_BASE_URL", "https://api.openai.com/v1")
@@ -88,7 +96,7 @@ def _outcome(r: dict) -> str:
 async def _run_async(question: str, url: str, act_as: str) -> dict:
     # Identity travels as a header (set by this trusted orchestrator), so the SSE
     # URL stays clean and Prefront resolves the caller server-side per connection.
-    async with sse_client(url, headers={"X-Prefront-Act-As": act_as}) as (read, write):
+    async with mcp_sse.sse_client(url, headers={"X-Prefront-Act-As": act_as}) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = _openai_tools(await session.list_tools())
@@ -152,13 +160,36 @@ def run_agent(question: str, caller_key: str) -> dict:
         return {"outcome": "ERROR", "error": f"unknown caller {caller_key!r}"}
     attempts = max(1, int(os.environ.get("GOVERNED_MCP_RETRIES", "4")))
     last_err: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            return asyncio.run(_run_async(question, MCP_URL, email))
-        except Exception as e:  # transient MCP transport / LLM error — retry, don't surface yet
-            last_err = e
-            if attempt < attempts - 1:
-                time.sleep(0.3 * (attempt + 1) + random.uniform(0, 0.4))
-    return {"outcome": "ERROR",
-            "error": f"{type(last_err).__name__}: {last_err} (after {attempts} attempts)",
-            "intent": None, "args": {}}
+    # One span per governed run, wrapping the retries. The MCP instrumentation
+    # carries this context to the Prefront server, so its `govern <intent>` span
+    # lands under this one — LLM tool choice and policy decision in one trace.
+    with _tracer.start_as_current_span("governed agent") as span:
+        tracing.set_attributes(span, {
+            tracing.SPAN_KIND: "AGENT",
+            tracing.INPUT_VALUE: question,
+            "prefront.caller.key": caller_key,
+            "prefront.mcp_url": MCP_URL,
+        })
+        for attempt in range(attempts):
+            try:
+                decision = asyncio.run(_run_async(question, MCP_URL, email))
+            except Exception as e:  # transient MCP transport / LLM error — retry, don't surface yet
+                last_err = e
+                if attempt < attempts - 1:
+                    time.sleep(0.3 * (attempt + 1) + random.uniform(0, 0.4))
+                continue
+            tracing.set_attributes(span, {
+                "agent.attempts": attempt + 1,
+                "prefront.intent": decision.get("intent"),
+                "prefront.decision": decision.get("status"),
+                "prefront.outcome": decision.get("outcome"),
+                "prefront.masked_fields": decision.get("masked_fields"),
+                "prefront.row_count": decision.get("row_count"),
+                tracing.OUTPUT_VALUE: decision.get("answer"),
+            })
+            return decision
+        tracing.set_attributes(span, {"agent.attempts": attempts})
+        tracing.mark_error(span, f"{type(last_err).__name__}: {last_err}")
+        return {"outcome": "ERROR",
+                "error": f"{type(last_err).__name__}: {last_err} (after {attempts} attempts)",
+                "intent": None, "args": {}}

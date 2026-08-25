@@ -5,6 +5,9 @@
 #   semantic-mcp-server  templates -> live MCP query tools (HTTP/SSE) :8090
 #   api-server           UI companion: audit log + review websocket (Express) :8080
 #   ui                   Prefront front-end (React/Vite -> nginx) :5173
+#   phoenix              Arize Phoenix trace collector + UI          :6006
+#   clickhouse           OOB trace store (ClickHouse)                :8123
+#   oob-ingest           Phoenix/OTLP -> ClickHouse + /oob query API :8110
 #
 # The bundled example datasource is SecureBank (see ./securebank-demo), wired in
 # below; the engine itself is domain-independent.
@@ -29,6 +32,22 @@ x-llm-env: &llm-env
   NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+
+# Tracing, injected into every Python service. All services report to ONE
+# Phoenix project so a single scenario (orchestrator -> app agent + LLM ->
+# Prefront MCP -> governance decision) reads as one trace; service.name keeps
+# the spans attributable. Turn it all off with PREFRONT_TRACING=0, or point
+# PHOENIX_COLLECTOR_ENDPOINT at your own OTLP/HTTP collector.
+x-tracing-env: &tracing-env
+  PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006}
+  PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-prefront}
+  PREFRONT_TRACING: ${PREFRONT_TRACING:-1}
+
+# Out-of-band tap: ONLY the app-layer (ungoverned) agents fan their spans out to
+# oob-ingest — nothing inline (Prefront's engine, the governed agent) is tapped.
+# The Phoenix pull additionally drops any inline span it sees (OOB_EXCLUDE_*).
+x-oob-tap-env: &oob-tap-env
+  PREFRONT_TRACE_FANOUT: ${PREFRONT_TRACE_FANOUT:-http://oob-ingest:8110}
 
 services:
   # ---- skill builder's own design-time database ----------------------------
@@ -67,11 +86,81 @@ services:
       timeout: 3s
       retries: 10
 
+  # ---- trace collector: Arize Phoenix --------------------------------------
+  # Receives OTLP/HTTP spans from every Python service on :6006 and serves the
+  # trace UI on the same port. Design-time LLM calls, the demo agents, and each
+  # governed decision land here. Not required by the stack — if it is down the
+  # exporters just drop spans.
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes:
+      - phoenix_data:/mnt/data
+    ports:
+      # Host ports are overridable because 6006/4317 are Phoenix's defaults and a
+      # Phoenix you already run locally will own them. If you'd rather use that
+      # one, skip this service and set
+      #   PHOENIX_COLLECTOR_ENDPOINT=http://host.docker.internal:6006
+      - "${PHOENIX_UI_PORT:-6006}:6006"     # UI + OTLP/HTTP  (POST /v1/traces)
+      - "${PHOENIX_GRPC_PORT:-4317}:4317"   # OTLP/gRPC (unused by default)
+
+  # ---- OOB observability: ClickHouse + the ingestion/query service ----------
+  # Out-of-band (never on a governed call's request path). oob-ingest tails
+  # Phoenix's REST API into ClickHouse, additionally accepts the OTLP fan-out
+  # tap on /v1/traces, and serves the /oob/* query API the UI's Observability
+  # tab reads (nginx proxies /oob/ -> here).
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_DB: prefront
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"   # HTTP interface (also what oob-ingest uses)
+      - "${CLICKHOUSE_TCP_PORT:-9000}:9000"    # native protocol (clickhouse-client)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  oob-ingest:
+    build: ./oob-ingest
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DB: prefront
+      PHOENIX_URL: ${OOB_PHOENIX_URL:-http://phoenix:6006}
+      PHOENIX_PROJECTS: ${OOB_PHOENIX_PROJECTS:-}      # empty = every Phoenix project
+      PHOENIX_POLL_SECONDS: ${OOB_POLL_SECONDS:-5}
+      PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-prefront}
+      OOB_MODEL_PRICES: ${OOB_MODEL_PRICES:-}
+      # Inline exclusions (subtree-wide): Prefront engine spans + the governed agent.
+      OOB_EXCLUDE_ATTR_PREFIXES: ${OOB_EXCLUDE_ATTR_PREFIXES:-prefront.}
+      OOB_EXCLUDE_SPAN_NAMES: ${OOB_EXCLUDE_SPAN_NAMES:-governed agent,govern }
+      OOB_EXCLUDE_SERVICES: ${OOB_EXCLUDE_SERVICES:-}
+      # Attributes scrubbed from spans that ARE kept (the harness's scenario root
+      # annotates the governed side too).
+      OOB_STRIP_ATTR_PREFIXES: ${OOB_STRIP_ATTR_PREFIXES:-scenario.governed_,scenario.expected}
+    ports: ["8110:8110"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      phoenix:
+        condition: service_started
+
   # ---- service 1: skill builder (docs -> rules) ----------------------------
   skill-builder:
     build: ./skill-builder
     environment:
-      <<: *llm-env
+      <<: [*llm-env, *tracing-env]
       # SQLAlchemy DSN for the design-time Postgres above (psycopg3 driver).
       SKILLBUILDER_DB: postgresql+psycopg://skillbuilder:skillbuilder@skill-builder-db:5432/skillbuilder
       SKILLBUILDER_REGISTRY: /data/skills
@@ -99,7 +188,7 @@ services:
     build: ./semantic-layer
     command: ["api", "--host", "0.0.0.0", "--port", "8010"]
     environment:
-      <<: *llm-env       # the /build endpoint runs the LLM semantic mapper
+      <<: [*llm-env, *tracing-env]   # the /build endpoint runs the LLM semantic mapper
       SEMANTICLAYER_DB: /data/semanticlayer.db   # persisted templates + approvals
       # Legacy single-publish-path default; per-datasource publishing writes to
       # /artifacts/<datasource_id>/ under this path's grandparent (/artifacts).
@@ -116,7 +205,11 @@ services:
 
   # ---- service 3: semantic MCP server (templates -> live query tools) ------
   # The engine runtime, serving the bundled SecureBank example artifacts.
+  # DISABLED by default while the OOB work is the focus: it sits behind the
+  # `mcp` profile, so a plain `docker compose up` does not start it. Opt in with
+  #   docker compose --profile mcp up -d semantic-mcp-server
   semantic-mcp-server:
+    profiles: ["mcp"]
     build: ./semantic-mcp-server
     command:
       - --templates=/artifacts/securebank-demo/query_templates.yaml
@@ -125,6 +218,7 @@ services:
       - --host=0.0.0.0
       - --port=8090
     environment:
+      <<: *tracing-env
       DATABASE_URL: ${DATABASE_URL:-postgresql://securebank:securebank@securebank-db:5432/securebank}
       # Governance: enforce the published policy bundle. IDENTITY_QUERY is the
       # DEPLOYMENT's mapping of an identity to caller attributes — it aliases the
@@ -185,6 +279,7 @@ services:
       - semantic-layer-api
       - api-server
       - pii-analyzer
+      - oob-ingest
 
   # ==========================================================================
   # SecureBank demo (moved in-repo under ./securebank-demo) — the active
@@ -219,7 +314,7 @@ services:
     build: ./securebank-demo
     command: ["python", "ungoverned_server.py"]
     environment:
-      <<: *llm-env                       # OPENAI_API_KEY (same key Prefront uses)
+      <<: [*llm-env, *tracing-env, *oob-tap-env]   # OPENAI_API_KEY; OOB tap
       SECUREBANK_DSN: postgresql://securebank:securebank@securebank-db:5432/securebank
       UNGOVERNED_MODEL: gpt-4o-mini
       SECUREBANK_READONLY: "on"          # writes attempted but rolled back
@@ -250,6 +345,7 @@ services:
     build: ./semantic-mcp-server
     command: ["--templates=/artifacts/securebank-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
     environment:
+      <<: *tracing-env
       IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       DATABASE_URL: postgresql://securebank:securebank@securebank-db:5432/securebank
       POLICY_PATH: /artifacts/securebank-demo/policy.yaml
@@ -265,7 +361,7 @@ services:
     build: ./securebank-demo
     command: ["python", "demo_server.py"]
     environment:
-      <<: *llm-env                       # OPENAI_API_KEY
+      <<: [*llm-env, *tracing-env]       # OPENAI_API_KEY
       GOVERNED_MODEL: gpt-4o-mini
       UNGOVERNED_URL: http://securebank-ungoverned:8096/run
       GOVERNED_MCP_URL: http://securebank-mcp:8090/sse
@@ -306,7 +402,7 @@ services:
     build: ./loanpro-demo
     command: ["python", "ungoverned_server.py"]
     environment:
-      <<: *llm-env                       # OPENAI_API_KEY (same key Prefront uses)
+      <<: [*llm-env, *tracing-env, *oob-tap-env]   # OPENAI_API_KEY; OOB tap
       LOANPRO_DSN: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
       UNGOVERNED_MODEL: gpt-4o-mini
       UNGOVERNED_PORT: "8097"
@@ -335,6 +431,7 @@ services:
     build: ./semantic-mcp-server
     command: ["--templates=/artifacts/loanpro-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
     environment:
+      <<: *tracing-env
       IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       DATABASE_URL: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
       POLICY_PATH: /artifacts/loanpro-demo/policy.yaml
@@ -350,7 +447,7 @@ services:
     build: ./loanpro-demo
     command: ["python", "demo_server.py"]
     environment:
-      <<: *llm-env                       # OPENAI_API_KEY
+      <<: [*llm-env, *tracing-env]       # OPENAI_API_KEY
       GOVERNED_MODEL: gpt-4o-mini
       LOANPRO_DEMO_PORT: "8098"
       UNGOVERNED_URL: http://loanpro-ungoverned:8097/run
@@ -368,3 +465,5 @@ volumes:
   artifacts:
   securebank_pgdata:
   loanpro_pgdata:
+  phoenix_data:
+  clickhouse_data:

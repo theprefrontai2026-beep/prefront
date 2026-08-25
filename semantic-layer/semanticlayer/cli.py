@@ -22,6 +22,7 @@ from pathlib import Path
 
 import yaml
 
+from . import prefront_tracing as tracing
 from .artifacts import write_artifacts
 from .llm import LLMClient
 from .pipeline import run_pipeline
@@ -316,6 +317,8 @@ def _tools_from_yaml(doc: dict):
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Optional tracing for the mapper's LLM calls — no-op unless configured.
+    tracing.setup("prefront-semantic-layer")
     parser = argparse.ArgumentParser(prog="semanticlayer", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
