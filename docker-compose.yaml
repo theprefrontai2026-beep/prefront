@@ -438,19 +438,36 @@ services:
       timeout: 5s
       retries: 10
 
-  # ---- the "before": app-layer agent — typed functions, no access-control policy ----
+  # ---- the loan shop's OWN tool API, served over MCP (ungoverned) ----------
+  # This is the application's API — typed business functions over its Postgres,
+  # exposed as MCP tools. No Prefront, no policy, no decision: a call arrives and
+  # the SQL runs. Identity is a per-connection header the agent cannot set, but
+  # only get_my_applications() honours it — that is the governance gap on show.
+  loanpro-app-mcp:
+    build: ./loanpro-demo
+    command: ["python", "app_mcp_server.py"]
+    environment:
+      <<: [*tracing-env, *oob-tap-env]   # app-layer, so it IS observed by OOB
+      LOANPRO_DSN: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
+      LOANPRO_APP_MCP_PORT: "8102"
+      LOANPRO_READONLY: "on"             # writes execute, then roll back
+    ports: ["8102:8102"]
+    depends_on:
+      loanpro-db: {condition: service_healthy}
+
+  # ---- the agent: an LLM that reaches its tools as an MCP CLIENT -----------
+  # No DSN here — the agent never touches the database, it only calls tools.
   loanpro-ungoverned:
     build: ./loanpro-demo
     command: ["python", "ungoverned_server.py"]
     environment:
       <<: [*llm-env, *tracing-env, *oob-tap-env]   # OPENAI_API_KEY; OOB tap
-      LOANPRO_DSN: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
       UNGOVERNED_MODEL: gpt-4o-mini
       UNGOVERNED_PORT: "8097"
-      LOANPRO_READONLY: "on"             # writes attempted but rolled back
+      LOANPRO_APP_MCP_URL: http://loanpro-app-mcp:8102/sse
     ports: ["8097:8097"]
     depends_on:
-      loanpro-db: {condition: service_healthy}
+      loanpro-app-mcp: {condition: service_started}
 
   # ---- seed the curated LoanPro artifacts the MCP serves ----
   loanpro-seed:
@@ -468,7 +485,10 @@ services:
     restart: "no"
 
   # ---- Prefront, exposed as ONE MCP server (the single endpoint the LLM uses)
+  # Prefront's governed MCP for LoanPro. UNUSED — LoanPro has no governed agent
+  # any more, so this sits behind the `mcp` profile with the engine runtime.
   loanpro-mcp:
+    profiles: ["mcp"]
     build: ./semantic-mcp-server
     command: ["--templates=/artifacts/loanpro-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
     environment:
@@ -484,7 +504,7 @@ services:
       loanpro-db: {condition: service_healthy}
       loanpro-seed: {condition: service_completed_successfully}
 
-  # ---- the "after" orchestrator: gpt-4o-mini as an MCP CLIENT of the server
+  # ---- scenario orchestrator: runs the catalogue against the app agent -----
   loanpro-orchestrator:
     build: ./loanpro-demo
     command: ["python", "demo_server.py"]
@@ -493,11 +513,9 @@ services:
       GOVERNED_MODEL: gpt-4o-mini
       LOANPRO_DEMO_PORT: "8098"
       UNGOVERNED_URL: http://loanpro-ungoverned:8097/run
-      GOVERNED_MCP_URL: http://loanpro-mcp:8090/sse
     ports: ["8098:8098"]
     depends_on:
       loanpro-ungoverned: {condition: service_started}
-      loanpro-mcp: {condition: service_started}
 
 volumes:
   skillbuilder_db:

@@ -161,7 +161,7 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   bizgraph: { title: "Business Graph",   desc: "Domain model showing business entities, processes, roles, and applied governance policies." },
   policy:   { title: "Policy Studio",   desc: "Upload policy documents, extract rules, and manage the review pipeline." },
   semantic: { title: "Semantic Layer",  desc: "Build governed SQL interfaces from approved rules and your schema." },
-  runtime:  { title: "Runtime Diff",    desc: "Compare governed vs. ungoverned query results across test scenarios." },
+  runtime:  { title: "Runtime",         desc: "Run each test case against the live agent — and, where the demo is governed, against the Prefront runtime beside it." },
   oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: the app agent's runs, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
 };
 

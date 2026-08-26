@@ -70,13 +70,45 @@ Its catalog is `loanpro-demo/scenarios.py`: **L1–L8 are the visible catalog**
 (`GET /api/scenarios`); **L9–L12 carry `"hidden": True`** and are excluded from
 that list but still run via `GET /api/diff?only=L9,L12`.
 
-**Both demo agents are single-turn** (no conversation memory — `messages` is
-rebuilt as `[system, user]` per request, and no session/history store exists).
-The *app-layer* agent loops up to `MAX_ITERS = 3` LLM round-trips and can handle
-parallel `tool_calls`; the *governed* agent is a fixed two-pass shape — one LLM
-call that picks exactly ONE tool (`msg.tool_calls[0]`), the Prefront call, then a
-synthesis pass that runs only when the decision is `allowed`. So a governed run
-is one intent per question by construction.
+**LoanPro has NO governed agent — it is an ungoverned deployment, and its tools
+are reached over MCP.** Three services:
+
+| File | Service | Role |
+|---|---|---|
+| `app_tools.py` | — | the shop's business functions + their SQL. Knows nothing of MCP or the LLM. |
+| `app_mcp_server.py` | `loanpro-app-mcp` :8102 | serves those functions as **plain MCP tools** — no policy, no decision, a call arrives and the SQL runs |
+| `ungoverned_server.py` | `loanpro-ungoverned` :8097 | the agent: an **MCP client**, discovers tools via `list_tools()` and calls them through the session |
+
+The agent never touches the database — it only calls tools. Identity is a
+per-connection `X-LoanPro-User` header the LLM cannot set, but **only
+`get_my_applications()` honours it**; that is the governance gap on show, along
+with the CEL-filter gateway, IDOR on `get_application`, ssn/credit-score
+leakage, and an unguarded `decide_loan`. `loanpro-mcp` (Prefront's governed MCP)
+and `governed_agent.py` are gone from the LoanPro path — the former is behind
+the `mcp` profile, the latter deleted.
+
+**The agent is single-turn** — no conversation memory; `messages` is rebuilt as
+`[system, user]` per request and no session/history store exists. Within one
+request it loops up to `MAX_ITERS = 3` LLM round-trips and handles parallel
+`tool_calls`. (SecureBank's governed agent, still in `securebank-demo/`, is by
+contrast a fixed two-pass shape — one LLM call picking exactly ONE tool via
+`msg.tool_calls[0]`, the Prefront call, then a synthesis pass only when
+`allowed` — so a governed run is one intent per question by construction.)
+
+- **An MCP SSE endpoint MUST return a Response.** Starlette >=1.0 does
+  `await (await endpoint(request))(scope, receive, send)`, so an SSE handler that
+  returns `None` — the shape every MCP example uses — dies with
+  `TypeError: 'NoneType' object is not callable` *after* the stream is served,
+  surfacing at the client as an opaque `ExceptionGroup`. Return a bare
+  `Response()` after `connect_sse` (it is never sent; the connection is already
+  hijacked). This is almost certainly the same fault as the "MCP SSE transport
+  flakes" note above.
+- **Use `AsyncOpenAI` inside an MCP session.** The agent loop runs in the MCP
+  client's task group; `await`-ing the SYNC `OpenAI` client's `create()` raises
+  inside the group and surfaces only as `ExceptionGroup: unhandled errors in a
+  TaskGroup`, which looks exactly like a transport flake. `_describe()` in
+  `ungoverned_server.py` flattens a group to its leaves — reach for it before
+  assuming the transport is at fault.
 
 ## SecureBank in-repo demo (`securebank-demo/`)
 

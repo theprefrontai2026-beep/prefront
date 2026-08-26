@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""LoanPro — before/after demo server.
+"""LoanPro — scenario runner for the app agent.
 
-Serves a single page that shows each scenario WITHOUT Prefront (a realistic
-app-layer agent with typed business functions but no access-control policy)
-next to WITH Prefront (the governed decision), computed live. Self-contained
-on purpose: the loanpro vocabulary lives here, not in the domain-neutral
-engine UI.
+LoanPro is an UNGOVERNED deployment: one LLM agent calling the loan shop's own
+typed API over MCP, with no authorization layer. This server runs the scenario
+catalogue against it and reports what the agent did, alongside `expected` — what
+a governance layer would have done, as a description, not a second live run.
+Self-contained on purpose: the loanpro vocabulary lives here, not in the
+domain-neutral engine UI.
 
     ../prefront/semantic-mcp-server/.venv/bin/python demo_server.py
     # open http://localhost:8098
@@ -13,7 +14,7 @@ engine UI.
 Endpoints:
     GET /              -> the diff view (web/index.html)
     GET /api/scenarios -> [{id, caller, role, capability, question, risk, expected}]
-    GET /api/diff      -> [{id, caller, capability, question, ungoverned, governed}]
+    GET /api/diff      -> [{id, caller, capability, question, risk, expected, ungoverned}]
                           (?only=L4,L8 to subset)
 """
 
@@ -28,7 +29,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-import governed_agent  # the governed "after" — LLM → real Prefront pipeline, in-process
 import prefront_tracing as tracing
 from scenarios import CALLERS, get_scenarios
 
@@ -83,14 +83,17 @@ def _ungoverned(question: str, caller: dict | None = None) -> dict:
 
 
 def build_diff(only=None) -> list[dict]:
-    """For each selected test case, run it LIVE both ways and merge:
-    ungoverned = app-layer agent (typed functions, no policy);
-    governed = LLM→Prefront agent. Nothing is stored — computed on each call."""
+    """Run each selected test case LIVE against the app agent.
+
+    LoanPro is an UNGOVERNED deployment: one agent calling the shop's own API
+    over MCP. There is no governed counterpart, so each row carries the agent's
+    run plus what a governance layer WOULD have done (`expected`) — the contrast
+    is the risk description, not a second live run. Nothing is stored."""
     out = []
     for s in get_scenarios(only):
         c = CALLERS[s["caller"]]
-        # One span per test case, parenting BOTH runs — the before/after contrast
-        # the demo is built around, readable as a single trace.
+        # One span per test case, parenting the agent run — this is what roots
+        # the trace that the OOB observability pipeline ingests.
         with _tracer.start_as_current_span(f"scenario {s['id']}") as span:
             tracing.set_attributes(span, {
                 tracing.SPAN_KIND: "CHAIN",
@@ -103,12 +106,9 @@ def build_diff(only=None) -> list[dict]:
                 "scenario.expected": s["prefront"],
             })
             u = _ungoverned(s["question"], {"name": c["name"], "user_id": c["user_id"]})
-            g = governed_agent.run_agent(s["question"], s["caller"])  # caller key → identity over MCP
             tracing.set_attributes(span, {
                 "scenario.ungoverned_tool": u.get("tool"),
                 "scenario.ungoverned_row_count": u.get("row_count"),
-                "scenario.governed_intent": g.get("intent"),
-                "scenario.governed_outcome": g.get("outcome"),
             })
         out.append({
             "id": s["id"],
@@ -127,20 +127,6 @@ def build_diff(only=None) -> list[dict]:
                 "row_count": u.get("row_count"),
                 "answer": u.get("answer"),
                 "error": u.get("error"),
-            },
-            "governed": {
-                "intent": g.get("intent"),
-                "args": g.get("args"),
-                "outcome": g.get("outcome"),
-                "status": g.get("status"),
-                "reasons": g.get("reasons"),
-                "approver_roles": g.get("approver_roles"),
-                "masked_fields": g.get("masked_fields"),
-                "rows": g.get("rows"),
-                "row_count": g.get("row_count"),
-                "answer": g.get("answer"),
-                "error": g.get("error"),
-                "governance": g.get("governance"),  # the deterministic decision trace
             },
         })
     return _clean(out)

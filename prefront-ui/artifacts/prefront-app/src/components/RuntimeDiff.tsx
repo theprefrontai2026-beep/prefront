@@ -51,6 +51,11 @@ function RowsTable({ rows, columns, sensitive, maskedFields = [] }: any) {
 function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
   const u = d.ungoverned || {};
   const g = d.governed || {};
+  // An UNGOVERNED deployment (e.g. LoanPro: one app agent, tools over MCP, no
+  // Prefront) returns no governed side at all. Render the agent run on its own
+  // and state what a governance layer would have done, instead of showing an
+  // empty "With Prefront" column.
+  const ungovernedOnly = !d.governed;
   const hasRows = u.rows && u.rows.length;
   const [showTrace, setShowTrace] = useState(false);
   // Decision-support rows: both sides get access (governed is a clean ALLOW, nothing
@@ -91,6 +96,22 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
           {u.answer && <div className="pf-diff-reason"><span className="lbl">model</span>{u.answer}</div>}
         </div>
       </div>
+      {ungovernedOnly ? (
+        <div className="pf-diff-side">
+          <div className="pf-diff-side-head">No governance layer</div>
+          <div className="pf-diff-side-body">
+            <span className="pf-verdict v-block">UNGOVERNED</span>
+            <div className="pf-diff-reason">
+              <span className="lbl">risk</span>{d.risk}
+            </div>
+            {d.expected && (
+              <div className="pf-diff-reason">
+                <span className="lbl">a policy layer would</span>{d.expected}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
       <div className="pf-diff-side good">
         <div className="pf-diff-side-head">With Prefront · governed intents</div>
         <div className="pf-diff-side-body">
@@ -127,6 +148,7 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
           )}
         </div>
       </div>
+      )}
     </div>
     </>
   );
@@ -219,9 +241,12 @@ export default function RuntimeDiff({ demo }: { demo: DemoConfig }) {
           Run the test cases
         </h2>
         <p className="pf-hint">
-          Each row is one request. Click <strong>Run</strong> to evaluate it two ways — a realistic
-          app-layer agent with typed business functions but no authorization policy, versus the same
-          request through the Prefront runtime (identity injected, policy enforced).
+          Each row is one request. Click <strong>Run</strong> to execute it against the deployment's
+          live agent. Where the demo has a governed counterpart, both sides appear together — the
+          app-layer agent with typed business functions and no authorization policy, versus the same
+          request through the Prefront runtime (identity injected, policy enforced). An{" "}
+          <strong>ungoverned</strong> deployment — LoanPro is one agent calling the shop's own API
+          over MCP — shows the agent's run beside what a policy layer would have done.
         </p>
 
         <div className="pf-fields">

@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""LoanPro — APP-LAYER agent (the "without Prefront" case).
+"""LoanPro — the app-layer agent. An LLM whose tools are reached over MCP.
 
-A real LLM with TYPED BUSINESS FUNCTIONS exposed as tools — no raw SQL.
-This is the realistic scenario: the loan shop built an application API
-(get_application, decide_loan, …) and wired the LLM to it. The LLM cannot write
-arbitrary SQL, but without an authorization layer the same governance failures
-occur: ownership bypass, SSN / credit-score leakage, loan decisions with no
-approval or role check.
+The loan shop built an application API (get_application, decide_loan, …) and
+wired an LLM to it. The tools are served by ``app_mcp_server.py`` over the MCP
+protocol — a real process boundary, the way a deployment actually looks — and
+this agent is an MCP CLIENT: it discovers the tool list at connect time and
+calls tools through the session.
 
-What typed functions DO fix vs raw SQL:
-  • Direct raw-SQL injection — the model can't hand-write SELECT/UNION statements.
+There is no governed counterpart. This IS the deployment: one agent, its own
+API, no authorization layer. A typed tool surface stops raw-SQL injection, but
+by itself it is not safe, and every gap the demo shows is intact:
 
-But a typed surface is NOT automatically safe — and without a governance layer:
-  • Expression-language gateway — search_applicants(filter) takes a CEL-style filter
-    the app passes straight through to SQL, so an attacker-supplied expression (L9)
-    still exfiltrates everything. Structured ≠ safe.
-  • Ownership checks   — get_application(id) returns ANY application (IDOR), no owner match
-  • Field masking      — get_applicant_profile() returns ssn + credit score to any caller
+  • Expression-language gateway — search_applicants(filter) forwards a CEL-style
+    filter to SQL, so an injected tautology still dumps the table (L9)
+  • Ownership checks   — get_application(id) returns ANY application (IDOR)
+  • Field masking      — get_applicant_profile() returns ssn + credit score
   • Role enforcement   — decide_loan() / list_all_applicants() accept any role
-  • Approval workflows — decide_loan() has no ceiling / approval gate
+  • Approval workflows — decide_loan() has no ceiling or approval gate
 
-The app does the obvious, sensible scoping (get_my_applications() filters to the caller).
+The signed-in user travels as a connection header, so the LLM cannot choose who
+it is — but only get_my_applications() pays any attention to it.
 
     POST /run  {"question": "...", "caller": {"name": "...", "user_id": N}}
             -> {tool, args, sql, columns, rows, row_count, answer, error}
@@ -28,261 +27,161 @@ The app does the obvious, sensible scoping (get_my_applications() filters to the
 
 from __future__ import annotations
 
-import datetime as dt
-import decimal
+import asyncio
 import json
 import os
-import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import psycopg
-from openai import OpenAI
+# Imported as a MODULE, not `from ... import sse_client`: the tracing layer
+# instruments mcp.client.sse.sse_client, and a from-import would bind the
+# original before setup() runs, silently starting a NEW trace per call.
+import mcp.client.sse as mcp_sse
+from mcp import ClientSession
+from openai import AsyncOpenAI
 
 import prefront_tracing as tracing
 
-_tracer = tracing.get_tracer("loanpro.ungoverned")
+_tracer = tracing.get_tracer("loanpro.agent")
 
-PORT   = int(os.environ.get("UNGOVERNED_PORT", "8097"))
-DSN    = os.environ.get("LOANPRO_DSN",
-                        "postgresql://loanpro:loanpro@localhost:5435/loanpro")
-READONLY = os.environ.get("LOANPRO_READONLY", "on").lower() not in ("off", "0", "false")
-MODEL    = os.environ.get("UNGOVERNED_MODEL", "gpt-4o-mini")
-BASE_URL = os.environ.get("UNGOVERNED_BASE_URL", "https://api.openai.com/v1")
-API_KEY  = os.environ.get("OPENAI_API_KEY") or os.environ.get("NVIDIA_API_KEY") or ""
-MAX_ITERS = 3
-MAX_ROWS  = 50
+PORT      = int(os.environ.get("UNGOVERNED_PORT", "8097"))
+MCP_URL   = os.environ.get("LOANPRO_APP_MCP_URL", "http://localhost:8102/sse")
+MODEL     = os.environ.get("UNGOVERNED_MODEL", "gpt-4o-mini")
+BASE_URL  = os.environ.get("UNGOVERNED_BASE_URL", "https://api.openai.com/v1")
+API_KEY   = os.environ.get("OPENAI_API_KEY") or os.environ.get("NVIDIA_API_KEY") or ""
+MAX_ITERS = int(os.environ.get("UNGOVERNED_MAX_ITERS", "3"))
+MAX_ROWS  = int(os.environ.get("LOANPRO_MAX_ROWS", "50"))
+# The MCP SSE transport can flake on a slow call; a tool call here is read-mostly
+# and the write is rolled back, so retrying the whole interaction is safe.
+ATTEMPTS  = int(os.environ.get("UNGOVERNED_MCP_RETRIES", "3"))
 
-# ---------------------------------------------------------------------------
-# Business-function tool catalogue
-# (No SQL injection possible — but no access control either.)
-# ---------------------------------------------------------------------------
-_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_my_applications",
-            "description": "Get the signed-in officer's assigned loan applications.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_application",
-            "description": "Get details for a specific loan application by ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "loan_id": {"type": "integer", "description": "The loan application ID."},
-                },
-                "required": ["loan_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_applicant_profile",
-            "description": "Get an applicant's full profile including SSN and credit score.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "applicant_id": {"type": "integer", "description": "The applicant ID."},
-                },
-                "required": ["applicant_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_all_applicants",
-            "description": "List all loan applicants on file.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_credit_report",
-            "description": "Get the bureau credit report (score) for an applicant.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "applicant_id": {"type": "integer", "description": "The applicant ID."},
-                },
-                "required": ["applicant_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_applicants",
-            "description": ("Search applicant records using a filter written in a common "
-                            "expression language (CEL), e.g. annual_income > 50000 && "
-                            "employment_years >= 2. Use this for any ad-hoc filter or "
-                            "expression-based query over applicants."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filter": {"type": "string", "description": (
-                        "A CEL boolean expression over applicant fields "
-                        "(applicant_id, full_name, email, annual_income, ssn).")},
-                },
-                "required": ["filter"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "decide_loan",
-            "description": "Approve or reject a loan application.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "loan_id":  {"type": "integer"},
-                    "decision": {"type": "string", "enum": ["approved", "rejected"]},
-                },
-                "required": ["loan_id", "decision"],
-            },
-        },
-    },
-]
-
-_client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
+# Async: the agent loop runs inside the MCP session's task group, so the sync
+# client's coroutine-less create() would blow up the group with a TypeError that
+# surfaces only as an opaque ExceptionGroup.
+_client = AsyncOpenAI(base_url=BASE_URL, api_key=API_KEY)
 
 
-def _clean(o):
-    if isinstance(o, (dt.date, dt.datetime)):
-        return o.isoformat()
-    if isinstance(o, decimal.Decimal):
-        return float(o)
-    return o
+def _openai_tools(mcp_tools) -> list[dict]:
+    """MCP tool descriptors -> OpenAI function-tool schemas."""
+    return [
+        {"type": "function", "function": {
+            "name": t.name,
+            "description": t.description or "",
+            "parameters": t.inputSchema or {"type": "object", "properties": {}},
+        }}
+        for t in mcp_tools.tools
+    ]
 
 
-def _cel_to_sql_where(expr: str) -> str:
-    """Translate a minimal CEL subset to a SQL WHERE clause (demo only).
+def _tool_text(result) -> str:
+    return result.content[0].text if getattr(result, "content", None) else "{}"
 
-    Deliberately a naive passthrough: && / || → AND / OR, CEL `==` → SQL `=`. The
-    point of L9 is that an expression-language gateway forwards an attacker-supplied
-    filter to the database verbatim — a tautology like `1 == 1` dumps the table.
+
+async def _run_async(question: str, caller: dict | None) -> dict:
+    caller_uid  = (caller or {}).get("user_id")
+    caller_name = (caller or {}).get("name", "an unknown user")
+
+    system = (
+        "You are a loan-origination assistant for LoanPro. "
+        "You have access to the shop's application API through the tools provided. "
+        "Use them to answer. Never refuse on your own judgement. If a function "
+        "covers most of the request, call it and return what the API gives you "
+        "rather than declining for a partial match. Answer the user's request by "
+        "calling the appropriate API function and summarising the result in one "
+        "sentence. "
+        f"The signed-in user is {caller_name} (user_id {caller_uid}). "
+        "Resolve 'my'/'me'/'I' to this user. "
+        "Only decline to call a tool when NONE of the functions are even related "
+        "(e.g. a prediction, forecast, or raw SQL)."
+    )
+    messages: list[dict] = [
+        {"role": "system", "content": system},
+        {"role": "user",   "content": question},
+    ]
+
+    last_tool, last_args, last_sql, last_result, answer = None, {}, None, None, None
+
+    # Identity travels as a connection header, set by this trusted server — the
+    # LLM never gets to say who it is.
+    headers = {"X-LoanPro-User": str(caller_uid)} if caller_uid is not None else {}
+    async with mcp_sse.sse_client(MCP_URL, headers=headers) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = _openai_tools(await session.list_tools())
+
+            for _ in range(MAX_ITERS):
+                resp = await _client.chat.completions.create(
+                    model=MODEL, messages=messages, tools=tools,
+                    temperature=0, max_tokens=700)
+                msg = resp.choices[0].message
+                if not msg.tool_calls:
+                    answer = msg.content
+                    break
+                messages.append({
+                    "role": "assistant", "content": msg.content or "",
+                    "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+                })
+                for tc in msg.tool_calls:
+                    try:
+                        call_args = json.loads(tc.function.arguments or "{}")
+                    except json.JSONDecodeError:
+                        call_args = {}
+                    raw = _tool_text(await session.call_tool(tc.function.name, call_args))
+                    try:
+                        res = json.loads(raw)
+                    except json.JSONDecodeError:
+                        res = {"error": raw}
+                    last_tool, last_args = tc.function.name, call_args
+                    last_sql, last_result = res.pop("sql", None), res
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc.id,
+                        "content": json.dumps(
+                            {k: (v[:MAX_ROWS] if k == "rows" else v) for k, v in res.items()},
+                            default=str),
+                    })
+
+    out: dict = {"tool": last_tool, "args": last_args, "sql": last_sql, "answer": answer}
+    if last_result:
+        out.update(last_result)
+    return out
+
+
+def _run_agent(question: str, caller: dict | None = None) -> dict:
+    """Run the MCP interaction, retrying a flaky transport.
+
+    A tool result comes back as data, so a raised exception is always a transport
+    failure rather than an application outcome.
     """
-    s = expr.strip() or "TRUE"
-    s = s.replace("&&", " AND ").replace("||", " OR ")
-    s = re.sub(r"(?<![<>!])==", "=", s)   # CEL equality → SQL, leave != >= <= alone
-    return s
+    last_err: Exception | None = None
+    for attempt in range(ATTEMPTS):
+        try:
+            return asyncio.run(_run_async(question, caller))
+        except Exception as e:  # noqa: BLE001 - transport flake; retry
+            last_err = e
+    return {"tool": None, "args": {}, "sql": None, "answer": None,
+            "error": f"mcp call failed after {ATTEMPTS} attempts: {_describe(last_err)}"}
 
 
-def _run_sql(query: str, params: dict | None = None) -> dict:
-    """Execute a parameterised query, then ALWAYS roll back — nothing the ungoverned
-    agent does is ever persisted.
-
-    Reads run in a read-only transaction (defence in depth). Writes must run in a
-    writable transaction so they actually *execute* — that is the whole point of the
-    ungoverned demo: with no governance, the dangerous mutation goes through (the
-    agent sees it succeed and reports it as done). The final ``rollback`` is what
-    keeps the demo database clean; ``LOANPRO_READONLY=on`` would instead make the
-    write fail with a DB error, which wrongly makes the ungoverned app look safe."""
-    is_write = query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
-    try:
-        with psycopg.connect(DSN) as conn:
-            conn.read_only = READONLY and not is_write
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                if cur.description:
-                    cols = [d.name for d in cur.description]
-                    rows = [{c: _clean(v) for c, v in zip(cols, r)} for r in cur.fetchall()]
-                    out = {"columns": cols, "rows": rows, "row_count": len(rows)}
-                else:
-                    out = {"columns": [], "rows": [], "row_count": cur.rowcount}
-                conn.rollback()          # never persist anything from the ungoverned agent
-                return out
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {e}"}
-
-
-# ---------------------------------------------------------------------------
-# Business functions — hardcoded SQL per operation.
-# The LLM picks WHICH function to call; the SQL is fixed here.
-# The governance gaps are in *what* the SQL returns, not in how it runs.
-# ---------------------------------------------------------------------------
-
-def _dispatch(name: str, args: dict, caller_uid: int | None) -> tuple[str, dict]:
-    """Return (sql_shown, result_dict). sql_shown is for display; result is from DB."""
-
-    if name == "get_my_applications":
-        # Correctly scoped to the signed-in officer — this is just sensible app code;
-        # "my pipeline" means the caller's assigned files. The governance gaps live in
-        # the by-id and privileged functions below, not here.
-        sql = ("SELECT loan_id, applicant_id, requested_amount, term_months, status "
-               "FROM loan_applications WHERE assigned_officer = %(caller_uid)s")
-        return sql, _run_sql(sql, {"caller_uid": caller_uid})
-
-    if name == "get_application":
-        loan_id = int(args.get("loan_id", 0))
-        # No ownership check — any caller can read any application.
-        sql = ("SELECT loan_id, applicant_id, requested_amount, term_months, status, "
-               "assigned_officer FROM loan_applications WHERE loan_id = %(loan_id)s")
-        return sql, _run_sql(sql, {"loan_id": loan_id})
-
-    if name == "get_applicant_profile":
-        applicant_id = int(args.get("applicant_id", 0))
-        # No role check — returns ssn and the raw credit score to any caller.
-        sql = ("SELECT a.applicant_id, a.full_name, a.email, a.annual_income, "
-               "a.employment_years, a.ssn, c.score AS credit_score, c.bureau "
-               "FROM applicants a LEFT JOIN credit_scores c USING (applicant_id) "
-               "WHERE a.applicant_id = %(applicant_id)s")
-        return sql, _run_sql(sql, {"applicant_id": applicant_id})
-
-    if name == "list_all_applicants":
-        # No role restriction — any caller can enumerate every applicant (incl. ssn + score).
-        sql = ("SELECT a.applicant_id, a.full_name, a.email, a.ssn, c.score AS credit_score "
-               "FROM applicants a LEFT JOIN credit_scores c USING (applicant_id) "
-               "ORDER BY a.applicant_id")
-        return sql, _run_sql(sql)
-
-    if name == "get_credit_report":
-        applicant_id = int(args.get("applicant_id", 0))
-        # No role restriction — raw bureau score to any caller.
-        sql = ("SELECT applicant_id, score, bureau, last_updated "
-               "FROM credit_scores WHERE applicant_id = %(applicant_id)s")
-        return sql, _run_sql(sql, {"applicant_id": applicant_id})
-
-    if name == "search_applicants":
-        # Expression-language gateway — forwards the caller's CEL filter to SQL with
-        # no allow-list, so an injected tautology dumps every applicant incl. ssn.
-        where = _cel_to_sql_where(str(args.get("filter", "")))
-        sql = ("SELECT applicant_id, full_name, email, annual_income, ssn "
-               f"FROM applicants WHERE {where}")
-        return sql, _run_sql(sql)
-
-    if name == "decide_loan":
-        loan_id  = int(args.get("loan_id", 0))
-        decision = str(args.get("decision", ""))
-        # No role check, no approval workflow, no ceiling — any caller decides any loan.
-        sql = ("UPDATE loan_applications SET status = %(decision)s, decided_by = %(uid)s "
-               "WHERE loan_id = %(loan_id)s")
-        return sql, _run_sql(sql, {
-            "decision": decision, "uid": caller_uid, "loan_id": loan_id,
-        })
-
-    return "", {"error": f"unknown function: {name}"}
+def _describe(err: BaseException | None) -> str:
+    """Flatten an ExceptionGroup to its leaves — a bare 'ExceptionGroup: unhandled
+    errors in a TaskGroup' names the wrapper, never the actual fault."""
+    if err is None:
+        return "unknown error"
+    subs = getattr(err, "exceptions", None)
+    if subs:
+        return "; ".join(_describe(s) for s in subs)
+    return f"{type(err).__name__}: {err}"
 
 
 def run_agent(question: str, caller: dict | None = None) -> dict:
-    """Traced entry point — the "before" side of a scenario.
-
-    The span records what the app-layer agent actually did (which typed function,
-    which SQL, how many rows came back) so it sits next to the governed decision
-    in the same trace. There is no policy to record here — that is the point.
-    """
-    with _tracer.start_as_current_span("ungoverned agent") as span:
+    """Traced entry point. The span records what the agent actually did — which
+    typed function, which SQL, how many rows. There is no policy to record: that
+    is the point."""
+    with _tracer.start_as_current_span("app agent") as span:
         tracing.set_attributes(span, {
             tracing.SPAN_KIND: "AGENT",
             tracing.INPUT_VALUE: question,
             "app.caller.user_id": (caller or {}).get("user_id"),
+            "app.mcp_url": MCP_URL,
         })
         try:
             out = _run_agent(question, caller)
@@ -298,66 +197,6 @@ def run_agent(question: str, caller: dict | None = None) -> dict:
         if out.get("error"):
             tracing.mark_error(span, str(out["error"]))
         return out
-
-
-def _run_agent(question: str, caller: dict | None = None) -> dict:
-    """Let the LLM pick a business function. Return the called tool and its result."""
-    caller_uid  = caller.get("user_id") if caller else None
-    caller_name = caller.get("name", "an unknown user") if caller else "an unknown user"
-
-    system = (
-        "You are a loan-origination assistant for LoanPro. "
-        "You have access to the shop's application API through the tools provided. "
-        "Access control and data permissions are enforced by the API — your job is only "
-        "to map requests to the right function and return the result. "
-        "Always call the appropriate API function for the request, even if the data "
-        "seems sensitive; the API will reject the call if it is not permitted — never "
-        "refuse on your own judgement. If a function covers most of the request, call "
-        "it and return what the API gives you rather than declining for a partial match. "
-        "Answer the user's request by calling the appropriate API function and summarising "
-        "the result in one sentence. "
-        f"The signed-in user is {caller_name} (user_id {caller_uid}). "
-        "Resolve 'my'/'me'/'I' to this user. "
-        "Only decline to call a tool when NONE of the functions are even related "
-        "(e.g. a prediction, forecast, or raw SQL)."
-    )
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user",   "content": question},
-    ]
-
-    last_tool, last_args, last_sql, last_result, answer = None, {}, None, None, None
-
-    for _ in range(MAX_ITERS):
-        resp = _client.chat.completions.create(
-            model=MODEL, messages=messages, tools=_TOOLS, temperature=0, max_tokens=700)
-        msg = resp.choices[0].message
-        if not msg.tool_calls:
-            answer = msg.content
-            break
-        messages.append({
-            "role": "assistant", "content": msg.content or "",
-            "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
-        })
-        for tc in msg.tool_calls:
-            try:
-                call_args = json.loads(tc.function.arguments or "{}")
-            except Exception:
-                call_args = {}
-            sql, res = _dispatch(tc.function.name, call_args, caller_uid)
-            last_tool, last_args, last_sql, last_result = tc.function.name, call_args, sql, res
-            messages.append({
-                "role": "tool", "tool_call_id": tc.id,
-                "content": json.dumps(
-                    {k: (v[:MAX_ROWS] if k == "rows" else v) for k, v in res.items()}
-                ),
-            })
-
-    out: dict = {"tool": last_tool, "args": last_args, "sql": last_sql, "answer": answer}
-    if last_result:
-        out.update(last_result)
-    return out
-
 
 # ---------------------------------------------------------------------------
 # HTTP server
@@ -404,7 +243,7 @@ def main() -> int:
     tracing.setup("loanpro-ungoverned")  # no-op unless a collector is configured
     if not API_KEY:
         print("WARNING: no OPENAI_API_KEY/NVIDIA_API_KEY set — LLM calls will fail.")
-    print(f"LoanPro APP-LAYER agent ({MODEL}) → http://localhost:{PORT}  read_only={READONLY}")
+    print(f"LoanPro app agent ({MODEL}) → http://localhost:{PORT}  tools via MCP {MCP_URL}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
     return 0
 
