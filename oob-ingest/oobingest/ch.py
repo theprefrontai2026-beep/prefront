@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
@@ -135,6 +136,16 @@ def set_state(key: str, value: str) -> None:
 T = f"{config.CLICKHOUSE_DB}.spans FINAL"
 
 
+def nan_to_zero(expr: str) -> str:
+    """ClickHouse has isNaN(x) but no ifNaN(x, y).
+
+    An aggregate over an EMPTY set (a time bucket holding no root span, a range
+    with no data) returns NaN, and NaN is not valid JSON — it 500s the endpoint.
+    Every quantile/avg/max that can see an empty set goes through here.
+    """
+    return f"if(isNaN({expr}), 0, {expr})"
+
+
 def _since_clause(since_s: Optional[int], project: str) -> tuple[str, dict[str, Any]]:
     where = ["1 = 1"]
     params: dict[str, Any] = {}
@@ -156,6 +167,9 @@ def rows(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]
         for k, v in zip(cols, r):
             if isinstance(v, datetime):
                 v = v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.isoformat()
+            elif isinstance(v, float) and not math.isfinite(v):
+                # NaN/inf from an aggregate over an empty set — not JSON encodable.
+                v = 0.0
             d[k] = v
         out.append(d)
     return out
@@ -186,12 +200,14 @@ def overview(since_s: Optional[int], project: str, bucket_s: int) -> dict[str, A
         FROM {T} WHERE {where}
     """, params)
 
+    # ifNaN: a quantile/avg over an EMPTY set is NaN, and NaN is not JSON —
+    # which 500s any short time range whose window holds no root span.
     roots = one(f"""
         SELECT
-          quantileExact(0.5)(duration_ms)  AS p50_ms,
-          quantileExact(0.95)(duration_ms) AS p95_ms,
-          max(duration_ms)                 AS max_ms,
-          avg(duration_ms)                 AS avg_ms
+          {nan_to_zero('quantileExact(0.5)(duration_ms)')}  AS p50_ms,
+          {nan_to_zero('quantileExact(0.95)(duration_ms)')} AS p95_ms,
+          {nan_to_zero('max(duration_ms)')}                 AS max_ms,
+          {nan_to_zero('avg(duration_ms)')}                 AS avg_ms
         FROM {T} WHERE {where} AND parent_span_id = ''
     """, params)
 
@@ -227,7 +243,7 @@ def overview(since_s: Optional[int], project: str, bucket_s: int) -> dict[str, A
                countIf(kind='LLM') AS llm_calls,
                sum(tokens_total) AS tokens,
                countIf(kind='TOOL') AS tool_calls,
-               quantileExactIf(0.95)(duration_ms, parent_span_id = '') AS p95_ms
+               {nan_to_zero("quantileExactIf(0.95)(duration_ms, parent_span_id = '')")} AS p95_ms
         FROM {T} WHERE {where} GROUP BY bucket ORDER BY bucket
     """, params)
 

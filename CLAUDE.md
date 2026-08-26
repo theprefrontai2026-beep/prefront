@@ -308,6 +308,14 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   `scenario.*`/`governed agent` ⇒ `orchestrator`, `app.*` ⇒ `ungoverned-agent`)
   and children inherit from their parent (`inherit_services`, which also looks
   up already-stored parents). The fan-out copy carries the real name and wins.
+- **NaN is not JSON.** An aggregate over an EMPTY set — a `quantileExact`/`avg`
+  where a time bucket holds no root span, or any range with no data — returns
+  NaN, and FastAPI's encoder then 500s the whole endpoint. It only shows up on
+  SHORT ranges (the UI's 15m button), which is why it survived the first round of
+  testing on 24h. Every such aggregate goes through `ch.nan_to_zero()`; note
+  ClickHouse has `isNaN(x)` but **no** `ifNaN(x, y)`. `ch.rows()` also coerces any
+  non-finite float to 0 as a backstop. Test new endpoints against a range with no
+  data, not just the default one.
 - **ClickHouse alias trap (bit twice):** `SELECT sum(x) AS x, avg(x)` fails with
   `ILLEGAL_AGGREGATION` — the alias shadows the column for the whole query. Never
   alias an aggregate to a column name another expression in the same SELECT reads
