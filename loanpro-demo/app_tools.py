@@ -157,6 +157,9 @@ _TOOLS = [
 #   approval_over       amount above which a request_manager_approval must precede it
 #   closing_obligation  tool that must follow it in the session
 #   toxic_with          intents that may not be combined with it in one session
+#   policy              sections of docs/credit_policy.md that govern the intent — the
+#                       ids a finding attributes to ("violates §8.1"); the doc is the
+#                       source of truth, this is the reviewer's cross-reference
 INTENTS: dict[str, dict | None] = {
     "get_my_applications": {
         "intent": "view_my_pipeline", "side_effect": "read", "callers": STAFF,
@@ -242,6 +245,33 @@ INTENTS: dict[str, dict | None] = {
     "search_applicants": None,
     "get_internal_metrics": None,
 }
+
+# Policy cross-reference: which sections of docs/credit_policy.md govern each tool.
+# Section numbers are the citable ids (a rule cites the smallest numbered section
+# containing its sentence). Kept beside INTENTS rather than inside it so the
+# reviewer can read the intent envelope and its policy basis as two columns.
+_POLICY: dict[str, list[str]] = {
+    "get_my_applications":     ["3.3", "7.5"],
+    "list_applications":       ["3.2", "3.3", "7.5"],
+    "get_application":         ["3.1", "3.3", "8.4"],
+    "find_applicant":          ["3.2", "7.1"],
+    "get_applicant_profile":   ["3.3", "7.1", "7.2", "7.3", "7.5", "7.6"],
+    "get_credit_report":       ["3.3", "7.2", "7.6", "8.3"],
+    "get_income_verification": ["3.3", "8.3"],
+    "verify_kyc":              ["8.1"],
+    "get_risk_profile":        ["3.3", "7.4", "8.2"],
+    "quote_terms":             ["4.1.3", "8.1", "8.2", "8.4", "8.6"],
+    "update_application":      ["6.3", "8.4", "8.6"],
+    "apply_discount":          ["6.3", "8.2"],
+    "request_manager_approval": ["6.2"],
+    "decide_loan":             ["4.1.1", "4.1.2", "4.1.3", "4.1.4", "4.2.1", "4.2.2", "4.3",
+                                "6.1", "6.2", "6.3", "8.3", "8.4", "8.5", "8.6"],
+    "send_decision_notice":    ["8.5"],
+    "fetch_document":          ["7.7"],
+    "export_applicants":       ["3.2", "3.3", "7.1", "7.2", "7.3", "7.5", "7.6"],
+}
+for _name, _refs in _POLICY.items():
+    INTENTS[_name]["policy"] = _refs  # type: ignore[index]
 
 
 def _clean(o):

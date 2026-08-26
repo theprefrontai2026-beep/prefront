@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { DemoConfig } from "../demos";
 import { SessionDetail } from "./Observability";
 
-type Finding = { check: string; evidence: string };
+type Finding = { check: string; evidence: string; policy?: string };
 type Scenario = {
   id: string; family: string; family_label: string; title: string; checks: string[];
   caller: string; role: string; user_id: number; channel: string; mode: "llm" | "replay";
@@ -104,6 +104,7 @@ function Findings({ s }: { s: Scenario }) {
       {s.expected_findings.map((f, i) => (
         <div key={i} className="pf-sess-finding">
           <span className={`pf-sess-check ${FAMILY_TONE[s.family] || ""}`}>{f.check}</span>
+          {f.policy && <span className="pf-sess-policy" title="credit_policy.md section">§{f.policy}</span>}
           <span className="pf-sess-evidence">{f.evidence}</span>
         </div>
       ))}

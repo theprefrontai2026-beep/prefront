@@ -101,6 +101,24 @@ seed is never mutated — the agent still sees its mutation succeed.
 * `curl localhost:8110/oob/sessions/<id>` for the raw spans; or ClickHouse:
   `SELECT name, kind, session_id, intent_name, attributes['app.side_effect'], status FROM prefront.spans FINAL WHERE session_id = '…' ORDER BY start_time`.
 
-`docs/credit_policy.md` is the design-time policy Family 1 is derived from;
-`policy/*.yaml` are the legacy governed artifacts for the profile-disabled
-`loanpro-mcp` and are not used by the agent.
+## The policy (`docs/credit_policy.md`) — what every finding attributes to
+
+`docs/credit_policy.md` is the source of truth. Every enforceable clause has its
+own **numbered heading** (§4.1.1 credit floor, §6.2 manager approval, §7.4 never
+disclose the internal risk score, §8.1 verify KYC before quoting, §8.5 decision
+notice, …) and one governing sentence, plus an *Applies to* line naming the
+intents it constrains. A rule cites the smallest numbered section containing its
+sentence; numbering is append-only. The ids are wired on the demo side only:
+
+* `app_tools.INTENTS[tool]["policy"]` — the sections each approved intent rests on
+  (the reviewer's cross-reference, not enforcement);
+* `scenarios.py` `expected_findings[].policy` — the section a finding violates
+  (Family 1 always; Family 2/3 where an invariant happens to break a clause);
+* the orchestrator stamps `scenario.policy` on the `session` root span;
+* `docs/check-coverage.md` carries a *Policy §* column and a policy → check →
+  session index, and `gen_coverage.py` fails if a cited § has no heading.
+
+Nothing in the app reads the policy: tool spans and results carry no policy ids.
+Prefront reads the document itself. `policy/*.yaml` are the legacy governed
+artifacts for the profile-disabled `loanpro-mcp` and are not derived from the
+current document.

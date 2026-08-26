@@ -126,6 +126,8 @@ def run_session(s: dict, variant: str | None = None, repeat_index: int = 0) -> d
             "scenario.family": s["family"],
             "scenario.title": s["title"],
             "scenario.checks": s.get("checks", []),
+            "scenario.policy": sorted({p.strip() for f in s.get("expected_findings", [])
+                                       for p in str(f.get("policy", "")).split(",") if p.strip()}),
             "scenario.mode": s.get("mode", "llm"),
             "scenario.baseline": bool(s.get("baseline")),
             "scenario.repeat_index": repeat_index,

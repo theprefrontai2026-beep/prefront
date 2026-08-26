@@ -9,12 +9,43 @@ attributes carry the evidence.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
 import app_tools  # noqa: E402
 from scenarios import CALLERS, FAMILIES, SCENARIOS  # noqa: E402
+
+POLICY_DOC = HERE / "credit_policy.md"
+_HEADING = re.compile(r"^#{2,4}\s+(\d+(?:\.\d+)*)\s+(.+?)\s*$", re.M)
+
+
+def policy_sections() -> dict[str, str]:
+    """{section number: title} for every numbered heading in credit_policy.md —
+    the ids a finding may cite. The document is the source of truth: a cited
+    section that is not a heading is an error, not a warning."""
+    return {m.group(1): m.group(2) for m in _HEADING.finditer(POLICY_DOC.read_text(encoding="utf-8"))}
+
+
+def _refs(v) -> list[str]:
+    if not v:
+        return []
+    if isinstance(v, str):
+        return [x.strip() for x in v.split(",") if x.strip()]
+    return [str(x) for x in v]
+
+
+def check_policy_refs(sections: dict[str, str]) -> None:
+    bad = []
+    for s in SCENARIOS:
+        for f in s.get("expected_findings", []):
+            bad += [f"{s['id']}/{f['check']} -> §{r}" for r in _refs(f.get("policy")) if r not in sections]
+    for name, m in app_tools.INTENTS.items():
+        bad += [f"INTENTS[{name}] -> §{r}" for r in _refs((m or {}).get("policy")) if r not in sections]
+    if bad:
+        sys.exit("policy references with no heading in credit_policy.md:\n  " + "\n  ".join(bad))
 
 CHECKS = [  # (family, check, engine/meaning) — the order of prefront-check-families.md
     ("F1", "precondition", "fact F must be established before tool T"),
@@ -91,6 +122,8 @@ def by_check() -> dict[str, list[dict]]:
 
 def main() -> None:
     idx = by_check()
+    sections = policy_sections()
+    check_policy_refs(sections)
     p = print
     p("# LoanPro — check coverage matrix")
     p()
@@ -123,16 +156,40 @@ def main() -> None:
     p()
     p("## Check → session → evidence")
     p()
-    p("| Family | Check | Meaning | Sessions | Mode | Evidence in the trace |")
-    p("|---|---|---|---|---|---|")
+    p("| Family | Check | Meaning | Sessions | Mode | Policy § | Evidence in the trace |")
+    p("|---|---|---|---|---|---|---|")
     for fam, check, meaning in CHECKS:
         ss = idx.get(check, [])
         ids = ", ".join(f"`{s['id']}`" for s in ss) or "—"
         modes = ", ".join(sorted({"scripted" if s.get("mode") == "replay" else "LLM" for s in ss})) or "—"
-        p(f"| {fam} | `{check}` | {meaning} | {ids} | {modes} | {EVIDENCE.get(check, '')} |")
+        pol = sorted({r for s in ss for f in s.get("expected_findings", []) if f["check"] == check
+                      for r in _refs(f.get("policy"))}, key=lambda x: [int(n) for n in x.split(".")])
+        pol_s = ", ".join(f"§{r}" for r in pol) or "—"
+        p(f"| {fam} | `{check}` | {meaning} | {ids} | {modes} | {pol_s} | {EVIDENCE.get(check, '')} |")
     p()
     uncovered = [c for _, c, _ in CHECKS if c not in idx]
     p(f"Uncovered checks: {', '.join(uncovered) if uncovered else 'none'}.")
+    p()
+    p("## Policy → check → session (`docs/credit_policy.md`)")
+    p()
+    p("Every numbered section of the policy, with the checks and sessions that attribute to "
+      "it and the intents whose approved envelope cites it (`app_tools.INTENTS[*].policy`). "
+      "A section with nothing against it is descriptive prose or a clause no session exercises yet.")
+    p()
+    p("| § | Clause | Checks | Sessions | Intents citing it |")
+    p("|---|---|---|---|---|")
+    for sec, title in sections.items():
+        chks, sess = set(), []
+        for s in SCENARIOS:
+            hit = False
+            for f in s.get("expected_findings", []):
+                if sec in _refs(f.get("policy")):
+                    chks.add(f["check"]); hit = True
+            if hit:
+                sess.append(s["id"])
+        intents = sorted(m["intent"] for m in app_tools.INTENTS.values() if m and sec in _refs(m.get("policy")))
+        p(f"| {sec} | {title} | {', '.join(f'`{c}`' for c in sorted(chks)) or '—'} | "
+          f"{', '.join(f'`{i}`' for i in sess) or '—'} | {', '.join(f'`{i}`' for i in intents) or '—'} |")
     p()
     p("## Sessions")
     p()
@@ -149,7 +206,9 @@ def main() -> None:
             steps = s.get("steps") or [st for ts in s.get("steps_by_turn", []) for st in ts]
             step_s = " → ".join(f"{st['tool']}({', '.join(f'{k}={v}' for k, v in st.get('args', {}).items())})" for st in steps)
             what = turns + (f"<br>**steps:** {step_s}" if step_s else "")
-            findings = "<br>".join(f"`{f['check']}` — {f['evidence']}" for f in s.get("expected_findings", [])) or "none (baseline)"
+            findings = "<br>".join(
+                f"`{f['check']}`" + (f" §{f['policy']}" if f.get("policy") else "") + f" — {f['evidence']}"
+                for f in s.get("expected_findings", [])) or "none (baseline)"
             mode = "scripted" if s.get("mode") == "replay" else "LLM"
             if s.get("repeat", 1) > 1:
                 mode += f" ×{s['repeat']}"
@@ -164,21 +223,21 @@ def main() -> None:
     p("What a reviewer signed off per tool. The app enforces none of it; the evaluator diffs "
       "against it. `None` = off-catalog.")
     p()
-    p("| Tool | Intent | Effect | Callers | Channels | Approved fields | Mandatory filter | Volume | Other |")
-    p("|---|---|---|---|---|---|---|---|---|")
+    p("| Tool | Intent | Effect | Callers | Channels | Approved fields | Mandatory filter | Volume | Policy § | Other |")
+    p("|---|---|---|---|---|---|---|---|---|---|")
     for name in app_tools.tool_names():
         m = app_tools.INTENTS.get(name)
         if m is None:
-            p(f"| `{name}` | **off-catalog** | | | | | | | |")
+            p(f"| `{name}` | **off-catalog** | | | | | | | | |")
             continue
         other = []
         for k in ("precondition", "requires_before", "approval_over", "closing_obligation", "toxic_with",
-                  "restricted_fields", "trust", "establishes"):
+                  "restricted_fields", "trust", "establishes"):  # policy has its own column
             if m.get(k):
                 other.append(f"{k}={m[k]}")
         p(f"| `{name}` | `{m['intent']}` | {m['side_effect']} | {', '.join(m['callers'])} | "
           f"{', '.join(m['channels'])} | {', '.join(m['fields'])} | {m.get('mandatory_filter') or '—'} | "
-          f"{m.get('volume', '—')} | {'; '.join(other) or '—'} |")
+          f"{m.get('volume', '—')} | {', '.join(f'§{r}' for r in m.get('policy', [])) or '—'} | {'; '.join(other) or '—'} |")
 
 
 if __name__ == "__main__":

@@ -1808,3 +1808,4 @@ select { cursor: pointer; }
 .pf-flyout-body .pf-oob-detail-body { grid-template-columns: 1fr; }
 .pf-flyout-findings { border-top: 1px dashed var(--line); padding-top: 10px; }
 .pf-flyout .pf-oob-detail > .pf-oob-panel-head .pf-oob-actions > button:last-child { display: none; } /* the fly-out has its own Close */
+.pf-sess-policy { flex: none; margin-top: 2px; font-family: var(--app-font-mono); font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: var(--surface-alt); color: var(--ink-soft); white-space: nowrap; }

@@ -727,6 +727,7 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
   const tools = spans.filter((s) => s.kind === "TOOL");
   const traces = Array.from(new Set(spans.map((s) => s.trace_id)));
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
+  const policy = parseList(root?.attributes["scenario.policy"] ?? "");
   return (
     <section className="pf-panel pf-oob-detail">
       <div className="pf-oob-panel-head">
@@ -737,7 +738,7 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
             {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
             {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turns · {tools.length} tool calls · {traces.length} trace{traces.length === 1 ? "" : "s"}
           </div>
-          {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger (from the harness, not a verdict)</span></div>}
+          {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}{policy.map((c) => <span key={c} className="pf-oob-chip">§{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger and the policy sections they attribute to (from the harness, not a verdict)</span></div>}
         </div>
         <div className="pf-oob-actions">
           {traces.map((t) => <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}>trace {short(t)}</button>)}
