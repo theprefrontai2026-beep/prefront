@@ -23,3 +23,9 @@ semantic-layer/out/
 # Node / Vite build output
 node_modules/
 dist/
+
+# Editor swap/backup files (a transient Vim .swp was once committed by `git add -A`)
+*.swp
+*.swo
+*~
+.*.sw[a-p]
