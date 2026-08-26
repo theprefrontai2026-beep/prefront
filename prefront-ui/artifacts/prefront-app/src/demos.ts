@@ -98,7 +98,8 @@ export const DEMOS: DemoConfig[] = [
   },
 ];
 
-export const DEFAULT_DEMO: DemoId = "securebank";
+// LoanPro is the active demo — SecureBank is profile-disabled in docker-compose.
+export const DEFAULT_DEMO: DemoId = "loanpro";
 
 export function getDemo(id: string | null | undefined): DemoConfig {
   return DEMOS.find((d) => d.id === id) ?? DEMOS[0];

@@ -280,8 +280,9 @@ services:
       NODE_ENV: production
       # Where POST /api/decisions/refresh runs the live governance catalog. One
       # orchestrator per bundled demo; the request's ?demo= selects which. The
-      # bare ORCHESTRATOR_URL is the default (securebank) for legacy callers.
-      ORCHESTRATOR_URL: http://securebank-orchestrator:8095
+      # bare ORCHESTRATOR_URL is the default for legacy callers — LoanPro, since
+      # SecureBank is profile-disabled.
+      ORCHESTRATOR_URL: http://loanpro-orchestrator:8098
       ORCHESTRATOR_URL_SECUREBANK: http://securebank-orchestrator:8095
       ORCHESTRATOR_URL_LOANPRO: http://loanpro-orchestrator:8098
     ports: ["8080:8080"]
@@ -309,8 +310,15 @@ services:
       - oob-ingest
 
   # ==========================================================================
-  # SecureBank demo (moved in-repo under ./securebank-demo) — the active
-  # before/after harness. Its own Postgres + an app-layer agent service
+  # SecureBank demo — DISABLED by default: every service below sits behind the
+  # `securebank` profile, so `docker compose up` does not start it. LoanPro is
+  # the active demo. Bring SecureBank back with:
+  #     docker compose --profile securebank up -d
+  # NOTE: the engine `semantic-mcp-server` (profile `mcp`) is wired to the
+  # SecureBank datasource, so enabling it needs BOTH profiles:
+  #     docker compose --profile securebank --profile mcp up -d
+  #
+  # (originally: moved in-repo under ./securebank-demo) — the before/after harness. Its own Postgres + an app-layer agent service
   # (typed business functions, no access-control policy — the realistic "before")
   # + ONE Prefront MCP server (curated artifacts) + the orchestrator the UI's
   # Runtime tab points at (http://localhost:8095). Shares the engine's
@@ -320,6 +328,7 @@ services:
 
   # ---- SecureBank sample datasource (schema + seed auto-apply on first boot)
   securebank-db:
+    profiles: ["securebank"]
     image: postgres:16
     environment:
       POSTGRES_USER: securebank
@@ -338,6 +347,7 @@ services:
 
   # ---- the "before": app-layer agent — typed functions, no access-control policy ----
   securebank-ungoverned:
+    profiles: ["securebank"]
     build: ./securebank-demo
     command: ["python", "ungoverned_server.py"]
     environment:
@@ -352,6 +362,7 @@ services:
   # ---- seed the curated SecureBank artifacts the MCP serves ----
   # Idempotent copy into the demo-owned /artifacts/securebank-demo/ dir.
   securebank-seed:
+    profiles: ["securebank"]
     image: alpine
     command:
       - sh
@@ -369,6 +380,7 @@ services:
   # Same engine image as semantic-mcp-server, but serving the demo's curated
   # artifacts against the SecureBank DB; identity resolved per-connection.
   securebank-mcp:
+    profiles: ["securebank"]
     build: ./semantic-mcp-server
     command: ["--templates=/artifacts/securebank-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
     environment:
@@ -386,6 +398,7 @@ services:
 
   # ---- the "after" orchestrator: gpt-4o-mini as an MCP CLIENT of the server
   securebank-orchestrator:
+    profiles: ["securebank"]
     build: ./securebank-demo
     command: ["python", "demo_server.py"]
     environment:
@@ -399,7 +412,7 @@ services:
       securebank-mcp: {condition: service_started}
 
   # ==========================================================================
-  # LoanPro demo (in-repo under ./loanpro-demo) — the SECOND worked example, a
+  # LoanPro demo (in-repo under ./loanpro-demo) — the ACTIVE worked example, a
   # retail loan-origination shop. Same engine image, different domain: its own
   # Postgres + curated artifacts + an app-layer "before" agent + ONE Prefront MCP
   # server + the orchestrator the UI's Runtime tab points at when the LoanPro

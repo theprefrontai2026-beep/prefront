@@ -22,7 +22,8 @@ function orchestratorFor(demo: string): string {
 
 // The demo scope is a short slug (matches the SPA's DemoConfig.id). Everything is
 // scoped by it; an absent/invalid value falls back to the original single demo.
-const DEFAULT_DEMO = "securebank";
+// LoanPro is the active demo (SecureBank is profile-disabled in docker-compose).
+const DEFAULT_DEMO = "loanpro";
 function demoOf(v: unknown): string {
   const s = String(v ?? "").trim().toLowerCase();
   return /^[a-z0-9_-]{1,32}$/.test(s) ? s : DEFAULT_DEMO;
