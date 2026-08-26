@@ -182,6 +182,29 @@ async def trace(trace_id: str):
     return {"trace_id": trace_id, "spans": spans}
 
 
+@app.get("/oob/sessions")
+async def sessions(since: Optional[int] = SinceQ, project: str = ProjectQ, role: str = "",
+                   channel: str = "", scenario: str = "", user: str = "", q: str = "",
+                   limit: int = 50, offset: int = 0):
+    return await asyncio.to_thread(
+        ch.list_sessions, since, project, role=role, channel=channel, scenario=scenario,
+        user=user, q=q, limit=limit, offset=offset,
+    )
+
+
+@app.get("/oob/sessions/population")
+async def sessions_population(since: Optional[int] = SinceQ, project: str = ProjectQ):
+    return {"scenarios": await asyncio.to_thread(ch.sessions_by_scenario, since, project)}
+
+
+@app.get("/oob/sessions/{session_id}")
+async def session(session_id: str):
+    spans = await asyncio.to_thread(ch.session_detail, session_id)
+    if not spans:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"session_id": session_id, "spans": spans}
+
+
 @app.get("/oob/llm")
 async def llm(since: Optional[int] = SinceQ, project: str = ProjectQ, limit: int = 50):
     return await asyncio.to_thread(ch.llm_view, since, project, limit)

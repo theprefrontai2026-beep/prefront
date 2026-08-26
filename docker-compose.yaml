@@ -451,20 +451,27 @@ services:
       LOANPRO_DSN: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
       LOANPRO_APP_MCP_PORT: "8102"
       LOANPRO_READONLY: "on"             # writes execute, then roll back
+      LOANPRO_TRACE_ROWS: "20"           # rows kept in each tool span's output.value
+      PREFRONT_TRACE_MAX_VALUE: "16000"  # tool results carry rows: don't clip them at 4k
     ports: ["8102:8102"]
     depends_on:
       loanpro-db: {condition: service_healthy}
 
   # ---- the agent: an LLM that reaches its tools as an MCP CLIENT -----------
   # No DSN here — the agent never touches the database, it only calls tools.
+  # Keeps a server-side conversation per session id (POST /sessions, then
+  # /sessions/{id}/messages or /replay) — the traces are the OOB checks' subject.
   loanpro-ungoverned:
     build: ./loanpro-demo
     command: ["python", "ungoverned_server.py"]
     environment:
       <<: [*llm-env, *tracing-env, *oob-tap-env]   # OPENAI_API_KEY; OOB tap
       UNGOVERNED_MODEL: gpt-4o-mini
+      UNGOVERNED_MODEL_V2: ${LOANPRO_MODEL_V2:-gpt-4o-mini}   # prompt/model variant v2
+      UNGOVERNED_MAX_ITERS: "6"          # multi-tool sessions need more round-trips
       UNGOVERNED_PORT: "8097"
       LOANPRO_APP_MCP_URL: http://loanpro-app-mcp:8102/sse
+      PREFRONT_TRACE_MAX_VALUE: "16000"
     ports: ["8097:8097"]
     depends_on:
       loanpro-app-mcp: {condition: service_started}
@@ -510,9 +517,8 @@ services:
     command: ["python", "demo_server.py"]
     environment:
       <<: [*llm-env, *tracing-env, *no-governed-span-env]   # OPENAI_API_KEY
-      GOVERNED_MODEL: gpt-4o-mini
       LOANPRO_DEMO_PORT: "8098"
-      UNGOVERNED_URL: http://loanpro-ungoverned:8097/run
+      AGENT_URL: http://loanpro-ungoverned:8097
     ports: ["8098:8098"]
     depends_on:
       loanpro-ungoverned: {condition: service_started}

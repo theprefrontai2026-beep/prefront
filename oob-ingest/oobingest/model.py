@@ -26,6 +26,9 @@ COLUMNS = [
     "llm_model", "llm_provider", "tokens_prompt", "tokens_completion", "tokens_total",
     "decision", "intent", "caller_role", "caller_key", "scenario_id", "tool_name",
     "version",
+    # Session columns (added for the session-shaped checks): the agent stamps
+    # session.id / user.id on every span, the app stamps role/channel/intent.
+    "session_id", "user_id", "user_role", "channel", "intent_name",
 ]
 
 _MAX_TEXT = 64_000
@@ -100,6 +103,11 @@ class SpanRow:
     caller_key: str = ""
     scenario_id: str = ""
     tool_name: str = ""
+    session_id: str = ""
+    user_id: str = ""
+    user_role: str = ""
+    channel: str = ""
+    intent_name: str = ""
     extra: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -114,6 +122,7 @@ class SpanRow:
             self.output_value, self.llm_model, self.llm_provider, self.tokens_prompt,
             self.tokens_completion, self.tokens_total, self.decision, self.intent, self.caller_role,
             self.caller_key, self.scenario_id, self.tool_name, self.version,
+            self.session_id, self.user_id, self.user_role, self.channel, self.intent_name,
         ]
 
 
@@ -130,6 +139,11 @@ def lift(attrs: dict[str, Any]) -> dict[str, Any]:
         or (_i(attrs.get("llm.token_count.prompt")) + _i(attrs.get("llm.token_count.completion"))),
         scenario_id=_s(attrs.get("scenario.id")),
         tool_name=_s(attrs.get("tool.name") or attrs.get("app.tool")),
+        session_id=_s(attrs.get("session.id")),
+        user_id=_s(attrs.get("user.id")),
+        user_role=_s(attrs.get("app.user.role") or attrs.get("user.role")),
+        channel=_s(attrs.get("app.channel")),
+        intent_name=_s(attrs.get("app.intent")),
     )
 
 

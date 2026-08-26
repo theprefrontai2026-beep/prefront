@@ -66,34 +66,49 @@ docker compose --profile securebank --profile mcp up -d      # + the engine MCP,
                                                              #   is wired to SecureBank's DB
 ```
 
-Its catalog is `loanpro-demo/scenarios.py`: **L1–L8 are the visible catalog**
-(`GET /api/scenarios`); **L9–L12 carry `"hidden": True`** and are excluded from
-that list but still run via `GET /api/diff?only=L9,L12`.
-
-**LoanPro has NO governed agent — it is an ungoverned deployment, and its tools
-are reached over MCP.** Three services:
+**LoanPro is the SUBJECT of Prefront's out-of-band checks** — the three
+families in `prefront-check-families.md`. It is an ungoverned deployment whose
+tools, data and scenario catalogue were designed so that every check has
+something concrete to detect in the trace; nothing in `loanpro-demo/` enforces
+or judges anything. `loanpro-demo/docs/check-coverage.md` (generated:
+`python docs/gen_coverage.py > docs/check-coverage.md`) is the contract —
+check → session → span attributes carrying the evidence. Read it before
+touching a tool, a scenario, or a span attribute; the evaluator will be built
+against it.
 
 | File | Service | Role |
 |---|---|---|
-| `app_tools.py` | — | the shop's business functions + their SQL. Knows nothing of MCP or the LLM. |
-| `app_mcp_server.py` | `loanpro-app-mcp` :8102 | serves those functions as **plain MCP tools** — no policy, no decision, a call arrives and the SQL runs |
-| `ungoverned_server.py` | `loanpro-ungoverned` :8097 | the agent: an **MCP client**, discovers tools via `list_tools()` and calls them through the session |
+| `app_tools.py` | — | the shop's business functions + their SQL, and **`INTENTS`**: the approved-intent catalog as design-time metadata (callers, channels, fields, mandatory filter, volume, side effect, precondition, ordering, closing obligation, toxic combinations). Not enforced — stamped on spans. `None` = off-catalog (`search_applicants`, `get_internal_metrics`). |
+| `app_mcp_server.py` | `loanpro-app-mcp` :8102 | serves those functions as **plain MCP tools**; one `tool <name>` span per call with `session.id`, `user.id`, `app.user.role`, `app.channel`, `app.intent`, `app.side_effect`, `app.catalog`, `app.trust`, `input.value`=args, `output.value`=result **including rows** (≤`LOANPRO_TRACE_ROWS`), `app.sql`, `app.row_count`, `app.columns`, `status=ERROR` on failure. Identity/role/channel/session arrive as `X-LoanPro-*` connection headers. |
+| `ungoverned_server.py` | `loanpro-ungoverned` :8097 | the agent: MCP client with **server-side sessions** — `POST /sessions`, `POST /sessions/{id}/messages` (LLM turn), `POST /sessions/{id}/replay` (scripted turn), `GET /sessions/{id}`; `POST /run` is a one-shot shim. `turn <n>` span per turn; `tracing.using_session()` puts `session.id`/`user.id` on the auto-instrumented LLM spans too. Variants `v1` (deployed prompt, temp 0) / `v2` ("proactive" prompt, temp 0.9). |
+| `demo_server.py` + `scenarios.py` | `loanpro-orchestrator` :8098 | runs the catalogue as sessions: `GET /api/scenarios` (grouped by family), `GET /api/run?only=&repeat=&variant=` (`/api/diff` is an alias). Opens the `session <id>` root span so one session = one trace. |
 
-The agent never touches the database — it only calls tools. Identity is a
-per-connection `X-LoanPro-User` header the LLM cannot set, but **only
-`get_my_applications()` honours it**; that is the governance gap on show, along
-with the CEL-filter gateway, IDOR on `get_application`, ssn/credit-score
-leakage, and an unguarded `decide_loan`. `loanpro-mcp` (Prefront's governed MCP)
-and `governed_agent.py` are gone from the LoanPro path — the former is behind
-the `mcp` profile, the latter deleted.
+**Two turn modes, one trace shape.** An LLM turn lets gpt-4o-mini pick the
+tools (authentic, usually reproduced); a **replay** turn executes a scripted
+`steps` list through the *same* MCP session and records a scripted answer
+(guaranteed finding — used for fabrication, distortion, ordering, repetition).
+Both yield `session → turn → ChatCompletion → tool …`; the replay's stand-in LLM
+span carries `app.replay=true`. Catalogue ids: `F1-*`, `F2-*`, `F3-*`, `POP-*`
+(carry `repeat`/`variant`), `BASE-*` (clean controls); `F2-04R` is hidden
+(runnable by id). Each scenario declares `expected_findings` — what the
+evaluator SHOULD report — which the Runtime tab shows beside the transcript.
 
-**The agent is single-turn** — no conversation memory; `messages` is rebuilt as
-`[system, user]` per request and no session/history store exists. Within one
-request it loops up to `MAX_ITERS = 3` LLM round-trips and handles parallel
-`tool_calls`. (SecureBank's governed agent, still in `securebank-demo/`, is by
-contrast a fixed two-pass shape — one LLM call picking exactly ONE tool via
-`msg.tool_calls[0]`, the Prefront call, then a synthesis pass only when
-`allowed` — so a governed run is one intent per question by construction.)
+- **`db/*.sql` only run on a fresh volume.** After any schema/seed change:
+  `docker compose rm -sf loanpro-db && docker volume rm prefront_loanpro_pgdata`,
+  then `up -d`. Seed facts the checks depend on: KYC `pending` for 5006/5009;
+  no bureau file / income verification for 5009 (and no income row for 5003) so
+  those tools ERROR; document 9003 carries the injected instruction; 20 loans
+  across three officers so an unscoped read is bulk.
+- Identity is trusted-layer only: the LLM cannot set `X-LoanPro-*`, but only
+  `get_my_applications()` honours the user — every other gap (IDOR, ssn/tax-id/
+  bank-account/credit-score/internal-risk-score leakage, unguarded writes, the
+  CEL gateway) is intentional and documented in `check-coverage.md`.
+- **The trace is the deliverable.** Renaming a span or an `app.*`/`session.id`
+  attribute breaks both the OOB Sessions view (`ch.list_sessions`,
+  `model.lift`) and the coverage contract — update `docs/gen_coverage.py` and
+  the ingest columns together.
+- `loanpro-mcp` (Prefront's governed MCP) is still declared behind the `mcp`
+  profile and unused; `policy/*.yaml` are its legacy artifacts.
 
 - **An MCP SSE endpoint MUST return a Response.** Starlette >=1.0 does
   `await (await endpoint(request))(scope, receive, send)`, so an SSE handler that
@@ -338,6 +353,13 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   `ILLEGAL_AGGREGATION` — the alias shadows the column for the whole query. Never
   alias an aggregate to a column name another expression in the same SELECT reads
   (`list_traces` aliases to `t_start`/`t_end` and renames in an outer SELECT).
+- **Sessions** (`/oob/sessions`, `/oob/sessions/{id}`, `/oob/sessions/population`,
+  UI view "Sessions"): a session is every span with the same `session.id`,
+  whatever trace it is in. `ch.ensure_schema` runs `ALTER TABLE … ADD COLUMN IF
+  NOT EXISTS` for the session columns (`session_id`, `user_id`, `user_role`,
+  `channel`, `intent_name`) so an older volume self-heals. `list_sessions`
+  counts turns by `name LIKE 'turn %'`, writes by `attributes['app.side_effect']`,
+  off-catalog calls by `intent_name = ''` on TOOL spans.
 - **Lifted columns** (`model.lift`): `input/output.value`, `llm.model_name`,
   `llm.token_count.*`, `scenario.id`, `tool.name`/`app.tool`. The `decision`,
   `intent`, `caller_role`, `caller_key` columns still exist in the table (the
@@ -345,7 +367,7 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   them survives ingestion.
 - Cost is a list-price estimate from `config.price_for` (prefix match on model
   name; `OOB_MODEL_PRICES` JSON overrides). Unknown model ⇒ $0.
-- UI: `components/Observability.tsx` (tab id `oob`; views Overview / Traces /
+- UI: `components/Observability.tsx` (tab id `oob`; views Overview / Sessions / Traces /
   LLM / Ingestion), CSS under `.pf-oob-*`. Vite
   dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
 - Quick checks: `curl :8110/oob/status` (both sources + counts),
@@ -361,6 +383,8 @@ docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:
                               # oob-ingest:8110  clickhouse:8123  phoenix:6006
                               # LoanPro (the active demo): orchestrator:8098
                               #   agent:8097  app-mcp:8102  postgres:5435
+curl 'localhost:8098/api/run?only=F2-05'          # one LoanPro session (see loanpro-demo/README.md)
+curl 'localhost:8110/oob/sessions?since=3600'     # what OOB ingested, per session
 docker compose down           # add -v to wipe the artifacts/data volumes
 
 # NOT started by the line above — both are behind profiles:

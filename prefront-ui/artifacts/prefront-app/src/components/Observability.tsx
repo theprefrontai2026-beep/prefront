@@ -9,6 +9,8 @@
  *
  * Sub-views mirror what any AEOP platform shows:
  *   Overview    KPIs, throughput/latency/error time series, breakdowns
+ *   Sessions    one row per session.id → ordered step stream (turn → LLM →
+ *               tool calls → answer): the unit the OOB checks evaluate
  *   Traces      filterable trace list → waterfall → span inspector
  *   LLM         per-model usage, tokens, cost, tool-call rate, recent calls
  *   Ingestion   pipeline health: ClickHouse, Phoenix poller, OTLP receiver
@@ -57,8 +59,20 @@ type Span = {
   input_value: string; output_value: string; llm_model: string; llm_provider: string;
   tokens_prompt: number; tokens_completion: number; tokens_total: number;
   scenario_id: string; tool_name: string;
+  session_id?: string; user_id?: string; user_role?: string; channel?: string; intent_name?: string;
 };
-type Facets = { services: string[]; kinds: string[]; tools: string[]; scenarios: string[]; projects: string[]; models: string[] };
+type SessionRow = {
+  session_id: string; start_time: string; end_time: string; duration_ms: number; user_id: string; role: string;
+  channel: string; scenario_id: string; variant: string; family: string; checks: string; turns: number;
+  tool_calls: number; llm_calls: number; off_catalog_calls: number; writes: number; errors: number;
+  tokens_total: number; span_count: number; trace_ids: string[]; tools: string[]; intents: string[];
+  first_input: string; last_output: string; project: string;
+};
+type PopulationRow = {
+  scenario_id: string; variant: string; sessions: number; distinct_shapes: number; avg_tool_calls: number;
+  avg_writes: number; avg_errors: number; last_run: string;
+};
+type Facets = { services: string[]; kinds: string[]; tools: string[]; scenarios: string[]; projects: string[]; models: string[]; roles?: string[]; channels?: string[]; intents?: string[] };
 type Status = {
   clickhouse: { ok: boolean; url: string; database: string; spans?: number; traces?: number; from_phoenix?: number; from_otlp?: number; oldest?: string; newest?: string };
   phoenix: { enabled: boolean; endpoint: string; projects: string[]; poll_seconds: number; lookback_seconds: number; polls: number; ingested_total: number; excluded_inline_total: number; unprovable_dropped: number; held_for_parent: number; exclude: { attr_prefixes: string[]; span_names: string[]; services: string[]; strip_attr_prefixes: string[] }; last_sync: string | null; last_error: string; watermarks: Record<string, string | null> };
@@ -79,10 +93,10 @@ const RANGES: { label: string; seconds: number }[] = [
   { label: "15m", seconds: 900 }, { label: "1h", seconds: 3600 }, { label: "6h", seconds: 6 * 3600 },
   { label: "24h", seconds: 86400 }, { label: "7d", seconds: 7 * 86400 }, { label: "All", seconds: 0 },
 ];
-const VIEWS = ["overview", "traces", "llm", "ingestion"] as const;
+const VIEWS = ["overview", "sessions", "traces", "llm", "ingestion"] as const;
 type View = typeof VIEWS[number];
 const VIEW_LABEL: Record<View, string> = {
-  overview: "Overview", traces: "Traces", llm: "LLM", ingestion: "Ingestion",
+  overview: "Overview", sessions: "Sessions", traces: "Traces", llm: "LLM", ingestion: "Ingestion",
 };
 
 const num = (n: number | undefined | null) => (n ?? 0).toLocaleString();
@@ -547,6 +561,215 @@ function SpanInspector({ span }: { span: Span }) {
   );
 }
 
+/* ── Sessions ───────────────────────────────────────────────────────────── */
+// A session is every span sharing one `session.id` — the unit the session-
+// level checks evaluate. The list is what an evaluator would iterate over; the
+// detail is the ordered step stream (user turn → LLM → tool calls → answer)
+// the value-provenance graph is built from. No verdicts here: those belong to
+// the evaluator, and this surface is deliberately just the evidence.
+
+function SessionsView({ since, project, facets, refreshKey, initialSession, onOpenSession, onOpenTrace }: {
+  since: number; project: string; facets: Facets | null; refreshKey: number;
+  initialSession: string | null; onOpenSession: (id: string | null) => void; onOpenTrace: (id: string) => void;
+}) {
+  const [role, setRole] = useState("");
+  const [channel, setChannel] = useState("");
+  const [scenario, setScenario] = useState("");
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<SessionRow[]>([]);
+  const [pop, setPop] = useState<PopulationRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [err, setErr] = useState("");
+  const limit = 50;
+
+  useEffect(() => { setOffset(0); }, [since, project, role, channel, scenario, q]);
+  useEffect(() => {
+    let alive = true;
+    getJSON<{ sessions: SessionRow[]; total: number }>(
+      `/oob/sessions${qs({ since: since || undefined, project, role, channel, scenario, q, limit, offset })}`,
+    ).then((d) => { if (alive) { setRows(d.sessions); setTotal(d.total); setErr(""); } })
+     .catch((e) => { if (alive) setErr(String(e?.message || e)); });
+    getJSON<{ scenarios: PopulationRow[] }>(`/oob/sessions/population${qs({ since: since || undefined, project })}`)
+      .then((d) => { if (alive) setPop(d.scenarios); }).catch(() => {});
+    return () => { alive = false; };
+  }, [since, project, role, channel, scenario, q, offset, refreshKey]);
+
+  const sel = (label: string, value: string, set: (v: string) => void, opts: string[]) => (
+    <label className="pf-oob-filter">
+      <span>{label}</span>
+      <select value={value} onChange={(e) => set(e.target.value)}>
+        <option value="">All</option>
+        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </label>
+  );
+
+  return (
+    <div className="pf-oob-stack">
+      <section className="pf-panel">
+        <div className="pf-oob-filters">
+          {sel("Role", role, setRole, facets?.roles ?? [])}
+          {sel("Channel", channel, setChannel, facets?.channels ?? [])}
+          {sel("Scenario", scenario, setScenario, facets?.scenarios ?? [])}
+          <label className="pf-oob-filter grow"><span>Search</span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="session id, first user message, tool, intent…" />
+          </label>
+        </div>
+        {err && <div className="pf-oob-error">{err}</div>}
+        {rows.length ? (
+          <table className="pf-oob-table pf-oob-sessions">
+            <thead><tr><th>When</th><th>Session</th><th>Caller</th><th>Channel</th><th>Turns</th><th>Tools</th><th>Writes</th><th>Off-catalog</th><th>LLM</th><th>Duration</th><th>Status</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.session_id} className={`clickable ${initialSession === r.session_id ? "selected" : ""}`} onClick={() => onOpenSession(r.session_id)}>
+                  <td className="nowrap">{when(r.start_time)}</td>
+                  <td>
+                    <div className="pf-oob-root"><span className="pf-oob-root-name mono">{r.session_id}</span>{r.scenario_id && <span className="pf-oob-chip">{r.scenario_id}</span>}{r.variant && r.variant !== "v1" && <span className="pf-oob-chip amber">{r.variant}</span>}</div>
+                    {r.first_input && <div className="pf-oob-preview" title={r.first_input}>{r.first_input}</div>}
+                  </td>
+                  <td className="nowrap">{r.role || "—"}{r.user_id && <span className="dim"> · {r.user_id}</span>}</td>
+                  <td className="mono">{r.channel || "—"}</td>
+                  <td>{num(r.turns)}</td>
+                  <td title={r.tools.join(", ")}>{num(r.tool_calls)}</td>
+                  <td>{r.writes ? <span className="pf-oob-chip amber">{r.writes}</span> : <span className="dim">0</span>}</td>
+                  <td>{r.off_catalog_calls ? <span className="pf-oob-chip red">{r.off_catalog_calls}</span> : <span className="dim">0</span>}</td>
+                  <td>{num(r.llm_calls)}</td>
+                  <td className="nowrap">{ms(r.duration_ms)}</td>
+                  <td>{r.errors ? <span className="pf-oob-chip red">{r.errors} error{r.errors > 1 ? "s" : ""}</span> : <span className="pf-oob-chip green">ok</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <Empty text={err ? "" : "No sessions in range. Run a scenario from the Runtime tab."} />}
+        <div className="pf-oob-pager">
+          <span>{total ? `${offset + 1}–${Math.min(total, offset + rows.length)} of ${num(total)}` : "0 sessions"}</span>
+          <button className="pf-btn sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
+          <button className="pf-btn sm" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}>Next ›</button>
+        </div>
+      </section>
+      {initialSession && <SessionDetail sessionId={initialSession} refreshKey={refreshKey} onClose={() => onOpenSession(null)} onOpenTrace={onOpenTrace} />}
+      {pop.length > 0 && (
+        <section className="pf-panel">
+          <div className="pf-oob-panel-head"><div><h3>Population · action shape per scenario</h3><div className="pf-oob-subtle">How many distinct tool-call shapes the same scenario produced — the raw material for outcome_consistency and invocation_drift (v1 vs v2).</div></div></div>
+          <table className="pf-oob-table compact">
+            <thead><tr><th>Scenario</th><th>Variant</th><th>Sessions</th><th>Distinct shapes</th><th>Avg tools</th><th>Avg writes</th><th>Avg errors</th><th>Last run</th></tr></thead>
+            <tbody>
+              {pop.map((p) => (
+                <tr key={p.scenario_id + p.variant}>
+                  <td className="mono">{p.scenario_id}</td><td className="mono">{p.variant || "—"}</td><td>{num(p.sessions)}</td>
+                  <td>{p.distinct_shapes > 1 ? <span className="pf-oob-chip amber">{p.distinct_shapes}</span> : p.distinct_shapes}</td>
+                  <td>{p.avg_tool_calls}</td><td>{p.avg_writes}</td><td>{p.avg_errors}</td><td className="nowrap">{when(p.last_run)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </div>
+  );
+}
+
+type Step = { span: Span; turn: number; kind: "turn" | "llm" | "tool" | "answer" | "other"; title: string; text: string; mono: boolean };
+
+function stepsOf(spans: Span[]): Step[] {
+  // Order the session as an evaluator reads it: each turn's user message,
+  // then its LLM calls and tool calls in time order, then the answer.
+  const out: Step[] = [];
+  const turns = spans.filter((s) => /^turn \d+/.test(s.name)).sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const byParent = new Map<string, Span[]>();
+  for (const s of spans) byParent.set(s.parent_span_id, [...(byParent.get(s.parent_span_id) ?? []), s]);
+  const descendants = (id: string): Span[] => (byParent.get(id) ?? []).flatMap((c) => [c, ...descendants(c.span_id)]);
+  const seen = new Set<string>();
+  turns.forEach((t, i) => {
+    const n = i + 1;
+    seen.add(t.span_id);
+    out.push({ span: t, turn: n, kind: "turn", title: `user · turn ${n}`, text: t.input_value, mono: false });
+    for (const s of descendants(t.span_id).sort((a, b) => a.start_time.localeCompare(b.start_time))) {
+      seen.add(s.span_id);
+      if (s.kind === "LLM") {
+        const tc = s.attributes["llm.output_messages.0.message.tool_calls.0.tool_call.function.name"];
+        const content = s.attributes["llm.output_messages.0.message.content"];
+        out.push({ span: s, turn: n, kind: "llm", title: `${s.llm_model || "LLM"}${s.attributes["app.replay"] ? " (scripted)" : ""}`,
+          text: tc ? `→ ${tc} ${s.attributes["llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments"] || ""}` : (content || s.output_value), mono: !!tc });
+      } else if (s.kind === "TOOL") {
+        const intent = s.intent_name || s.attributes["app.intent"];
+        out.push({ span: s, turn: n, kind: "tool", title: `${s.tool_name || s.name}${intent ? ` · ${intent}` : " · OFF-CATALOG"}${s.attributes["app.side_effect"] === "write" ? " · write" : ""}`,
+          text: `args ${s.input_value}\n→ ${s.output_value.length > 400 ? s.output_value.slice(0, 400) + "…" : s.output_value}`, mono: true });
+      }
+    }
+    if (t.output_value) out.push({ span: t, turn: n, kind: "answer", title: "agent", text: t.output_value, mono: false });
+  });
+  for (const s of spans) if (!seen.has(s.span_id) && s.kind !== "CHAIN") out.push({ span: s, turn: 0, kind: "other", title: s.name, text: s.input_value || s.output_value, mono: true });
+  return out;
+}
+
+export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: { sessionId: string; refreshKey: number; onClose: () => void; onOpenTrace: (id: string) => void }) {
+  const [spans, setSpans] = useState<Span[]>([]);
+  const [err, setErr] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => { setSpans([]); setSelected(null); setErr(""); }, [sessionId]);
+  // A session handed over from the Runtime tab may not be ingested yet (the
+  // OTLP tap batches for a few seconds; the orchestrator's root arrives via the
+  // Phoenix poll). Re-fetch on every refresh tick until it lands.
+  useEffect(() => {
+    let alive = true;
+    getJSON<{ spans: Span[] }>(`/oob/sessions/${encodeURIComponent(sessionId)}`)
+      .then((d) => { if (alive) { setSpans(d.spans); setErr(""); } })
+      .catch((e) => { if (alive) setErr(/404/.test(String(e?.message || e)) ? "Not ingested yet — waiting for the OTLP tap / Phoenix poll…" : String(e?.message || e)); });
+    return () => { alive = false; };
+  }, [sessionId, refreshKey]);
+
+  const steps = useMemo(() => stepsOf(spans), [spans]);
+  const root = spans.find((s) => s.name.startsWith("session ")) ?? spans.find((s) => /^turn /.test(s.name)) ?? spans[0];
+  const sel = spans.find((s) => s.span_id === selected) ?? null;
+  const tools = spans.filter((s) => s.kind === "TOOL");
+  const traces = Array.from(new Set(spans.map((s) => s.trace_id)));
+  const checks = parseList(root?.attributes["scenario.checks"] ?? "");
+  return (
+    <section className="pf-panel pf-oob-detail">
+      <div className="pf-oob-panel-head">
+        <div>
+          <h3>session <span className="mono">{sessionId}</span></h3>
+          <div className="pf-oob-subtle mono">
+            {root?.user_role || root?.attributes["app.user.role"] || "?"} · user {root?.user_id || root?.attributes["user.id"] || "?"} · {root?.channel || root?.attributes["app.channel"] || "?"}
+            {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
+            {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turns · {tools.length} tool calls · {traces.length} trace{traces.length === 1 ? "" : "s"}
+          </div>
+          {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger (from the harness, not a verdict)</span></div>}
+        </div>
+        <div className="pf-oob-actions">
+          {traces.map((t) => <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}>trace {short(t)}</button>)}
+          <button className="pf-btn sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+      {err && <div className="pf-oob-error">{err}</div>}
+      <div className="pf-oob-detail-body">
+        <div className="pf-oob-steps">
+          {steps.map((st, i) => (
+            <div key={st.span.span_id + st.kind + i}>
+              {st.kind === "turn" && <div className="pf-oob-turn-sep">turn {st.turn}</div>}
+              <div className={`pf-oob-step ${selected === st.span.span_id ? "selected" : ""} ${st.span.status === "ERROR" && st.kind === "tool" ? "error" : ""}`} onClick={() => setSelected(st.span.span_id)}>
+                <div className="pf-oob-step-kind">
+                  <KindBadge kind={st.kind === "turn" || st.kind === "answer" ? "AGENT" : st.span.kind} />
+                  <span className="pf-oob-subtle">{ms(st.span.duration_ms)}</span>
+                </div>
+                <div className="pf-oob-step-body">
+                  <div className="pf-oob-step-title">{st.title}{st.span.status === "ERROR" && st.kind === "tool" && <span className="pf-oob-chip red">error</span>}</div>
+                  <div className={`pf-oob-step-text ${st.mono ? "mono" : ""}`}>{st.text}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+          {!steps.length && !err && <Empty text="Loading…" />}
+        </div>
+        {sel && <SpanInspector span={sel} />}
+      </div>
+    </section>
+  );
+}
+
 /* ── LLM ────────────────────────────────────────────────────────────────── */
 
 function LlmView({ data, onOpenTrace }: { data: LlmView | null; onOpenTrace: (id: string) => void }) {
@@ -672,8 +895,9 @@ function IngestionView({ status, scenarios, onSync, onClear, busy }: {
 
 /* ── root ───────────────────────────────────────────────────────────────── */
 
-export default function Observability({ active = true }: { active?: boolean }) {
+export default function Observability({ active = true, openSession = null, openTraceId = null }: { active?: boolean; openSession?: string | null; openTraceId?: string | null }) {
   const [view, setView] = useState<View>("overview");
+  const [openSess, setOpenSess] = useState<string | null>(null);
   const [since, setSince] = useState<number>(86400);
   const [project, setProject] = useState("");
   const [auto, setAuto] = useState(true);
@@ -712,6 +936,15 @@ export default function Observability({ active = true }: { active?: boolean }) {
   }, [auto, active, refresh]);
 
   const goTrace = (id: string | null) => { setOpenTrace(id); if (id) setView("traces"); };
+  const goSession = (id: string | null) => { setOpenSess(id); if (id) setView("sessions"); };
+  // The Runtime tab hands over a session id ("open in Observability").
+  useEffect(() => { if (openTraceId) { goTrace(openTraceId); refresh(); } }, [openTraceId]); // eslint-disable-line
+  useEffect(() => {
+    if (!openSession) return;
+    goSession(openSession); refresh();
+    const t = window.setTimeout(refresh, 4000); // the tap batches spans for a few seconds
+    return () => window.clearTimeout(t);
+  }, [openSession]); // eslint-disable-line
 
   const sync = async () => {
     setBusy(true);
@@ -750,6 +983,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
       {err && <div className="pf-oob-error">Observability backend: {err}</div>}
 
       {view === "overview" && <OverviewView data={overview} />}
+      {view === "sessions" && <SessionsView since={since} project={project} facets={facets} refreshKey={tick} initialSession={openSess} onOpenSession={goSession} onOpenTrace={goTrace} />}
       {view === "traces" && <TracesView since={since} project={project} facets={facets} refreshKey={tick} initialTrace={openTrace} onOpenTrace={goTrace} />}
       {view === "llm" && <LlmView data={llm} onOpenTrace={goTrace} />}
       {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}

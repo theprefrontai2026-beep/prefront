@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""LoanPro — scenario runner for the app agent.
+"""LoanPro — scenario runner (orchestrator) for the app agent.
 
 LoanPro is an UNGOVERNED deployment: one LLM agent calling the loan shop's own
-typed API over MCP, with no authorization layer. This server runs the scenario
-catalogue against it and reports what the agent did, alongside `expected` — what
-a governance layer would have done, as a description, not a second live run.
-Self-contained on purpose: the loanpro vocabulary lives here, not in the
-domain-neutral engine UI.
+typed API over MCP, with no authorization layer. This server drives the
+scenario catalogue (scenarios.py) as SESSIONS against the agent and reports
+the transcript alongside ``expected_findings`` — what Prefront's out-of-band
+checks should report for that session. Nothing is enforced here; this is the
+harness that produces the traces the checks evaluate.
 
-    ../prefront/semantic-mcp-server/.venv/bin/python demo_server.py
-    # open http://localhost:8098
+    GET  /api/scenarios            -> {families:[{id,label,scenarios:[...]}], scenarios:[...]}
+    GET  /api/run?only=F2-01,F3-08&repeat=1&variant=v1
+                                   -> [{id, session_id, trace_id, turns:[...], expected_findings, ...}]
+    GET  /api/diff                 -> alias of /api/run (kept for the UI's existing call)
+    GET  /api/agent                -> the agent's /healthz
 
-Endpoints:
-    GET /              -> the diff view (web/index.html)
-    GET /api/scenarios -> [{id, caller, role, capability, question, risk, expected}]
-    GET /api/diff      -> [{id, caller, capability, question, risk, expected, ungoverned}]
-                          (?only=L4,L8 to subset)
+One trace per session: this server opens a ``session <id>`` root span, and
+every turn it sends carries that context (W3C traceparent), so the agent's
+``turn <n>`` spans, its LLM calls and the tool server's ``tool <name>`` spans
+all nest under one root. ``repeat`` runs a scenario N times (population checks
+need many sessions); ``variant`` selects the agent's prompt/model variant.
 """
 
 from __future__ import annotations
@@ -24,21 +27,23 @@ import datetime as dt
 import decimal
 import json
 import os
+import urllib.error
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 import prefront_tracing as tracing
-from scenarios import CALLERS, get_scenarios
+from scenarios import CALLERS, FAMILIES, get_scenarios, turns_of
 
 _tracer = tracing.get_tracer("loanpro.demo")
 
 HERE = Path(__file__).parent
 PORT = int(os.environ.get("LOANPRO_DEMO_PORT", "8098"))
-# The "before" is a SEPARATE service — an app-layer agent with typed business
-# functions (no raw SQL) but no access-control policy.
-UNGOVERNED_URL = os.environ.get("UNGOVERNED_URL", "http://localhost:8097/run")
+AGENT_URL = (os.environ.get("AGENT_URL")
+             or os.environ.get("UNGOVERNED_URL", "http://localhost:8097")).removesuffix("/run").rstrip("/")
+MAX_REPEAT = int(os.environ.get("LOANPRO_MAX_REPEAT", "25"))
 
 
 def _clean(o):
@@ -53,83 +58,128 @@ def _clean(o):
     return o
 
 
-def list_scenarios(only=None) -> list[dict]:
-    """The test-case catalog (metadata only, no DB run) — lets the UI list every
-    case so the customer can run them one at a time."""
-    out = []
-    for s in get_scenarios(only):
-        c = CALLERS[s["caller"]]
-        out.append({
-            "id": s["id"], "caller": c["name"], "role": c["role"],
-            "capability": s["capability"], "question": s["question"],
-            "risk": s["risk"], "expected": s["prefront"],
-        })
-    return out
-
-
-def _ungoverned(question: str, caller: dict | None = None) -> dict:
-    """Call the app-layer agent service (typed business functions, no policy).
-    `caller` is the signed-in user the app knows — no enforcement."""
+def _agent(method: str, path: str, body: dict | None = None, timeout: int = 180) -> dict:
+    data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
-        UNGOVERNED_URL, data=json.dumps({"question": question, "caller": caller}).encode("utf-8"),
+        AGENT_URL + path, data=data, method=method,
         # tracing.inject adds the W3C traceparent header (nothing when tracing is
-        # off) so the ungoverned run joins this scenario's trace.
+        # off) so the agent's turn joins this session's trace.
         headers=tracing.inject({"Content-Type": "application/json"}))
     try:
-        with urllib.request.urlopen(req, timeout=150) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.load(resp)
-    except Exception as e:
-        return {"error": f"ungoverned service unreachable: {type(e).__name__}: {e}"}
+    except urllib.error.HTTPError as e:  # the agent answers errors as JSON
+        try:
+            return json.load(e)
+        except Exception:  # noqa: BLE001
+            return {"error": f"agent HTTP {e.code}"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"agent unreachable: {type(e).__name__}: {e}"}
 
 
-def build_diff(only=None) -> list[dict]:
-    """Run each selected test case LIVE against the app agent.
+def _public(s: dict) -> dict:
+    c = CALLERS[s["caller"]]
+    turns = turns_of(s)
+    return {
+        "id": s["id"], "family": s["family"], "family_label": FAMILIES.get(s["family"], s["family"]),
+        "title": s["title"], "checks": s.get("checks", []),
+        "caller": c["name"], "role": c["role"], "user_id": c["user_id"],
+        "channel": s.get("channel") or c["channel"],
+        "mode": s.get("mode", "llm"), "baseline": bool(s.get("baseline")),
+        "hidden": bool(s.get("hidden")), "repeat": s.get("repeat", 1),
+        "variant": s.get("variant", "v1"),
+        "turns": [t["content"] for t in turns],
+        "steps": [[f"{st['tool']}({', '.join(f'{k}={v}' for k, v in (st.get('args') or {}).items())})"
+                   for st in (t["steps"] or [])] for t in turns],
+        "risk": s.get("risk", ""), "expected_findings": s.get("expected_findings", []),
+    }
 
-    LoanPro is an UNGOVERNED deployment: one agent calling the shop's own API
-    over MCP. There is no governed counterpart, so each row carries the agent's
-    run plus what a governance layer WOULD have done (`expected`) — the contrast
-    is the risk description, not a second live run. Nothing is stored."""
+
+def list_scenarios(only=None) -> dict:
+    scns = [_public(s) for s in get_scenarios(only)]
+    fams = [{"id": fid, "label": label, "scenarios": [s for s in scns if s["family"] == fid]}
+            for fid, label in FAMILIES.items()]
+    return {"families": [f for f in fams if f["scenarios"]], "scenarios": scns}
+
+
+def run_session(s: dict, variant: str | None = None, repeat_index: int = 0) -> dict:
+    """One scenario = one session = one trace."""
+    c = CALLERS[s["caller"]]
+    channel = s.get("channel") or c["channel"]
+    variant = variant or s.get("variant") or "v1"
+    session_id = f"sess_{s['id'].lower().replace('-', '')}_{uuid.uuid4().hex[:8]}"
+    pub = _public(s)
+    turns_out: list[dict] = []
+    error = None
+    tools: list[str] = []
+    with _tracer.start_as_current_span(f"session {s['id']}") as span:
+        tracing.set_attributes(span, {
+            tracing.SPAN_KIND: "CHAIN",
+            tracing.INPUT_VALUE: (pub["turns"] or [""])[0] or "",
+            "session.id": session_id,
+            "user.id": c["user_id"],
+            "app.user.name": c["name"],
+            "app.user.role": c["role"],
+            "app.channel": channel,
+            "app.variant": variant,
+            "scenario.id": s["id"],
+            "scenario.family": s["family"],
+            "scenario.title": s["title"],
+            "scenario.checks": s.get("checks", []),
+            "scenario.mode": s.get("mode", "llm"),
+            "scenario.baseline": bool(s.get("baseline")),
+            "scenario.repeat_index": repeat_index,
+            "scenario.caller": c["name"],
+            "scenario.role": c["role"],
+        })
+        created = _agent("POST", "/sessions", {
+            "session_id": session_id, "scenario_id": s["id"], "variant": variant,
+            "channel": channel,
+            "caller": {"name": c["name"], "user_id": c["user_id"], "role": c["role"]},
+        })
+        if created.get("error"):
+            error = created["error"]
+        else:
+            for t in turns_of(s):
+                if t["steps"] is not None:
+                    rec = _agent("POST", f"/sessions/{session_id}/replay",
+                                 {"content": t["content"], "steps": t["steps"], "answer": t["answer"]})
+                else:
+                    rec = _agent("POST", f"/sessions/{session_id}/messages", {"content": t["content"]})
+                turns_out.append(rec)
+                if rec.get("error") and not rec.get("turn"):
+                    error = rec["error"]
+                    break
+        tools = [tc["tool"] for t in turns_out for tc in (t.get("tool_calls") or [])]
+        tracing.set_attributes(span, {
+            "app.tools_called": tools,
+            "scenario.turns": len(turns_out),
+            "scenario.tool_calls": len(tools),
+            tracing.OUTPUT_VALUE: (turns_out[-1].get("answer") if turns_out else None),
+        })
+        if error:
+            tracing.mark_error(span, error)
+        trace_id = _trace_id(span)
+    return _clean({**pub, "session_id": session_id, "trace_id": trace_id, "variant": variant,
+                   "repeat_index": repeat_index, "turns": turns_out,
+                   "tools_called": tools, "error": error})
+
+
+def _trace_id(span) -> str | None:
+    try:
+        ctx = span.get_span_context()
+        return format(ctx.trace_id, "032x") if ctx and ctx.trace_id else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def build_run(only=None, repeat: int | None = None, variant: str | None = None) -> list[dict]:
     out = []
     for s in get_scenarios(only):
-        c = CALLERS[s["caller"]]
-        # One span per test case, parenting the agent run — this is what roots
-        # the trace that the OOB observability pipeline ingests.
-        with _tracer.start_as_current_span(f"scenario {s['id']}") as span:
-            tracing.set_attributes(span, {
-                tracing.SPAN_KIND: "CHAIN",
-                tracing.INPUT_VALUE: s["question"],
-                "scenario.id": s["id"],
-                "scenario.caller": c["name"],
-                "scenario.role": c["role"],
-                "scenario.capability": s["capability"],
-                "scenario.risk": s["risk"],
-                "scenario.expected": s["prefront"],
-            })
-            u = _ungoverned(s["question"], {"name": c["name"], "user_id": c["user_id"]})
-            tracing.set_attributes(span, {
-                "scenario.ungoverned_tool": u.get("tool"),
-                "scenario.ungoverned_row_count": u.get("row_count"),
-            })
-        out.append({
-            "id": s["id"],
-            "caller": c["name"],
-            "role": c["role"],
-            "capability": s["capability"],
-            "question": s["question"],
-            "risk": s["risk"],
-            "expected": s["prefront"],
-            "ungoverned": {
-                "tool": u.get("tool"),
-                "args": u.get("args"),
-                "sql": u.get("sql"),
-                "columns": u.get("columns"),
-                "rows": u.get("rows"),
-                "row_count": u.get("row_count"),
-                "answer": u.get("answer"),
-                "error": u.get("error"),
-            },
-        })
-    return _clean(out)
+        n = min(MAX_REPEAT, max(1, repeat or s.get("repeat", 1)))
+        for i in range(n):
+            out.append(run_session(s, variant, i))
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -154,19 +204,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        q = parse_qs(parsed.query)
+        only = q.get("only", [None])[0]
+        only = only.split(",") if only else None
         if parsed.path in ("/", "/index.html"):
             html = (HERE / "web" / "index.html").read_text(encoding="utf-8")
             return self._send(200, html, "text/html; charset=utf-8")
         if parsed.path == "/api/scenarios":
-            only = parse_qs(parsed.query).get("only", [None])[0]
-            only = only.split(",") if only else None
             return self._send(200, json.dumps(list_scenarios(only)), "application/json")
-        if parsed.path == "/api/diff":
-            only = parse_qs(parsed.query).get("only", [None])[0]
-            only = only.split(",") if only else None
+        if parsed.path == "/api/agent":
+            return self._send(200, json.dumps(_agent("GET", "/healthz")), "application/json")
+        if parsed.path in ("/api/run", "/api/diff"):
             try:
-                diff = build_diff(only)
-                return self._send(200, json.dumps(diff), "application/json")
+                repeat = int(q.get("repeat", [0])[0] or 0) or None
+            except ValueError:
+                repeat = None
+            variant = q.get("variant", [None])[0] or None
+            try:
+                return self._send(200, json.dumps(build_run(only, repeat, variant)), "application/json")
             except Exception as e:  # surface to the page
                 return self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}),
                                   "application/json")
@@ -176,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     tracing.setup("loanpro-orchestrator")  # no-op unless a collector is configured
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"LoanPro demo → http://localhost:{PORT}  (Ctrl-C to stop)")
+    print(f"LoanPro demo → http://localhost:{PORT}  agent {AGENT_URL}  (Ctrl-C to stop)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

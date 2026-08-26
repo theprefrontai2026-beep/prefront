@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS {config.CLICKHOUSE_DB}.spans
     scenario_id     LowCardinality(String),
     tool_name       LowCardinality(String),
     version         UInt8,
+    session_id      String,
+    user_id         String,
+    user_role       LowCardinality(String),
+    channel         LowCardinality(String),
+    intent_name     LowCardinality(String),
     ingested_at     DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(version)
@@ -96,11 +101,25 @@ def reset_client() -> None:
         _client = None
 
 
+# Columns added after the table first shipped. A volume created by an older
+# build lacks them; ADD COLUMN IF NOT EXISTS is metadata-only on MergeTree
+# (instant, old rows read as ''), so it is safe to run on every start.
+_ADDED_COLUMNS = (
+    ("session_id", "String"),
+    ("user_id", "String"),
+    ("user_role", "LowCardinality(String)"),
+    ("channel", "LowCardinality(String)"),
+    ("intent_name", "LowCardinality(String)"),
+)
+
+
 def ensure_schema() -> None:
     c = client()
     c.command(f"CREATE DATABASE IF NOT EXISTS {config.CLICKHOUSE_DB}")
     c.command(DDL)
     c.command(DDL_STATE)
+    for name, typ in _ADDED_COLUMNS:
+        c.command(f"ALTER TABLE {config.CLICKHOUSE_DB}.spans ADD COLUMN IF NOT EXISTS {name} {typ}")
 
 
 def ping() -> bool:
@@ -401,9 +420,110 @@ def trace_detail(trace_id: str) -> list[dict[str, Any]]:
         SELECT trace_id, span_id, parent_span_id, name, kind, otel_kind, service, project, source,
                start_time, end_time, duration_ms, status, status_message, attributes, events,
                input_value, output_value, llm_model, llm_provider, tokens_prompt, tokens_completion,
-               tokens_total, scenario_id, tool_name
+               tokens_total, scenario_id, tool_name, session_id, user_id, user_role, channel,
+               intent_name
         FROM {T} WHERE trace_id = %(t)s ORDER BY start_time, span_id
     """, {"t": trace_id})
+
+
+# --- sessions ----------------------------------------------------------------
+# A session is every span carrying the same session.id, whatever trace it is in
+# (the bundled orchestrator makes one trace per session, but a deployment that
+# drives the agent directly produces one trace per turn — grouping by the
+# attribute covers both). This is the unit the session-level checks evaluate.
+
+def list_sessions(since_s: Optional[int], project: str, *, role: str = "", channel: str = "",
+                  scenario: str = "", user: str = "", q: str = "",
+                  limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    where, params = _since_clause(since_s, project)
+    where += " AND session_id != ''"
+    having = []
+    for key, col in (("role", "role"), ("channel", "channel"), ("scenario", "scenario_id"),
+                     ("user", "user_id")):
+        val = {"role": role, "channel": channel, "scenario": scenario, "user": user}[key]
+        if val:
+            params[key] = val
+            having.append(f"{col} = %({key})s")
+    if q:
+        params["q"] = f"%{q.lower()}%"
+        having.append("(lower(session_id) LIKE %(q)s OR lower(first_input) LIKE %(q)s OR "
+                      "lower(arrayStringConcat(tools, ' ')) LIKE %(q)s OR "
+                      "lower(arrayStringConcat(intents, ' ')) LIKE %(q)s)")
+    having_sql = ("HAVING " + " AND ".join(having)) if having else ""
+    params["limit"] = max(1, min(int(limit), 500))
+    params["offset"] = max(0, int(offset))
+    base = f"""
+        SELECT session_id,
+               min(start_time) AS t_start,
+               max(end_time)   AS t_end,
+               dateDiff('millisecond', min(start_time), max(end_time)) AS duration_ms,
+               anyIf(user_id, user_id != '')       AS user_id,
+               anyIf(user_role, user_role != '')   AS role,
+               anyIf(channel, channel != '')       AS channel,
+               anyIf(scenario_id, scenario_id != '') AS scenario_id,
+               anyIf(attributes['app.variant'], attributes['app.variant'] != '') AS variant,
+               anyIf(attributes['scenario.family'], attributes['scenario.family'] != '') AS family,
+               anyIf(attributes['scenario.checks'], attributes['scenario.checks'] != '') AS checks,
+               countIf(name LIKE 'turn %%')        AS turns,
+               countIf(kind = 'TOOL')              AS tool_calls,
+               countIf(kind = 'LLM')               AS llm_calls,
+               countIf(kind = 'TOOL' AND intent_name = '') AS off_catalog_calls,
+               countIf(kind = 'TOOL' AND attributes['app.side_effect'] = 'write') AS writes,
+               countIf(status = 'ERROR')           AS errors,
+               sum(tokens_total)                   AS tokens_total,
+               count()                             AS span_count,
+               arrayDistinct(groupArray(trace_id)) AS trace_ids,
+               groupArrayIf(tool_name, kind = 'TOOL') AS tools,
+               arrayDistinct(groupArrayIf(intent_name, intent_name != '')) AS intents,
+               argMinIf(substring(input_value, 1, 240), start_time, name LIKE 'turn %%') AS first_input,
+               argMaxIf(substring(output_value, 1, 240), start_time, name LIKE 'turn %%') AS last_output,
+               any(project) AS project
+        FROM {T} WHERE {where}
+        GROUP BY session_id {having_sql}
+    """
+    total = one(f"SELECT count() AS n FROM ({base})", params).get("n", 0)
+    data = rows(f"SELECT * EXCEPT (t_start, t_end), t_start AS start_time, t_end AS end_time "
+                f"FROM ({base}) ORDER BY t_start DESC LIMIT %(limit)s OFFSET %(offset)s", params)
+    return {"sessions": data, "total": total, "limit": params["limit"], "offset": params["offset"]}
+
+
+def session_detail(session_id: str) -> list[dict[str, Any]]:
+    """Every span of one session, in time order: turn → LLM → tool …"""
+    return rows(f"""
+        SELECT trace_id, span_id, parent_span_id, name, kind, otel_kind, service, project, source,
+               start_time, end_time, duration_ms, status, status_message, attributes, events,
+               input_value, output_value, llm_model, llm_provider, tokens_prompt, tokens_completion,
+               tokens_total, scenario_id, tool_name, session_id, user_id, user_role, channel,
+               intent_name
+        FROM {T} WHERE session_id = %(s)s ORDER BY start_time, span_id
+    """, {"s": session_id})
+
+
+def sessions_by_scenario(since_s: Optional[int], project: str) -> list[dict[str, Any]]:
+    """Population view: per scenario × variant, how consistent is the action shape?"""
+    where, params = _since_clause(since_s, project)
+    return rows(f"""
+        SELECT scenario_id, variant, count() AS sessions,
+               uniqExact(shape) AS distinct_shapes,
+               round(avg(tool_calls), 2) AS avg_tool_calls,
+               round(avg(writes), 2) AS avg_writes,
+               round(avg(errors), 2) AS avg_errors,
+               max(t_start) AS last_run
+        FROM (
+            SELECT session_id,
+                   anyIf(scenario_id, scenario_id != '') AS scenario_id,
+                   anyIf(attributes['app.variant'], attributes['app.variant'] != '') AS variant,
+                   arrayStringConcat(arraySort(groupArrayIf(tool_name, kind = 'TOOL')), ',') AS shape,
+                   countIf(kind = 'TOOL') AS tool_calls,
+                   countIf(kind = 'TOOL' AND attributes['app.side_effect'] = 'write') AS writes,
+                   countIf(status = 'ERROR') AS errors,
+                   min(start_time) AS t_start
+            FROM {T} WHERE {where} AND session_id != ''
+            GROUP BY session_id
+        )
+        WHERE scenario_id != ''
+        GROUP BY scenario_id, variant ORDER BY scenario_id, variant
+    """, params)
 
 
 def llm_view(since_s: Optional[int], project: str, limit: int = 50) -> dict[str, Any]:
@@ -456,7 +576,8 @@ def scenarios_view(since_s: Optional[int], project: str) -> list[dict[str, Any]]
     where, params = _since_clause(since_s, project)
     return rows(f"""
         SELECT scenario_id, count() AS runs,
-               anyLast(attributes['scenario.capability']) AS capability,
+               anyLast(if(attributes['scenario.title'] != '', attributes['scenario.title'],
+                          attributes['scenario.capability'])) AS capability,
                anyLast(attributes['scenario.role']) AS role,
                quantileExact(0.5)(duration_ms) AS p50_ms,
                max(start_time) AS last_run
@@ -476,6 +597,9 @@ def facets(since_s: Optional[int], project: str) -> dict[str, list[str]]:
         "scenarios": col("scenario_id"),
         "projects": [r["project"] for r in rows(f"SELECT DISTINCT project FROM {T} ORDER BY project") if r["project"]],
         "models": col("llm_model"),
+        "roles": col("user_role"),
+        "channels": col("channel"),
+        "intents": col("intent_name"),
     }
 
 

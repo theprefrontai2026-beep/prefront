@@ -464,6 +464,40 @@ def remote_context(headers: Any) -> Iterator[None]:
                 pass
 
 
+@contextlib.contextmanager
+def using_session(session_id: Optional[str] = None, user_id: Optional[str] = None,
+                  metadata: Optional[Mapping[str, Any]] = None) -> Iterator[None]:
+    """Stamp ``session.id`` / ``user.id`` / ``metadata`` on every span created in
+    the block — including the auto-instrumented LLM and MCP spans, which no call
+    site can reach directly. Hand-written spans still set them explicitly (this
+    only covers instrumentor spans); harmless no-op when openinference is absent."""
+    if not _ENABLED:
+        yield
+        return
+    try:
+        from openinference.instrumentation import using_attributes
+    except Exception:  # noqa: BLE001 - openinference is optional
+        yield
+        return
+    kwargs: dict = {}
+    if session_id:
+        kwargs["session_id"] = str(session_id)
+    if user_id is not None and user_id != "":
+        kwargs["user_id"] = str(user_id)
+    if metadata:
+        kwargs["metadata"] = {str(k): v for k, v in metadata.items() if v is not None}
+    # Enter the instrumentor's context separately from the caller's block: an
+    # exception raised by the BODY must propagate untouched (a generator that
+    # yields twice would turn it into a RuntimeError).
+    stack = contextlib.ExitStack()
+    try:
+        stack.enter_context(using_attributes(**kwargs))
+    except Exception as e:  # noqa: BLE001 - never let session tagging break the caller
+        log.debug("using_session unavailable (%s: %s)", type(e).__name__, e)
+    with stack:
+        yield
+
+
 def current_context() -> Any:
     """Snapshot the active context, for handing to a worker thread."""
     if not _ENABLED:

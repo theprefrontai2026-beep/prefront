@@ -6,17 +6,22 @@ functions in ``app_tools.py`` and runs them; there is no policy bundle, no
 identity resolution against a governance contract, no decision. A call arrives,
 the SQL runs, rows come back.
 
-Why it exists: the agent should talk to its tools the way a real deployment
-does — over MCP, across a process boundary — rather than calling Python
-functions in the same process. Everything the ungoverned demo is meant to show
-(ownership bypass, ssn/credit-score leakage, an unguarded decide_loan, the CEL
-filter gateway) is unchanged; only the transport moved.
+What it DOES do is leave a complete, honest trace of every call — that is the
+material Prefront's out-of-band checks consume. One ``tool <name>`` span per
+call carries:
 
-Caller identity is per-connection, supplied by the trusted session layer as an
-``X-LoanPro-User`` header or ``?user_id=`` — this is the app's own notion of the
-signed-in officer (it is what ``get_my_applications`` scopes to), and the agent
-cannot choose it. It is NOT an authorization boundary: every other tool ignores
-it, which is precisely the governance gap being demonstrated.
+    session.id / user.id / app.user.role / app.channel   who, from where, in which session
+    app.intent / app.side_effect                        the approved-catalog entry (or none)
+    input.value                                          the arguments, verbatim
+    output.value                                         the result INCLUDING rows (capped)
+    app.sql / app.row_count                              what actually ran, how much came back
+    app.trust = untrusted                                on borrower-supplied content
+    status = ERROR                                       when the tool failed
+
+Caller identity, role, channel and session id are per-connection, supplied by
+the trusted session layer as ``X-LoanPro-*`` headers — the agent's LLM cannot
+choose them. They are NOT an authorization boundary: only ``get_my_applications``
+pays any attention to the user, which is precisely the gap being demonstrated.
 
     GET  /sse        MCP event stream
     POST /messages/  MCP client→server
@@ -39,11 +44,30 @@ import prefront_tracing as tracing
 _tracer = tracing.get_tracer("loanpro.app_mcp")
 
 PORT = int(os.environ.get("LOANPRO_APP_MCP_PORT", "8102"))
+# Rows kept in the tool span's output.value. The full (MAX_ROWS-capped) result
+# still goes back to the agent; the trace copy is what the evaluator reads.
+TRACE_ROWS = int(os.environ.get("LOANPRO_TRACE_ROWS", "20"))
 
-# The signed-in user for the active MCP connection (set from the header in the
-# SSE handler, read by the tool call). A ContextVar because one server process
-# serves many concurrent connections.
-user_var: contextvars.ContextVar[int | None] = contextvars.ContextVar("loanpro_user", default=None)
+# Per-connection context (set from the headers in the SSE handler, read by the
+# tool call). ContextVars because one server process serves many connections.
+conn_var: contextvars.ContextVar[dict] = contextvars.ContextVar("loanpro_conn", default={})
+
+
+def _conn_from_headers(query: Any, headers: Any) -> dict:
+    def get(name: str, qkey: str | None = None) -> str | None:
+        v = (query.get(qkey) if qkey else None) or headers.get(name)
+        return v if v not in (None, "") else None
+    raw_uid = get("x-loanpro-user", "user_id")
+    try:
+        uid = int(raw_uid) if raw_uid is not None else None
+    except (TypeError, ValueError):
+        uid = None
+    return {
+        "user_id": uid,
+        "role": get("x-loanpro-role"),
+        "channel": get("x-loanpro-channel"),
+        "session_id": get("x-loanpro-session"),
+    }
 
 
 def build_server() -> Any:
@@ -66,15 +90,25 @@ def build_server() -> Any:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict | None) -> list[Any]:
         args = arguments or {}
-        uid = user_var.get()
+        conn = conn_var.get()
+        uid = conn.get("user_id")
+        meta = app_tools.INTENTS.get(name)
         # One span per tool call. The MCP instrumentation carries the agent's
-        # context across the transport, so this nests under the agent's span.
+        # context across the transport, so this nests under the agent's turn.
         with _tracer.start_as_current_span(f"tool {name}") as span:
             tracing.set_attributes(span, {
                 tracing.SPAN_KIND: "TOOL",
                 "tool.name": name,
                 "app.tool": name,
+                "app.intent": (meta or {}).get("intent") or "",
+                "app.side_effect": (meta or {}).get("side_effect") or "",
+                "app.catalog": "approved" if meta else "off_catalog",
+                "app.trust": (meta or {}).get("trust") or "",
+                "session.id": conn.get("session_id"),
+                "user.id": uid,
                 "app.caller.user_id": uid,
+                "app.user.role": conn.get("role"),
+                "app.channel": conn.get("channel"),
                 tracing.INPUT_VALUE: tracing.as_json(args),
                 tracing.INPUT_MIME: tracing.JSON_MIME,
             })
@@ -83,11 +117,13 @@ def build_server() -> Any:
             result["sql"] = sql
             if isinstance(result.get("rows"), list) and len(result["rows"]) > app_tools.MAX_ROWS:
                 result["rows"] = result["rows"][: app_tools.MAX_ROWS]
+            traced = {k: (v[:TRACE_ROWS] if k == "rows" and isinstance(v, list) else v)
+                      for k, v in result.items()}
             tracing.set_attributes(span, {
                 "app.sql": sql,
                 "app.row_count": result.get("row_count"),
-                tracing.OUTPUT_VALUE: tracing.as_json(
-                    {k: v for k, v in result.items() if k != "rows"}),
+                "app.columns": result.get("columns"),
+                tracing.OUTPUT_VALUE: tracing.as_json(traced),
                 tracing.OUTPUT_MIME: tracing.JSON_MIME,
             })
             if result.get("error"):
@@ -110,17 +146,12 @@ def main() -> int:
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request):
-        raw = request.query_params.get("user_id") or request.headers.get("x-loanpro-user")
-        try:
-            uid = int(raw) if raw not in (None, "") else None
-        except (TypeError, ValueError):
-            uid = None
-        token = user_var.set(uid)
+        token = conn_var.set(_conn_from_headers(request.query_params, request.headers))
         try:
             async with sse.connect_sse(request.scope, request.receive, request._send) as (read, write):
                 await server.run(read, write, server.create_initialization_options())
         finally:
-            user_var.reset(token)
+            conn_var.reset(token)
         # Starlette >=1.0 does `await (await endpoint(request))(scope, receive, send)`,
         # so an endpoint that returns None dies with
         #   TypeError: 'NoneType' object is not callable
@@ -133,7 +164,8 @@ def main() -> int:
         return JSONResponse({
             "status": "ok",
             "governed": False,
-            "tools": [t["function"]["name"] for t in app_tools.TOOLS],
+            "tools": app_tools.tool_names(),
+            "off_catalog": [n for n, m in app_tools.INTENTS.items() if m is None],
         })
 
     app = Starlette(routes=[
@@ -141,8 +173,7 @@ def main() -> int:
         Mount("/messages/", app=sse.handle_post_message),
         Route("/healthz", endpoint=healthz),
     ])
-    print(f"LoanPro app API (MCP, ungoverned) on :{PORT}  tools="
-          f"{[t['function']['name'] for t in app_tools.TOOLS]}", flush=True)
+    print(f"LoanPro app API (MCP, ungoverned) on :{PORT}  tools={app_tools.tool_names()}", flush=True)
     uvicorn.run(app, host="0.0.0.0", port=PORT)
     return 0
 

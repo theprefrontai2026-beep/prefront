@@ -161,8 +161,8 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   bizgraph: { title: "Business Graph",   desc: "Domain model showing business entities, processes, roles, and applied governance policies." },
   policy:   { title: "Policy Studio",   desc: "Upload policy documents, extract rules, and manage the review pipeline." },
   semantic: { title: "Semantic Layer",  desc: "Build governed SQL interfaces from approved rules and your schema." },
-  runtime:  { title: "Runtime",         desc: "Run each test case against the live agent — and, where the demo is governed, against the Prefront runtime beside it." },
-  oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: the app agent's runs, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
+  runtime:  { title: "Runtime",         desc: "Run the sessions against the live agent. For an ungoverned demo each session is built to trigger one of Prefront's out-of-band checks; a governed demo shows the Prefront runtime beside the agent." },
+  oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: sessions, the app agent's turns, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
 };
 
 function ReviewerDot({ name, color, focused }: { name: string; color: string; focused: boolean }) {
@@ -180,6 +180,9 @@ function ReviewerDot({ name, color, focused }: { name: string; color: string; fo
 export default function App() {
   const { demo, demoId, openChooser } = useDemo();
   const [tab, setTab] = useState("dashboard");
+  // "open in Observability" from the Runtime tab: the session id to show.
+  const [oobSession, setOobSession] = useState<string | null>(null);
+  const [oobTrace, setOobTrace] = useState<string | null>(null);
   const [graphMounted, setGraphMounted] = useState(false);
   const [bizGraphMounted, setBizGraphMounted] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
@@ -399,10 +402,10 @@ export default function App() {
             />
           </div>
           <div className={tab === "runtime" ? "" : "tab-hidden"}>
-            <RuntimeDiff demo={demo} />
+            <RuntimeDiff demo={demo} onOpenSession={(id) => { setOobSession(id); setTab("oob"); }} onOpenTrace={(id) => { setOobTrace(id); setTab("oob"); }} />
           </div>
           <div className={tab === "oob" ? "" : "tab-hidden"}>
-            <Observability active={tab === "oob"} />
+            <Observability active={tab === "oob"} openSession={oobSession} openTraceId={oobTrace} />
           </div>
         </div>
       </div>

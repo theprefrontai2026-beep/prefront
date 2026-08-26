@@ -42,6 +42,11 @@ export interface DemoConfig {
 
   // Fallback approver shown when a decision routes for approval but names no role.
   defaultApprover: string;
+
+  // How the Runtime tab drives this demo: a governed-vs-ungoverned "diff" per
+  // request, or a session runner (multi-turn sessions + the OOB checks each
+  // one should trigger) for an ungoverned deployment.
+  runner: "diff" | "sessions";
 }
 
 export const DEMOS: DemoConfig[] = [
@@ -69,16 +74,17 @@ export const DEMOS: DemoConfig[] = [
       "Bank Manager": "Manager Console",
     },
     defaultApprover: "Bank Manager",
+    runner: "diff",
   },
   {
     id: "loanpro",
     label: "LoanPro",
     tagline: "Loan origination — applicants, credit, decisions",
     blurb:
-      "A loan-origination assistant. Watch own-application access, SSN and credit-score masking, loan-decision authority, and approval thresholds enforced deterministically.",
+      "An ungoverned loan-origination agent with tools over MCP. Its sessions are built to exhibit every failure mode Prefront's out-of-band checks detect — provenance, policy, and intent conformance.",
     accent: "#7c3aed",
     glyph: "💳",
-    scenarioCount: 8,
+    scenarioCount: 34,
     orchestratorUrl: "http://localhost:8098",
     datasourceId: "loanpro",
     ddlPlaceholder:
@@ -87,7 +93,7 @@ export const DEMOS: DemoConfig[] = [
       "dti_ratio = requested_amount / annual_income\n" +
       "loan_to_income_pct = requested_amount / annual_income * 100",
     defaultCallerScope: "officer_id = assigned_officer",
-    sensitiveFields: ["ssn", "credit_score"],
+    sensitiveFields: ["ssn", "tax_id", "bank_account_hint", "credit_score", "internal_risk_score"],
     roleAgents: {
       "Applicant": "Borrower Portal",
       "Loan Officer": "Officer Workbench",
@@ -95,6 +101,7 @@ export const DEMOS: DemoConfig[] = [
       "Branch Manager": "Manager Console",
     },
     defaultApprover: "Branch Manager",
+    runner: "sessions",
   },
 ];
 

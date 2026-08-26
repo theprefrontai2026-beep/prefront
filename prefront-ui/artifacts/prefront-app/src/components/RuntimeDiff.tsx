@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import DecisionTrace from "./DecisionTrace";
+import SessionRunner from "./SessionRunner";
 import type { DemoConfig } from "../demos";
 
 const newSessionId = () => "sess_" + Math.random().toString(36).slice(2, 10);
@@ -154,7 +155,14 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
   );
 }
 
-export default function RuntimeDiff({ demo }: { demo: DemoConfig }) {
+export default function RuntimeDiff({ demo, onOpenSession, onOpenTrace }: { demo: DemoConfig; onOpenSession?: (sessionId: string) => void; onOpenTrace?: (traceId: string) => void }) {
+  // A session-shaped demo (LoanPro) has its own runner: sessions + expected
+  // findings instead of a governed/ungoverned diff.
+  if (demo.runner === "sessions") return <SessionRunner demo={demo} onOpenSession={onOpenSession} onOpenTrace={onOpenTrace} />;
+  return <DiffRunner demo={demo} />;
+}
+
+function DiffRunner({ demo }: { demo: DemoConfig }) {
   const [server, setServer] = useState(demo.orchestratorUrl);
   const [scenarios, setScenarios] = useState<any[] | null>(null);
   const [results, setResults] = useState<Record<string, any>>({});

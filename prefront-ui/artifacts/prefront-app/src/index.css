@@ -1740,3 +1740,71 @@ select { cursor: pointer; }
 .pf-oob-io-head { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 3px; }
 .pf-oob-io pre { margin: 0; font-size: 11.5px; white-space: pre-wrap; word-break: break-word; background: var(--surface-alt); border-radius: 6px; padding: 8px 10px; max-height: 220px; overflow: auto; }
 .pf-oob-details summary { font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; margin-bottom: 6px; }
+
+/* ── Runtime: session runner (ungoverned, session-shaped demos) ─────────── */
+.pf-sess-family-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.pf-sess-family-head h3 { margin: 0; font-size: 15px; }
+.pf-sess-family, .pf-sess-check {
+  display: inline-block; font-family: var(--app-font-mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.04em; padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+  background: var(--surface-alt); color: var(--muted);
+}
+.pf-sess-family.f1, .pf-sess-check.f1 { background: var(--amber-light); color: var(--amber); }
+.pf-sess-family.f2, .pf-sess-check.f2 { background: var(--red-light);   color: var(--red); }
+.pf-sess-family.f3, .pf-sess-check.f3 { background: var(--blue-light);  color: var(--blue); }
+.pf-sess-family.pop, .pf-sess-check.pop { background: var(--teal-light); color: var(--teal); }
+.pf-sess-family.base, .pf-sess-check.base { background: var(--green-light); color: var(--green); }
+.pf-sess-turns { margin: 4px 0 6px; }
+.pf-sess-turn-preview + .pf-sess-turn-preview { border-top: 1px dashed var(--line-soft); }
+.pf-sess-steps { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 6px; }
+.pf-sess-steps code { font-size: 11px; background: var(--surface-alt); padding: 1px 6px; border-radius: 4px; color: var(--ink-soft); }
+.pf-sess-transcript { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.pf-sess-turn { border-left: 2px solid var(--line); padding-left: 10px; }
+.pf-sess-turn-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.pf-sess-turn-n { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.pf-sess-msg { font-size: 13px; color: var(--ink); margin: 4px 0; line-height: 1.45; }
+.pf-sess-msg.agent { color: var(--ink-soft); }
+.pf-sess-msg .lbl, .pf-sess-call-head .lbl {
+  font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+  margin-right: 6px; font-family: var(--app-font-mono);
+}
+.pf-sess-call { margin: 6px 0; padding: 6px 8px; background: var(--surface-alt); border-radius: 6px; }
+.pf-sess-call.error { border-left: 3px solid var(--red); }
+.pf-sess-call-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.pf-sess-call-head code { font-size: 12px; }
+.pf-sess-findings-head { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.pf-sess-finding { display: flex; gap: 8px; align-items: flex-start; margin: 5px 0; font-size: 12px; color: var(--ink-soft); line-height: 1.45; }
+.pf-sess-finding .pf-sess-check { flex: none; margin-top: 2px; }
+.pf-sess-findings-inline { margin-top: 8px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius); }
+.pf-link { border: 0; background: none; color: var(--blue); cursor: pointer; font-size: 12px; padding: 0; }
+.pf-link:hover { text-decoration: underline; }
+
+/* ── Observability: sessions ────────────────────────────────────────────── */
+.pf-oob-sessions td.dim { color: var(--muted); }
+.pf-oob-steps { display: flex; flex-direction: column; gap: 8px; }
+.pf-oob-step { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; font-size: 12px; cursor: pointer; }
+.pf-oob-step:hover { background: var(--surface-alt); }
+.pf-oob-step.selected { background: var(--blue-light); }
+.pf-oob-step.error { border-left: 3px solid var(--red); }
+.pf-oob-step-kind { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.pf-oob-step-body { min-width: 0; }
+.pf-oob-step-title { font-weight: 600; margin-bottom: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pf-oob-step-text { color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; }
+.pf-oob-step-text.mono { font-family: var(--app-font-mono); font-size: 11px; }
+.pf-oob-turn-sep { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 0; }
+
+/* ── Runtime: session fly-out panel ─────────────────────────────────────── */
+.pf-flyout-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.35); z-index: 60; }
+.pf-flyout {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); z-index: 61;
+  background: var(--surface); border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column; animation: pf-flyout-in 160ms ease-out;
+}
+@keyframes pf-flyout-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.pf-flyout-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.pf-flyout-title { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
+.pf-flyout-body { overflow: auto; padding: 12px 18px 24px; display: flex; flex-direction: column; gap: 12px; }
+.pf-flyout-body .pf-oob-detail { padding: 0; border: 0; box-shadow: none; }
+.pf-flyout-body .pf-oob-detail-body { grid-template-columns: 1fr; }
+.pf-flyout-findings { border-top: 1px dashed var(--line); padding-top: 10px; }
+.pf-flyout .pf-oob-detail > .pf-oob-panel-head .pf-oob-actions > button:last-child { display: none; } /* the fly-out has its own Close */
