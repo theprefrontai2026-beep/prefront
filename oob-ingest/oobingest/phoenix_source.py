@@ -59,6 +59,11 @@ class PhoenixPoller:
         self._pending: dict[str, list[tuple[SpanRow, int]]] = {}
         self.excluded_total = 0
         self.deferred_dropped = 0
+        self._alias: dict[str, dict[str, str]] = {}   # project -> {span name: service}
+        self._alias_polls = 0
+        # Labels that came from model.infer_service rather than a real resource
+        # attribute — safe to discard once something authoritative turns up.
+        self._guessed = {"semantic-mcp-server", "orchestrator", "ungoverned-agent", "unknown", ""}
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -189,7 +194,26 @@ class PhoenixPoller:
             log.debug("phoenix[%s]: holding %d spans with unresolved parents", project, held)
         if not batch:
             return 0
+        # Service name, best source first: the OTLP row for this exact span, then
+        # the name->service alias learned from OTLP rows, then a labelled ancestor,
+        # then model.infer_service's guess.
+        exact = ch.otlp_service_for_spans([r.span_id for r in batch])
+        by_name = self._name_alias(project)
+        guesses: dict[str, str] = {}
+        for r in batch:
+            real = exact.get(r.span_id) or by_name.get(r.name)
+            if real:
+                r.service = real
+            elif r.service in self._guessed:
+                # Set the guess aside so a labelled ancestor can win, but keep it —
+                # some spans (an orchestrator root: no OTLP tap, no parent) have
+                # nothing better, and a guess beats "unknown".
+                guesses[r.span_id] = r.service
+                r.service = ""
         inherit_services(batch, self._stored_parents(batch))
+        for r in batch:
+            if r.service in ("", "unknown") and guesses.get(r.span_id):
+                r.service = guesses[r.span_id]
         n = ch.insert_spans(batch)
         self.ingested_total += n
         if newest is not None and newest != wm:
@@ -197,6 +221,18 @@ class PhoenixPoller:
             ch.set_state(f"phoenix:{project}:watermark", newest.isoformat())
         log.info("phoenix[%s]: ingested %d spans (%d pages), watermark=%s", project, n, pages, newest)
         return n
+
+    def _name_alias(self, project: str) -> dict[str, str]:
+        """The learned name->service map, refreshed every few polls (it is small
+        and changes only when a new span name appears via the OTLP tap)."""
+        if project not in self._alias or self._alias_polls % 12 == 0:
+            try:
+                self._alias[project] = ch.otlp_service_by_name(project)
+            except Exception as e:  # noqa: BLE001 - labelling must never stop ingestion
+                log.debug("service alias lookup failed (%s: %s)", type(e).__name__, e)
+                self._alias.setdefault(project, {})
+        self._alias_polls += 1
+        return self._alias[project]
 
     def _stored_parents(self, batch: list[SpanRow]) -> dict[str, tuple[str, str]]:
         """(parent_span_id, service) for parents already in ClickHouse."""

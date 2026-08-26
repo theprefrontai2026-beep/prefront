@@ -45,6 +45,15 @@ async def _wait_for_clickhouse() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await _wait_for_clickhouse()
+    # Retro-fix any rows stored with a guessed service name before the OTLP tap
+    # supplied the real one.
+    for project in (config.PHOENIX_PROJECTS or [os.environ.get("PHOENIX_PROJECT_NAME", "prefront")]):
+        try:
+            n = await asyncio.to_thread(ch.relabel_phoenix_from_otlp, project)
+            if n:
+                log.info("relabelled %d phoenix-sourced spans in %s from OTLP names", n, project)
+        except Exception as e:  # noqa: BLE001 - never block startup on a cosmetic fix
+            log.warning("relabel skipped (%s: %s)", type(e).__name__, e)
     poller.start()
     yield
     await poller.stop()
@@ -121,12 +130,19 @@ async def status():
 
 
 @app.post("/oob/sync")
-async def sync_now():
+async def sync_now(relabel: bool = True):
     try:
         report = await poller.sync_once()
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
-    return {"ingested": report, "status": poller.status()}
+    relabelled = 0
+    if relabel:
+        for project in poller.projects or ["prefront"]:
+            try:
+                relabelled += await asyncio.to_thread(ch.relabel_phoenix_from_otlp, project)
+            except Exception as e:  # noqa: BLE001
+                log.warning("relabel skipped for %s (%s: %s)", project, type(e).__name__, e)
+    return {"ingested": report, "relabelled": relabelled, "status": poller.status()}
 
 
 @app.delete("/oob/spans")

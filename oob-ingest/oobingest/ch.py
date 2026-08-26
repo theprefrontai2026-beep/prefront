@@ -180,6 +180,74 @@ def one(sql: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     return r[0] if r else {}
 
 
+# --- service-name resolution -------------------------------------------------
+# Phoenix's REST does not expose resource attributes, so a span pulled from it
+# has no service.name and used to fall back to a GUESS (model.infer_service).
+# The OTLP tap does carry the real name, so wherever the same span — or another
+# span with the same name — arrived that way, prefer that authoritative value.
+
+def otlp_service_for_spans(span_ids: list[str]) -> dict[str, str]:
+    """Exact per-span service, for spans the OTLP tap already stored."""
+    if not span_ids:
+        return {}
+    return {
+        r["span_id"]: r["service"]
+        for r in rows(
+            f"SELECT span_id, any(service) AS service FROM {config.CLICKHOUSE_DB}.spans "
+            f"WHERE source = 'otlp' AND span_id IN %(ids)s GROUP BY span_id",
+            {"ids": span_ids},
+        )
+        if r["service"] and r["service"] != "unknown"
+    }
+
+
+def otlp_service_by_name(project: str) -> dict[str, str]:
+    """Learned alias: span name -> the service the OTLP tap reports for it.
+
+    Span names are emitted by a specific tracer in a specific service (`app agent`,
+    `tool <name>`, `ChatCompletion`), so the mapping is stable in practice. Ties
+    resolve to the most frequently seen service; a name genuinely produced by two
+    services is left out rather than guessed wrong.
+    """
+    out: dict[str, str] = {}
+    for r in rows(
+        f"SELECT name, service, count() AS n FROM {config.CLICKHOUSE_DB}.spans "
+        f"WHERE source = 'otlp' AND service != '' AND service != 'unknown' "
+        f"AND project = %(p)s GROUP BY name, service ORDER BY name, n DESC",
+        {"p": project},
+    ):
+        out.setdefault(r["name"], r["service"])
+    return out
+
+
+def relabel_phoenix_from_otlp(project: str) -> int:
+    """Retro-fix rows already stored with a guessed service name.
+
+    Only touches phoenix-sourced rows whose name has an authoritative OTLP
+    counterpart. A mutation is heavy, so this runs on demand (startup and
+    POST /oob/sync), never on every poll.
+    """
+    mapping = otlp_service_by_name(project)
+    fixed = 0
+    for name, service in mapping.items():
+        res = client().query(
+            f"SELECT count() AS n FROM {config.CLICKHOUSE_DB}.spans "
+            f"WHERE source = 'phoenix' AND project = %(p)s AND name = %(n)s AND service != %(s)s",
+            parameters={"p": project, "n": name, "s": service},
+        )
+        n = res.result_rows[0][0] if res.result_rows else 0
+        if not n:
+            continue
+        client().command(
+            f"ALTER TABLE {config.CLICKHOUSE_DB}.spans UPDATE service = %(s)s "
+            f"WHERE source = 'phoenix' AND project = %(p)s AND name = %(n)s AND service != %(s)s",
+            parameters={"p": project, "n": name, "s": service},
+            settings={"mutations_sync": 1},
+        )
+        fixed += n
+    return fixed
+
+
 def overview(since_s: Optional[int], project: str, bucket_s: int) -> dict[str, Any]:
     where, params = _since_clause(since_s, project)
     params["bucket"] = max(1, int(bucket_s))

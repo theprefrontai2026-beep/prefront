@@ -303,11 +303,27 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
 - **A "tool call" in OOB** is `kind='TOOL' OR tool_name != ''` — the inline MCP
   TOOL spans are excluded, so the app agent's own span (carrying `app.tool`) is
   what counts.
-- **Phoenix's REST omits `service.name`.** Pulled spans get `model.infer_service`
-  (keyed on *engine* vocabulary: `prefront.*` ⇒ `semantic-mcp-server`,
-  `scenario.*`/`governed agent` ⇒ `orchestrator`, `app.*` ⇒ `ungoverned-agent`)
-  and children inherit from their parent (`inherit_services`, which also looks
-  up already-stored parents). The fan-out copy carries the real name and wins.
+- **Phoenix's REST omits `service.name`; the OTLP tap carries it.** In practice a
+  span arrives through exactly ONE pipe (verified: 0 spans in the raw table have
+  rows from both), so a pulled span cannot rely on its OTLP twin — it has to be
+  labelled some other way. Resolution order, best source first:
+  1. the OTLP row for that exact `span_id`, if one is already stored
+     (`ch.otlp_service_for_spans`) — authoritative;
+  2. the **learned alias** `span name -> service`, built from OTLP rows
+     (`ch.otlp_service_by_name`): span names are emitted by one tracer in one
+     service (`app agent`, `tool <name>`, `ChatCompletion`), so this is stable;
+     ties go to the most-seen service, and a name genuinely produced by two
+     services is left out rather than guessed wrong;
+  3. a labelled ancestor (`inherit_services`, which also looks up stored parents);
+  4. `model.infer_service`'s guess, kept as a LAST resort — an orchestrator root
+     has no OTLP tap and no parent, and a guess beats `unknown`. (Clearing the
+     guess before step 3 without restoring it is exactly how `scenario <id>`
+     roots ended up as `unknown`.)
+  `ch.relabel_phoenix_from_otlp()` retro-fixes rows already stored under a guess;
+  it is a ClickHouse mutation, so it runs at startup and on `POST /oob/sync`,
+  never per poll. The scheme **self-heals**: a name with no OTLP counterpart yet
+  keeps its guess and flips to the real service on the next sync after one
+  arrives (verified live — one span relabelled the moment its sibling landed).
 - **NaN is not JSON.** An aggregate over an EMPTY set — a `quantileExact`/`avg`
   where a time bucket holds no root span, or any range with no data — returns
   NaN, and FastAPI's encoder then 500s the whole endpoint. It only shows up on
