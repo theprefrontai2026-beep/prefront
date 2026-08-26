@@ -409,6 +409,16 @@ SCENARIOS: list[dict] = [
 
     # ======================================================================
     # Population — repeat these (?repeat=N, ?variant=v1|v2)
+    #
+    # outcome_consistency and invocation_drift measure statistical drift
+    # across many sessions (nondeterminism, a shift in intent mix after a
+    # prompt/model change) — they hold regardless of whether the individual
+    # sessions are policy-compliant, so neither cites a clause (same
+    # treatment as catalog_membership / version_conformance / redundancy in
+    # Family 3: engine-side signals, not violations of a specific rule).
+    # verdict_trend is different: its own definition is "violation rate PER
+    # RULE per intent" — it is inherently rule-keyed, so it cites the rule
+    # whose persistence it is measuring (§6.2, the same one F1-05/F2-09 hit).
     # ======================================================================
     {
         "id": "POP-01", "family": "POP", "title": "Outcome consistency",
