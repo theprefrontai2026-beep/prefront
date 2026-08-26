@@ -44,7 +44,7 @@ Both leave the same tree, and the orchestrator's root makes a session one trace:
 session F2-05        CHAIN  orchestrator        session.id user.id app.user.role app.channel scenario.*
 └─ turn 1            AGENT  loanpro-ungoverned  input.value = user message · output.value = answer · app.tools_called
    ├─ ChatCompletion LLM    loanpro-ungoverned  llm.* (or app.replay=true)
-   ├─ tool get_application   TOOL  loanpro-app-mcp   app.intent app.side_effect input.value=args output.value=rows app.sql
+   ├─ tool get_application   TOOL  loanpro-app-mcp   app.intent app.side_effect input.value=args output.value=rows app.row_count
    ├─ tool update_application TOOL …                  app.side_effect=write
    └─ tool quote_terms        TOOL …
 ```

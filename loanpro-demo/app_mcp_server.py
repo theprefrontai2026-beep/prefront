@@ -14,7 +14,7 @@ call carries:
     app.intent / app.side_effect                        the approved-catalog entry (or none)
     input.value                                          the arguments, verbatim
     output.value                                         the result INCLUDING rows (capped)
-    app.sql / app.row_count                              what actually ran, how much came back
+    app.row_count / app.columns                          how much came back, which columns
     app.trust = untrusted                                on borrower-supplied content
     status = ERROR                                       when the tool failed
 
@@ -112,15 +112,16 @@ def build_server() -> Any:
                 tracing.INPUT_VALUE: tracing.as_json(args),
                 tracing.INPUT_MIME: tracing.JSON_MIME,
             })
-            sql, result = app_tools.dispatch(name, args, uid)
+            # The SQL the app ran is its own business: it is neither returned to
+            # the agent nor put on the span — a real deployment's trace would not
+            # carry it, so no check may depend on it.
+            _sql, result = app_tools.dispatch(name, args, uid)
             result = dict(result)
-            result["sql"] = sql
             if isinstance(result.get("rows"), list) and len(result["rows"]) > app_tools.MAX_ROWS:
                 result["rows"] = result["rows"][: app_tools.MAX_ROWS]
             traced = {k: (v[:TRACE_ROWS] if k == "rows" and isinstance(v, list) else v)
                       for k, v in result.items()}
             tracing.set_attributes(span, {
-                "app.sql": sql,
                 "app.row_count": result.get("row_count"),
                 "app.columns": result.get("columns"),
                 tracing.OUTPUT_VALUE: tracing.as_json(traced),

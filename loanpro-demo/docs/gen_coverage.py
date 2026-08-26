@@ -56,7 +56,7 @@ EVIDENCE = {
     "approval_gate": "`tool decide_loan` `input.value` + `requested_amount` from `tool get_application` `output.value` > INTENTS.decide_loan.approval_over with no `tool request_manager_approval` before it",
     "param_provenance": "each value in `tool *` `input.value` matched against `turn <n>` `input.value` (user), earlier `tool *` `output.value` (results), the system prompt (`llm.input_messages.0.message.content`)",
     "param_mutation": "same graph: nearest-miss origin (e.g. 30,500 vs 35,000) outside the whitelisted transforms",
-    "param_discard": "constraint tokens in `turn <n>` `input.value` (pending, personal) absent from every `tool *` `input.value` / `app.sql`",
+    "param_discard": "constraint tokens in `turn <n>` `input.value` (pending, personal) absent from every `tool *` `input.value`",
     "param_taint": "arg values matching text in `output.value` of a tool span with `app.trust=untrusted` (`fetch_document`) and not matching any user turn",
     "param_staleness": "arg value equal to a field in an earlier `tool *` `output.value` that a later span (write or re-read) superseded",
     "entity_consistency": "`applicant_id` / `loan_id` resolved through results (`tool get_application.output.value.applicant_id`) differ from the session's subject established in earlier turns",
@@ -69,7 +69,7 @@ EVIDENCE = {
     "version_conformance": "keys of `tool *` `input.value` vs the tool's published `parameters.properties` (`llm.tools.*` on the LLM span carries the schema the model saw)",
     "side_effect_class": "`app.side_effect=write` tool spans in a session whose request (first `turn` `input.value`) is a read-only intent",
     "field_scope": "`app.columns` on the tool span vs INTENTS[tool].fields",
-    "filter_scope": "`input.value` keys and `app.sql` WHERE clause vs INTENTS[tool].mandatory_filter",
+    "filter_scope": "`input.value` keys vs INTENTS[tool].mandatory_filter (the app's SQL is not in the trace — a real deployment's would not be)",
     "volume_scope": "`app.row_count` vs INTENTS[tool].volume",
     "toxic_combination": "set of `app.intent` values across all tool spans of one `session.id` vs INTENTS[*].toxic_with",
     "goal_alignment": "`app.intent` of each tool span vs the request in the session's first `turn` `input.value` (trigger descriptors)",
@@ -115,7 +115,7 @@ def main() -> None:
     p("   └─ tool <name>       TOOL   loanpro-app-mcp        session.id user.id app.user.role app.channel")
     p("                                                      tool.name app.intent app.side_effect app.catalog app.trust")
     p("                                                      input.value=args output.value=result incl. rows (≤20)")
-    p("                                                      app.sql app.row_count app.columns status=ERROR on failure")
+    p("                                                      app.row_count app.columns status=ERROR on failure")
     p("```")
     p()
     p("A deployment that drives the agent directly (no orchestrator) produces one trace per "

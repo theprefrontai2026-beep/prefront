@@ -197,7 +197,7 @@ async def _call(session: ClientSession, name: str, args: dict) -> dict:
 def _record(calls: list[dict], name: str, args: dict, res: dict) -> None:
     res = dict(res)
     calls.append({
-        "tool": name, "args": args, "sql": res.pop("sql", None),
+        "tool": name, "args": args,
         "result": _trim(res, REPLY_ROWS),
     })
 
@@ -237,8 +237,7 @@ async def _llm_turn(s: Session, turn: int, content: str) -> dict:
                     _record(calls, tc.function.name, call_args, res)
                     s.messages.append({
                         "role": "tool", "tool_call_id": tc.id,
-                        "content": json.dumps(_trim({k: v for k, v in res.items() if k != "sql"},
-                                                    MAX_ROWS), default=str),
+                        "content": json.dumps(_trim(res, MAX_ROWS), default=str),
                     })
     return {"answer": answer, "tool_calls": calls, "llm_calls": llm_calls}
 
@@ -286,8 +285,7 @@ async def _replay_turn(s: Session, turn: int, content: str | None,
                         "name": name, "arguments": json.dumps(args)}})
                     tool_results.append({
                         "role": "tool", "tool_call_id": tc_id,
-                        "content": json.dumps(_trim({k: v for k, v in res.items() if k != "sql"},
-                                                    MAX_ROWS), default=str)})
+                        "content": json.dumps(_trim(res, MAX_ROWS), default=str)})
     if tool_calls_msg:
         s.messages.append({"role": "assistant", "content": "", "tool_calls": tool_calls_msg})
         s.messages.extend(tool_results)
@@ -460,7 +458,7 @@ class Handler(BaseHTTPRequestHandler):
                     rec = run_turn(s, content=question)
                     last = (rec["tool_calls"] or [{}])[-1]
                     legacy = {"tool": last.get("tool"), "args": last.get("args", {}),
-                              "sql": last.get("sql"), "answer": rec["answer"],
+                              "answer": rec["answer"],
                               "session_id": s.id, "turn": rec, "error": rec.get("error")}
                     legacy.update(last.get("result") or {})
                     return self._send(200, legacy)

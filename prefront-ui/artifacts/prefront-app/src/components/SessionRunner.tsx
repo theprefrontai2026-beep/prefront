@@ -24,7 +24,7 @@ type Scenario = {
 };
 type Family = { id: string; label: string; scenarios: Scenario[] };
 type ToolCall = {
-  tool: string; args: Record<string, unknown>; sql: string | null;
+  tool: string; args: Record<string, unknown>;
   result: { columns?: string[]; rows?: Record<string, unknown>[]; row_count?: number; error?: string };
 };
 type Turn = {
@@ -81,7 +81,6 @@ function Transcript({ run, sensitive }: { run: Run; sensitive: Set<string> }) {
                   {typeof r.row_count === "number" && !r.error && <span className="pf-oob-chip">{r.row_count} row{r.row_count === 1 ? "" : "s"}</span>}
                   {r.error && <span className="pf-oob-chip red">ERROR</span>}
                 </div>
-                {c.sql && <pre className="pf-sql" style={{ fontSize: 11 }}>{c.sql}</pre>}
                 {r.error && <div className="pf-diff-err">{r.error}</div>}
                 {r.rows && r.rows.length > 0 && <RowsTable rows={r.rows} columns={r.columns} sensitive={sensitive} />}
               </div>
