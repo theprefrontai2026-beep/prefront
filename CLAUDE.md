@@ -93,7 +93,16 @@ Template kinds: `read` (execute SELECT, then mask restricted fields) and `preche
 
 - **A rule fires by the template *supplying its fact*, not by listing it.** A template's `required_policies` is documentation only; `evaluate()` keys off the rule's `intents` + whether its condition symbols are present in facts. A precheck that doesn't SELECT the column a rule needs ⇒ that rule goes indeterminate ⇒ fail-safe approval (or never blocks).
 - **A symbol must resolve at publish AND match a fact at runtime.** `publish-policy` binds rule symbols against columns / declared request params / metrics / `caller.*` (unresolved ⇒ rejected). At runtime the fact is keyed by the literal column name or the *request-arg name* — so a request param must be named for its column, or it binds but never fires. Over-limit-style conditions need a **simple symbol on the left** (`x > metric`), since the evaluator looks up the left side rather than evaluating an arithmetic expression there.
-- **The artifacts volume is read-only in the MCP containers.** `docker exec <mcp-server> cp …` into `/artifacts` fails silently. Edit via a RW helper: `docker run --rm -v <artifacts-vol>:/artifacts -v $PWD/file:/in:ro alpine cp /in /artifacts/<path>`.
+- **The artifacts volume is read-only in the MCP containers.** `docker exec <mcp-server> cp …` into `/artifacts` fails silently. Edit via a RW helper: `docker run --rm -v <artifacts-vol>:/artifacts -v $PWD/file:/in:ro alpine cp /in /artifacts/<path>` (volume is `prefront_artifacts`).
+- **The demo seed jobs only copy when the file is ABSENT** (`[ -f … ] || cp`), so a
+  volume created before a demo's artifacts changed keeps serving the OLD ones —
+  silently, and `docker compose up --build` will not fix it. Symptom: a scenario
+  fails with an outcome like `BLOCK (no approved intent)` because the intent it
+  needs was never published. This actually happened: C1/C2 (added in 52c7537)
+  blocked for weeks against an Aug-16 volume copy. Diagnose by comparing
+  `md5sum securebank-demo/policy/*.yaml` with the same files inside the volume;
+  fix with the RW helper above (the MCP hot-reloads on mtime — no restart), or
+  `docker compose down -v` to rebuild the volume from scratch.
 - **`mcp` must stay `<2`.** mcp 2.0 removed the low-level `Server.list_tools()` /
   `call_tool()` decorators `semanticmcp/server.py` is built on — every MCP container
   dies at startup with `AttributeError: 'Server' object has no attribute 'list_tools'`.
@@ -319,6 +328,19 @@ docker run --rm -v "$PWD":/w -w /w node:24-slim node /w/node_modules/typescript/
 docker run --rm --network host -v /tmp/pf:/work -w /work -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
   mcr.microsoft.com/playwright:v1.48.0-jammy bash -lc \
   'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i playwright@1.48.0 >/dev/null 2>&1; node drive.mjs'
+```
+
+### nginx caches upstream IPs (a 502 that is not the backend's fault)
+
+The `ui` container resolves each `proxy_pass` hostname **once at startup**, so
+recreating any backend (`docker compose up -d --build skill-builder`, …) leaves
+nginx pointing at the old container IP and every proxied call 502s — while the
+service itself answers fine on its published port. Symptom: `curl :8000/…` → 200
+but `curl :5173/design/…` → 502, and the ui log shows
+`connect() failed (111: Connection refused) … upstream: "http://<old-ip>:8000"`.
+
+```bash
+docker restart prefront-ui-1     # re-resolves every upstream
 ```
 
 ### Hot-patching running containers

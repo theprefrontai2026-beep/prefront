@@ -352,7 +352,17 @@ def llm_view(since_s: Optional[int], project: str, limit: int = 50) -> dict[str,
                tokens_prompt, tokens_completion, tokens_total,
                attributes['llm.finish_reason'] AS finish_reason,
                attributes['llm.output_messages.0.message.tool_calls.0.tool_call.function.name'] AS tool_called,
-               substring(output_value, 1, 200) AS output_preview
+               -- The OpenAI instrumentor puts the WHOLE response object in
+               -- output.value, which is unreadable as a preview. Prefer the
+               -- assistant message; fall back to the tool call it asked for.
+               substring(
+                 if(attributes['llm.output_messages.0.message.content'] != '',
+                    attributes['llm.output_messages.0.message.content'],
+                    if(tool_called != '',
+                       concat('→ ', tool_called, ' ',
+                              attributes['llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments']),
+                       output_value)),
+                 1, 240) AS output_preview
         FROM {T} WHERE {where} AND kind = 'LLM' ORDER BY start_time DESC LIMIT %(limit)s
     """, params)
     return {"by_model": by_model, "by_service": by_service, "tools_requested": tools_requested, "recent": recent}
