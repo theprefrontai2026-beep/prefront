@@ -56,8 +56,9 @@ The `db` lib is the Drizzle schema shared between the `api-server` and the Drizz
 ## Active demo: LoanPro (`loanpro-demo/`), SecureBank is profile-disabled
 
 **LoanPro is the demo a plain `docker compose up` brings up** (orchestrator :8098,
-MCP :8101, ungoverned :8097, Postgres :5435) and the UI's default (`DEFAULT_DEMO`
-in `demos.ts`, and the api-server's fallback in `routes/decisions.ts`).
+ungoverned agent :8097, app-mcp :8102, engine MCP :8101, Postgres :5435) and the
+UI's default (`DEFAULT_DEMO` in `demos.ts`, and the api-server's fallback in
+`routes/decisions.ts`).
 **SecureBank sits behind compose profile `securebank`** and does not start:
 
 ```bash
@@ -504,4 +505,4 @@ Artifacts reach the runtime by HTTP, then land in the shared `artifacts` volume 
 The `skill-builder/CLAUDE.md` is a **sub-CLAUDE.md** with skill-builder-specific architecture notes (pipeline vs API dual-path, domain-pack layering, downstream contract). Read it when working on that service.
 
 ## Where to read more
-`design.md` (positioning + the LLM-at-design-time-only principle), `prefront_semantic_layer_design.md` (the semantic-contract artifact set), and each service's `README.md`. For a concrete end-to-end domain + a before/after governed-vs-ungoverned harness, see the in-repo `securebank-demo/` example.
+`design.md` (positioning + the LLM-at-design-time-only principle), `prefront_semantic_layer_design.md` (the semantic-contract artifact set), and each service's `README.md`. For a concrete end-to-end domain + a before/after governed-vs-ungoverned harness, see the in-repo `securebank-demo/` example. `prefront-check-families.md` defines the out-of-band evaluation engine's three check families (learnt rules, integrity invariants, intent conformance) that the evaluator being designed against LoanPro will implement; `loanpro-demo/docs/check-coverage.md` is the generated contract mapping each check to a session and the trace evidence that detects it.
