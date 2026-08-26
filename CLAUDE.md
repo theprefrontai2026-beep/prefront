@@ -31,7 +31,7 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | semantic-layer-api | `semantic-layer/semanticlayer` | 8010 | design-time API: schema introspect/parse, build/publish templates, bind+publish policy |
 | semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call. Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`). **Behind compose profile `mcp` — `docker compose up` does NOT start it**; the demos run their own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
-| ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080 |
+| ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/pii/` → :8020 |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
@@ -116,7 +116,7 @@ A retail-banking example that ships **inside this repo** and runs from the same 
 
 - **`securebank-ungoverned`** (`:8096`) — real LLM + raw SQL (`gpt-4o-mini` with a `run_sql` tool); reads can leak, writes are attempted but rolled back via read-only transaction
 - **`securebank-mcp`** (`:8100`) — same `semantic-mcp-server` image pointed at `securebank-demo/policy/`; identity resolved per-connection from `X-Prefront-Act-As`
-- **`securebank-orchestrator`** (`:8095`) — fans each scenario out to both, merges results; this is what the UI **Runtime tab** points at
+- **`securebank-orchestrator`** (`:8095`) — fans each scenario out to both, merges results; the UI **Runtime tab** points at whichever demo is selected (LoanPro `:8098` by default now — see `demos.ts`), so reaching this one means selecting SecureBank in the switcher AND starting its profile
 
 The curated artifacts (`securebank-demo/policy/query_templates.yaml`, `policy.yaml`) are committed. The `securebank-seed` one-shot service copies them into the shared `artifacts` volume at startup. `OpenAI API key` required for the ungoverned and orchestrator services.
 
@@ -218,7 +218,9 @@ with the OpenAI calls nested under each agent.
   context agent → MCP server; `demo_server._ungoverned` injects a W3C
   `traceparent` header and `ungoverned_server.do_POST` re-attaches it, so both
   sides of a before/after scenario share a root.
-- **`governed_agent.py` must import `mcp.client.sse` as a MODULE.** The
+- **Any MCP client must import `mcp.client.sse` as a MODULE** (applies to
+  `securebank-demo/governed_agent.py` and `loanpro-demo/ungoverned_server.py`;
+  LoanPro's `governed_agent.py` is deleted). The
   instrumentor patches `mcp.client.sse.sse_client`; a `from … import sse_client`
   binds the original before `setup()` runs, so the governed call silently starts
   a NEW trace instead of continuing the agent's. Symptom: `govern <intent>`
@@ -357,11 +359,14 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
 cp .env.example .env          # add an LLM key (e.g. NVIDIA_API_KEY=…; GROQ_API_KEY also supported)
 docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:8010
                               # oob-ingest:8110  clickhouse:8123  phoenix:6006
-                              # securebank: mcp:8100 orchestrator:8095 ungoverned:8096
+                              # LoanPro (the active demo): orchestrator:8098
+                              #   agent:8097  app-mcp:8102  postgres:5435
 docker compose down           # add -v to wipe the artifacts/data volumes
 
-# The engine MCP (:8090) is behind a profile and is NOT started by the line above:
-docker compose --profile mcp up -d semantic-mcp-server
+# NOT started by the line above — both are behind profiles:
+docker compose --profile securebank up -d                 # the SecureBank demo
+docker compose --profile securebank --profile mcp up -d   # + the engine MCP (:8090),
+                                                          #   which is wired to SecureBank's DB
 ```
 
 ### Per-package dev (uv-managed venv per package)
