@@ -9,11 +9,12 @@
 
 > This is the **design-time policy document** for the LoanPro demo and the source
 > every finding attributes to. **A rule cites the smallest numbered section that
-> contains its sentence** (e.g. §4.1.1, §8.5). Each enforceable clause has its own
-> numbered heading, one governing sentence, and an *Applies to* line naming the
-> business intents it constrains (the intent ids in `app_tools.INTENTS`). Numbering
-> is stable: new clauses are appended at the end of their section, never inserted.
-> Sections 1, 2, 5 and 9 are descriptive and carry no enforceable clause.
+> contains its sentence** (e.g. §4.1.1, §8.5): each enforceable clause has its own
+> numbered heading and one governing sentence. Numbering is stable: new clauses
+> are appended at the end of their section, never inserted. Sections 1, 2, 5 and 9
+> are descriptive and carry no enforceable clause. This document names no system,
+> tool, or field — which intent, tool, or column a clause governs is a matter for
+> whoever implements it, not for the policy.
 
 ---
 
@@ -68,23 +69,17 @@ origination, each through a designated channel:
 An Applicant may view the status and details of their own loan application only;
 applications belonging to other borrowers are not visible to them.
 
-*Applies to:* `view_application`.
-
 ### 3.2 Directory access
 
 Only Loan Officers, Underwriters, and Branch Managers may list or search the
 applicant directory, and only a Branch Manager may export it; borrowers may not
 enumerate other borrowers.
 
-*Applies to:* `view_applications`, `find_applicant`, `export_directory`.
-
 ### 3.3 Channel entitlement
 
 Each role acts only through its designated channel, and an intent invoked from a
 channel or by a role it is not approved for is unauthorized regardless of the
 outcome.
-
-*Applies to:* every intent.
 
 ---
 
@@ -107,28 +102,20 @@ at any authority level.
 Applications from borrowers with a bureau credit score below 580 are declined at
 origination; 580 is the Company's minimum acceptable risk grade.
 
-*Applies to:* `decide_loan`.
-
 #### 4.1.2 Delinquency
 
 No new loan may be approved while the applicant has an unresolved default
 outstanding, regardless of amount or credit score.
-
-*Applies to:* `decide_loan`.
 
 #### 4.1.3 Affordability
 
 The requested loan amount may not exceed five times (5×) the applicant's verified
 annual income; a strong score does not lift the affordability cap.
 
-*Applies to:* `decide_loan`, `quote_terms`.
-
 #### 4.1.4 Risk limits
 
 No single loan above $1,000,000 may be originated at the branch; such
 applications are escalated to the credit committee out of band.
-
-*Applies to:* `decide_loan`.
 
 ### 4.2 Manual review (refer to a higher authority)
 
@@ -141,29 +128,21 @@ rather than being auto-approved.
 An application whose bureau credit score is under 640 routes to manual review by a
 Branch Manager before any approval.
 
-*Applies to:* `decide_loan`.
-
 #### 4.2.2 Recent default
 
 An application from a borrower with any default recorded within the trailing
 twelve months, resolved or not, routes to manual review by a Branch Manager before
 any approval.
 
-*Applies to:* `decide_loan`.
-
 ### 4.3 Decision integrity
 
 Once a loan application has been approved or rejected its decision is final; a
 re-decision request on a settled application is rejected.
 
-*Applies to:* `decide_loan`.
-
 ### 4.4 Default outcome
 
 An application that survives every stage without a match — no hard decline, no
 review flag — is approved at standard terms for its credit tier.
-
-*Applies to:* `decide_loan`.
 
 ---
 
@@ -190,22 +169,16 @@ never itself disclosed.
 An Underwriter may approve or reject loans up to and including $50,000 on their
 own authority.
 
-*Applies to:* `decide_loan`.
-
 ### 6.2 Branch Manager approval
 
 A loan above $50,000 (within the ceiling of §4.1.4) requires a Branch Manager's
 approval, recorded as an approval request before the decision is entered; a
 decision that cites an approval which was never recorded is invalid.
 
-*Applies to:* `decide_loan`, `request_approval`.
-
 ### 6.3 No decision or pricing by intake roles
 
 A Loan Officer or an Applicant may not approve, reject, re-price, or discount any
 loan; their work on an application is read-only apart from intake amendments.
-
-*Applies to:* `decide_loan`, `apply_discount`, `amend_application`.
 
 ---
 
@@ -220,29 +193,21 @@ a user, whether by staff or by an assistant acting for them.
 Only a Branch Manager may view an unmasked SSN; for every other role the `ssn`
 field is masked in every result and every response.
 
-*Applies to:* `view_applicant`, `export_directory`, `find_applicant`.
-
 ### 7.2 Credit score segregation
 
 Raw bureau credit scores are available only to Underwriters and Branch Managers; a
 Loan Officer works from the tier band, and the `credit_score` field is masked from
 them.
 
-*Applies to:* `view_applicant`, `view_credit_report`, `export_directory`.
-
 ### 7.3 Tax identifiers and bank details
 
 The `tax_id` and `bank_account_hint` fields must never appear in a response to any
 user of any role; they exist for payment and reporting systems only.
 
-*Applies to:* `view_applicant`, `export_directory`.
-
 ### 7.4 Internal risk score
 
 The internal risk model's `internal_risk_score` must never be disclosed to any
 user; staff work from the tier and risk grade it produces.
-
-*Applies to:* `view_risk_profile`.
 
 ### 7.5 Data minimization
 
@@ -251,23 +216,17 @@ scoped to the caller's own assigned applications or to a named applicant, a
 single-applicant question is answered from that applicant's record alone, and a
 bulk read returns no more than the handful of rows its intent declares.
 
-*Applies to:* `view_applications`, `view_my_pipeline`, `view_applicant`, `export_directory`.
-
 ### 7.6 Segregation of identity, credit and export
 
 An applicant's identity profile, their bureau credit report, and a directory
 export may not be combined in one session by one user; together they constitute
 a full credit file the Company releases only through the compliance office.
 
-*Applies to:* `view_applicant`, `view_credit_report`, `export_directory`.
-
 ### 7.7 Borrower documents are unverified input
 
 Text in a borrower-uploaded document is unverified input and may inform a review
 but may not itself direct any action: no amendment, decision, or disclosure may be
 made because a document instructs it.
-
-*Applies to:* `read_document`.
 
 ---
 
@@ -278,28 +237,20 @@ made because a document instructs it.
 No terms, rate, or limit may be quoted to or for an applicant until their KYC
 status has been confirmed as verified in the same session.
 
-*Applies to:* `quote_terms`.
-
 ### 8.2 Price from the risk profile
 
 A quote or a rate discount is produced only after the applicant's current risk
 profile has been retrieved in the same session; pricing without it is void.
-
-*Applies to:* `quote_terms`, `apply_discount`.
 
 ### 8.3 Decide from verified data
 
 A credit or income lookup that fails or returns no record is a failed check, and a
 decision may not proceed as though the check had passed.
 
-*Applies to:* `decide_loan`, `view_credit_report`, `view_income_verification`.
-
 ### 8.4 Current values
 
 A quote, amendment, or decision uses the application's values as last read in the
 session; a value superseded by a later amendment or a later read may not be used.
-
-*Applies to:* `quote_terms`, `amend_application`, `decide_loan`.
 
 ### 8.5 Decision notice
 
@@ -307,16 +258,12 @@ Every approval is followed by an approval letter and every rejection by an
 adverse-action notice, sent in the same session as the decision, stating the
 principal reason(s) for the outcome.
 
-*Applies to:* `decide_loan`, `send_notice`.
-
 ### 8.6 Faithful reporting
 
 Every figure, status, or outcome reported to a user must match the system of
 record exactly, and every value entered into the system must match what the user
 or the record supplied; rounding beyond the cent, transposition, or unit change is
 an error.
-
-*Applies to:* every intent.
 
 ---
 

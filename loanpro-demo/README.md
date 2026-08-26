@@ -103,12 +103,14 @@ seed is never mutated — the agent still sees its mutation succeed.
 
 ## The policy (`docs/credit_policy.md`) — what every finding attributes to
 
-`docs/credit_policy.md` is the source of truth. Every enforceable clause has its
-own **numbered heading** (§4.1.1 credit floor, §6.2 manager approval, §7.4 never
-disclose the internal risk score, §8.1 verify KYC before quoting, §8.5 decision
-notice, …) and one governing sentence, plus an *Applies to* line naming the
-intents it constrains. A rule cites the smallest numbered section containing its
-sentence; numbering is append-only. The ids are wired on the demo side only:
+`docs/credit_policy.md` is the source of truth, and it reads like a real business
+policy document — it names no system, tool, or field, only roles, thresholds and
+obligations. Every enforceable clause has its own **numbered heading** (§4.1.1
+credit floor, §6.2 manager approval, §7.4 never disclose the internal risk score,
+§8.1 verify KYC before quoting, §8.5 decision notice, …) and one governing
+sentence; a rule cites the smallest numbered section containing its sentence, and
+numbering is append-only. Which tool or intent a clause governs is decided
+entirely on the demo side, independent of the document:
 
 * `app_tools.INTENTS[tool]["policy"]` — the sections each approved intent rests on
   (the reviewer's cross-reference, not enforcement);
