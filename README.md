@@ -103,8 +103,19 @@ What is instrumented, and how:
     traceparent header on its plain-HTTP call to the ungoverned service, so both
     sides of a before/after scenario sit under one root span.
 
+Prefront itself is kept OUT of the traced path by the bundled deployment: every
+Prefront-owned service (skill-builder, semantic-layer-api, semantic-mcp-server,
+securebank-mcp, loanpro-mcp) runs with PREFRONT_TRACING=0, and the demo
+orchestrators run with PREFRONT_TRACE_EXCLUDE_SPANS="governed agent", which drops
+the governed branch (its LLM and MCP calls included) while keeping the
+`scenario <id>` root that the app agent's spans hang off. This is trace-only:
+the governed agent still runs and Prefront still enforces every decision. Set
+PREFRONT_ENGINE_TRACING=1 to trace Prefront while debugging it.
+
 Config (all optional — the defaults are already wired in docker-compose.yaml):
   PREFRONT_TRACING=0            turn tracing off in every service
+  PREFRONT_ENGINE_TRACING=1     trace Prefront's own services (off by default)
+  PREFRONT_TRACE_EXCLUDE_SPANS= span-name prefixes never recorded, subtree included
   PHOENIX_COLLECTOR_ENDPOINT=   point at your own OTLP/HTTP collector
   PHOENIX_PROJECT_NAME=         group traces under a different project
   OPENINFERENCE_HIDE_INPUTS / _HIDE_OUTPUTS=true
@@ -139,7 +150,11 @@ request path — a dead ClickHouse changes no decision). Two sources feed it:
          omits; when both arrive the table (ReplacingMergeTree keyed by
          trace_id+span_id) keeps the push copy.
 
-Out-of-band means out-of-band: nothing INLINE is ingested. On the pull path,
+Out-of-band means out-of-band: nothing INLINE is ingested — and with the
+deployment defaults above, nothing inline is even produced, so Phoenix holds only
+harness + app-agent spans. The ingest-side filter is the second line of defence
+(for a Phoenix shared with other deployments, or when engine tracing is on).
+On the pull path,
 oob-ingest drops any span carrying a `prefront.*` attribute or named
 `governed agent` / `govern <intent>` — AND that span's whole subtree, so the
 governed agent's own LLM calls go with it. Configurable per deployment with

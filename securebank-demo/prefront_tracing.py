@@ -24,6 +24,11 @@ Configuration (env):
     PREFRONT_TRACE_FANOUT        comma-separated extra OTLP/HTTP endpoints that receive
                                  a copy of every span (out-of-band tap, e.g. the
                                  oob-ingest service); failures never affect Phoenix
+    PREFRONT_TRACE_EXCLUDE_SPANS comma-separated span-name prefixes that are NOT
+                                 recorded — the span AND everything it calls
+                                 (auto-instrumented LLM/MCP spans included), so a
+                                 deployment can keep one code path out of tracing
+                                 entirely without turning tracing off process-wide
     PREFRONT_TRACE_MAX_VALUE     truncate input/output attribute values (default 4000)
 
 Note on data: the OpenInference OpenAI instrumentor records prompts and
@@ -65,6 +70,16 @@ _INSTRUMENTORS = (
 _ENABLED: Optional[bool] = None      # tri-state: None => setup() has not run
 _PROVIDER: Any = None
 _FALSEY = ("0", "off", "false", "no", "")
+
+
+def excluded_spans() -> list[str]:
+    """Span-name prefixes this deployment does not record (with their subtrees)."""
+    raw = os.environ.get("PREFRONT_TRACE_EXCLUDE_SPANS", "")
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _is_excluded(name: str) -> bool:
+    return any(name.startswith(p) for p in excluded_spans())
 
 
 def collector_endpoint() -> str:
@@ -118,9 +133,9 @@ def setup(service_name: str, *, project_name: Optional[str] = None) -> bool:
     _ENABLED = True
     fanout = _fan_out(_PROVIDER)
     applied = _auto_instrument(_PROVIDER)
-    log.info("tracing on: service=%s project=%s endpoint=%s fanout=%s instrumentors=%s",
+    log.info("tracing on: service=%s project=%s endpoint=%s fanout=%s instrumentors=%s excluded=%s",
              service_name, project, endpoint, ", ".join(fanout) or "none",
-             ", ".join(applied) or "none")
+             ", ".join(applied) or "none", ", ".join(excluded_spans()) or "none")
     return True
 
 
@@ -240,6 +255,48 @@ class _NoopSpan:
         return False
 
 
+@contextlib.contextmanager
+def _suppressed() -> Iterator[None]:
+    """Suppress ALL span creation for the duration of the block.
+
+    Skipping only the excluded span itself would not be enough: the OpenAI and
+    MCP auto-instrumentors would still emit their own spans, which would then
+    re-parent onto whatever span is above it. Both the OTel and OpenInference
+    suppression flags are set, so every instrumentor that honours either one
+    stays quiet — that is what makes the exclusion cover the whole subtree.
+    """
+    stack = contextlib.ExitStack()
+    try:
+        from opentelemetry import context as otel_context
+
+        keys = []
+        try:
+            from opentelemetry.instrumentation.utils import _SUPPRESS_INSTRUMENTATION_KEY
+
+            keys.append(_SUPPRESS_INSTRUMENTATION_KEY)
+        except Exception:  # noqa: BLE001 - opentelemetry-instrumentation is optional
+            pass
+        keys.append("suppress_instrumentation")  # older/plain key some libs check
+
+        ctx = otel_context.get_current()
+        for key in keys:
+            ctx = otel_context.set_value(key, True, ctx)
+        token = otel_context.attach(ctx)
+        stack.callback(otel_context.detach, token)
+    except Exception as e:  # noqa: BLE001 - suppression is best-effort, never fatal
+        log.debug("span suppression unavailable (%s: %s)", type(e).__name__, e)
+    try:
+        from openinference.instrumentation import suppress_tracing
+
+        stack.enter_context(suppress_tracing())
+    except Exception:  # noqa: BLE001 - openinference is optional
+        pass
+    try:
+        yield
+    finally:
+        stack.close()
+
+
 class _Tracer:
     """Lazy tracer: resolves on first span so module-level handles are safe.
 
@@ -253,6 +310,10 @@ class _Tracer:
 
     @contextlib.contextmanager
     def start_as_current_span(self, name: str, **kwargs: Any) -> Iterator[Any]:
+        if _is_excluded(name):
+            with _suppressed():
+                yield _NoopSpan()
+            return
         tracer = self._resolve()
         if tracer is None:
             yield _NoopSpan()

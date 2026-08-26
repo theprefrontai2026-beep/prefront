@@ -151,6 +151,27 @@ with the OpenAI calls nested under each agent.
 - Caveat: the OpenAI instrumentor records prompts/completions, which for the
   demos include governed rows — `OPENINFERENCE_HIDE_INPUTS/_HIDE_OUTPUTS=true`
   suppress them.
+- **Prefront is kept out of the traced path by DEPLOYMENT, not just by filtering.**
+  In the bundled compose: every Prefront-owned service (`skill-builder`,
+  `semantic-layer-api`, `semantic-mcp-server`, `securebank-mcp`, `loanpro-mcp`)
+  sets `PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}` — so no `govern <intent>`
+  span is ever created — and the demo orchestrators set
+  `PREFRONT_TRACE_EXCLUDE_SPANS=governed agent`, which drops the governed branch
+  while keeping their `scenario <id>` root. Set `PREFRONT_ENGINE_TRACING=1` to
+  trace Prefront itself while debugging it.
+- **`PREFRONT_TRACE_EXCLUDE_SPANS` suppresses a whole SUBTREE, not one span.**
+  `_Tracer.start_as_current_span` returns a no-op span for a matching name *and*
+  attaches OTel's `_SUPPRESS_INSTRUMENTATION_KEY` + OpenInference's
+  `suppress_tracing()` for the block — otherwise the auto-instrumented LLM/MCP
+  calls underneath would still emit spans and re-parent onto the span above.
+  Suppression is trace-only: the governed agent still calls the LLM, Prefront
+  still enforces, the decision is unchanged (verified: B1 `allowed` with a
+  synthesized answer, B4 `BLOCK (policy)`).
+- **YAML merge keys are first-wins.** `x-tracing-env` already defines
+  `PREFRONT_TRACING`, so an anchor listed *after* it in `<<: [...]` is silently
+  ignored — which is why the per-service override is written as an explicit key
+  (explicit always beats merged). Check with
+  `docker compose config | grep -A2 PREFRONT_TRACING`.
 - The Node `api-server` is **not** instrumented (no LLM calls); the `@opentelemetry`
   entries in `build.mjs` / `pnpm-lock.yaml` are unrelated (an esbuild external and
   a drizzle optional peer dep).
@@ -171,7 +192,11 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   anchor), never on Prefront's own services. Both normalize to `model.SpanRow`; `version` = 1
   (phoenix) / 2 (otlp), so the ReplacingMergeTree resolves a span seen twice to
   the OTLP copy. **Reads must use `FINAL`** (`ch.T`) or duplicates leak into counts.
-- **Nothing inline is ingested.** `model.is_inline` + `model.drop_inline` drop any
+- **Nothing inline is ingested — and since the deployment change, nothing inline is
+  even produced.** The compose defaults above mean Phoenix itself now holds only
+  harness + app-agent spans; the ingest-side filter below is the second line of
+  defence (it still matters for a Phoenix shared with other deployments, or if
+  someone flips `PREFRONT_ENGINE_TRACING=1`). `model.is_inline` + `model.drop_inline` drop any
   span with a `prefront.*` attribute or named `governed agent` / `govern …`
   **plus its whole subtree** (the governed agent's LLM calls are inline too), on
   both the pull and push paths. `drop_inline` carries a persistent `dropped` set

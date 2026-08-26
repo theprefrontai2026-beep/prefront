@@ -49,6 +49,30 @@ x-tracing-env: &tracing-env
 x-oob-tap-env: &oob-tap-env
   PREFRONT_TRACE_FANOUT: ${PREFRONT_TRACE_FANOUT:-http://oob-ingest:8110}
 
+# ---------------------------------------------------------------------------
+# Keeping Prefront OUT of the inline observability path, at the DEPLOYMENT layer.
+#
+# The OOB ingester also filters inline spans (OOB_EXCLUDE_*), but filtering is a
+# second line of defence — these two anchors stop the spans from ever being
+# created, so nothing inline reaches Phoenix either.
+#
+#   PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}
+#                   set DIRECTLY on Prefront's own services (engine runtime +
+#                   design-time), so they do not trace at all. It is written out
+#                   per service rather than merged from an anchor because YAML
+#                   merge keys resolve first-wins: *tracing-env already defines
+#                   PREFRONT_TRACING, so an anchor listed after it would be
+#                   silently ignored. An explicit key always wins. Set
+#                   PREFRONT_ENGINE_TRACING=1 to trace Prefront while debugging it.
+#   *no-governed-span-env
+#                   The demo orchestrators DO trace (their `scenario <id>` span
+#                   is the app-agent trace's root), but the governed branch —
+#                   the `governed agent` span and every LLM/MCP call under it —
+#                   is not recorded.
+# ---------------------------------------------------------------------------
+x-no-governed-span-env: &no-governed-span-env
+  PREFRONT_TRACE_EXCLUDE_SPANS: ${PREFRONT_TRACE_EXCLUDE_SPANS:-governed agent}
+
 services:
   # ---- skill builder's own design-time database ----------------------------
   # Dedicated Postgres for design-time state (documents, clauses, candidate
@@ -161,6 +185,7 @@ services:
     build: ./skill-builder
     environment:
       <<: [*llm-env, *tracing-env]
+      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront service: not traced
       # SQLAlchemy DSN for the design-time Postgres above (psycopg3 driver).
       SKILLBUILDER_DB: postgresql+psycopg://skillbuilder:skillbuilder@skill-builder-db:5432/skillbuilder
       SKILLBUILDER_REGISTRY: /data/skills
@@ -188,7 +213,8 @@ services:
     build: ./semantic-layer
     command: ["api", "--host", "0.0.0.0", "--port", "8010"]
     environment:
-      <<: [*llm-env, *tracing-env]   # the /build endpoint runs the LLM semantic mapper
+      <<: [*llm-env, *tracing-env]                     # /build runs the LLM semantic mapper
+      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront service: not traced
       SEMANTICLAYER_DB: /data/semanticlayer.db   # persisted templates + approvals
       # Legacy single-publish-path default; per-datasource publishing writes to
       # /artifacts/<datasource_id>/ under this path's grandparent (/artifacts).
@@ -219,6 +245,7 @@ services:
       - --port=8090
     environment:
       <<: *tracing-env
+      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront runtime: not traced
       DATABASE_URL: ${DATABASE_URL:-postgresql://securebank:securebank@securebank-db:5432/securebank}
       # Governance: enforce the published policy bundle. IDENTITY_QUERY is the
       # DEPLOYMENT's mapping of an identity to caller attributes — it aliases the
@@ -346,6 +373,7 @@ services:
     command: ["--templates=/artifacts/securebank-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
     environment:
       <<: *tracing-env
+      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront runtime: not traced
       IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       DATABASE_URL: postgresql://securebank:securebank@securebank-db:5432/securebank
       POLICY_PATH: /artifacts/securebank-demo/policy.yaml
@@ -361,7 +389,7 @@ services:
     build: ./securebank-demo
     command: ["python", "demo_server.py"]
     environment:
-      <<: [*llm-env, *tracing-env]       # OPENAI_API_KEY
+      <<: [*llm-env, *tracing-env, *no-governed-span-env]   # OPENAI_API_KEY
       GOVERNED_MODEL: gpt-4o-mini
       UNGOVERNED_URL: http://securebank-ungoverned:8096/run
       GOVERNED_MCP_URL: http://securebank-mcp:8090/sse
@@ -432,6 +460,7 @@ services:
     command: ["--templates=/artifacts/loanpro-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
     environment:
       <<: *tracing-env
+      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront runtime: not traced
       IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       DATABASE_URL: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
       POLICY_PATH: /artifacts/loanpro-demo/policy.yaml
@@ -447,7 +476,7 @@ services:
     build: ./loanpro-demo
     command: ["python", "demo_server.py"]
     environment:
-      <<: [*llm-env, *tracing-env]       # OPENAI_API_KEY
+      <<: [*llm-env, *tracing-env, *no-governed-span-env]   # OPENAI_API_KEY
       GOVERNED_MODEL: gpt-4o-mini
       LOANPRO_DEMO_PORT: "8098"
       UNGOVERNED_URL: http://loanpro-ungoverned:8097/run
