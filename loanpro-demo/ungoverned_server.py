@@ -155,7 +155,7 @@ def _run_agent(question: str, caller: dict | None = None) -> dict:
     for attempt in range(ATTEMPTS):
         try:
             return asyncio.run(_run_async(question, caller))
-        except Exception as e:  # noqa: BLE001 - transport flake; retry
+        except Exception as e:  # noqa: BLE001 - retry: a tool result is data, so a raise is transport
             last_err = e
     return {"tool": None, "args": {}, "sql": None, "answer": None,
             "error": f"mcp call failed after {ATTEMPTS} attempts: {_describe(last_err)}"}

@@ -376,7 +376,7 @@ def serve_http(dsn: str, templates_path: str | Path, *, host: str = "0.0.0.0", p
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
     from starlette.requests import Request
-    from starlette.responses import JSONResponse
+    from starlette.responses import JSONResponse, Response
     from starlette.routing import Mount, Route
 
     server, registry, policy = build_server(dsn, templates_path)
@@ -395,6 +395,15 @@ def serve_http(dsn: str, templates_path: str | Path, *, host: str = "0.0.0.0", p
         finally:
             if token is not None:
                 identity_mod.act_as_var.reset(token)
+        # Starlette >=1.0 does `await (await endpoint(request))(scope, receive, send)`,
+        # so an endpoint returning None dies with
+        #     TypeError: 'NoneType' object is not callable
+        # AFTER the stream has been served — which is what the "MCP SSE transport
+        # flakes on slower calls" symptom actually was: the exchange completes, then
+        # the connection tears down dirty and the client sees an ExceptionGroup.
+        # connect_sse has already hijacked the connection, so this response is never
+        # sent; it exists only to satisfy the router.
+        return Response()
 
     async def healthz(_request: Request):
         registry.refresh()

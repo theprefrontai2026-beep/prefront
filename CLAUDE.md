@@ -101,8 +101,8 @@ contrast a fixed two-pass shape — one LLM call picking exactly ONE tool via
   `TypeError: 'NoneType' object is not callable` *after* the stream is served,
   surfacing at the client as an opaque `ExceptionGroup`. Return a bare
   `Response()` after `connect_sse` (it is never sent; the connection is already
-  hijacked). This is almost certainly the same fault as the "MCP SSE transport
-  flakes" note above.
+  hijacked). This was the same fault as the old "MCP SSE transport flakes" note —
+  now fixed in both MCP servers; see that entry.
 - **Use `AsyncOpenAI` inside an MCP session.** The agent loop runs in the MCP
   client's task group; `await`-ing the SYNC `OpenAI` client's `create()` raises
   inside the group and surfaces only as `ExceptionGroup: unhandled errors in a
@@ -124,7 +124,7 @@ The test-case catalog lives in `securebank-demo/scenarios.py` (`CALLERS` dict + 
 
 - **Two scenario classes**: **B1–B9** show governance as a **gate** (block/mask/approval/scope). **C1–C2** ("Decision Support: grounded context") show the complement — governance as **enablement**: the outcome is **ALLOW on both sides**, but Prefront's intent returns a *curated context bundle* (C1 `view_account_activity` = an aggregate velocity signal over `transactions`; C2 `view_loan_context` = a `loans`+`users` join + SQL-derived `score_margin`) so the governed agent's answer is grounded/correct where the raw-SQL agent is shallow or ungrounded. The contrast is the two `model` answer lines, not the verdict; `RuntimeDiff.tsx` renders a `pf-grounded-note` caption on any ALLOW-vs-ALLOW row. These need no engine change — just published artifacts + a raw `get_loan` parity tool on the ungoverned side.
 
-- **Concurrency flake + fix**: each governed run opens its own MCP SSE connection; firing all scenarios at once (the UI's old "Run all") flakes the transport (the `NoneType`/`ExceptionGroup` issue below), surfacing as random `ERROR` scenarios. Governance itself is fine — all pass sequentially. Mitigations in place: `governed_agent.run_agent` **retries** the MCP interaction (a governed decision returns a dict and never raises, so a raised exception is always a transient transport failure; reads/prechecks are idempotent), and `RuntimeDiff.runAll` **caps concurrency** to a small worker pool.
+- **Concurrency flake — root cause found and fixed.** Each governed run opens its own MCP SSE connection, and firing all scenarios at once (the UI's old "Run all") produced random `ERROR` scenarios. That was the SSE endpoint returning `None` (see the entry below), not concurrency or governance; it is fixed in `semanticmcp/server.py`. The mitigations remain as defence in depth and are still reasonable: `governed_agent.run_agent` **retries** the MCP interaction (a governed decision returns a dict and never raises, so a raised exception is always a transport failure; reads/prechecks are idempotent), and `RuntimeDiff.runAll` **caps concurrency** to a small worker pool.
 
 ## Dashboard & decision-trace persistence (`api-server` + `decision_*` tables)
 
@@ -166,7 +166,22 @@ Template kinds: `read` (execute SELECT, then mask restricted fields) and `preche
   The requirement was an unpinned `mcp>=1.0`, so ANY cache-invalidating rebuild
   floated it to 2.x. Now pinned `mcp>=1.24,<2` in `semantic-mcp-server/`,
   `semantic-layer/`, the root `requirements.txt`, and both demo Dockerfiles.
-- **The MCP SSE transport can flake on slower calls** (a precheck + multi-rule eval), dying with `TypeError: 'NoneType' object is not callable` server-side → an `ExceptionGroup`/`JSONDecodeError` at the client. It's a transport issue, not a governance bug. Verify decisions deterministically by calling the pipeline **in-process** inside a server container: load `PolicyRegistry` + `resolve_caller` + a precheck row and call `govern(...)`.
+- **~~The MCP SSE transport can flake on slower calls~~ — FIXED; it was never the
+  transport.** An SSE endpoint that returns `None` (the shape every MCP example
+  uses) dies under Starlette >=1.0 with `TypeError: 'NoneType' object is not
+  callable`, because the router does
+  `await (await endpoint(request))(scope, receive, send)`. It fires at teardown,
+  *after* the exchange has completed, so the tool call appears to work and the
+  client intermittently sees a dead connection / `ExceptionGroup` /
+  `JSONDecodeError` instead. Both MCP servers now `return Response()` after
+  `connect_sse` (`semanticmcp/server.py`, `loanpro-demo/app_mcp_server.py`);
+  reproduced on the unmodified engine image and verified fixed — server-side
+  errors went 1 → 0 over repeated connections. **Any new SSE endpoint must
+  return a Response.**
+- Because that error surfaced only at the client as an `ExceptionGroup`, two
+  unrelated faults used to look identical to it. Before blaming the transport,
+  flatten the group to its leaves (`_describe()` in
+  `loanpro-demo/ungoverned_server.py`) and read the MCP server's own log.
 
 ## Tracing (Arize Phoenix)
 
