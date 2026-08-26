@@ -29,7 +29,7 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 |---|---|---|---|
 | skill-builder | `skill-builder/skillbuilder` | 8000 | **policy compiler**: policy doc → clauses → LLM candidate rules → human review → published skill (FastAPI) |
 | semantic-layer-api | `semantic-layer/semanticlayer` | 8010 | design-time API: schema introspect/parse, build/publish templates, bind+publish policy |
-| semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call. Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`) |
+| semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call. Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`). **Behind compose profile `mcp` — `docker compose up` does NOT start it**; the demos run their own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080 |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
@@ -250,8 +250,13 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
 ### Run the bundled stack
 ```bash
 cp .env.example .env          # add an LLM key (e.g. NVIDIA_API_KEY=…; GROQ_API_KEY also supported)
-docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:8010  mcp:8090
+docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:8010
+                              # oob-ingest:8110  clickhouse:8123  phoenix:6006
+                              # securebank: mcp:8100 orchestrator:8095 ungoverned:8096
 docker compose down           # add -v to wipe the artifacts/data volumes
+
+# The engine MCP (:8090) is behind a profile and is NOT started by the line above:
+docker compose --profile mcp up -d semantic-mcp-server
 ```
 
 ### Per-package dev (uv-managed venv per package)
@@ -263,19 +268,28 @@ CLIs:
 - `python -m skillbuilder build …`
 - `python -m semanticlayer build|validate|serve|api`
 - `python -m semanticmcp doctor|call <tool> --args '{...}'|serve [--http --port 8090]`
+- `python -m oobingest` (serves on `OOB_PORT`, default 8110; needs a reachable `CLICKHOUSE_URL`)
 
 `semanticmcp doctor` checks DB + template loading; `semanticmcp call …` runs one tool with no MCP client.
 
-### Tests
-```bash
-# skill-builder (from skill-builder/)
-VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
-VIRTUAL_ENV=.venv .venv/bin/python -m pytest tests/test_validation.py -q
-VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q -k executability
+Python services have no build step, so the fastest edit loop is `docker cp` +
+restart (see "Hot-patching running containers"); `oob-ingest` and the demos are
+small enough that `docker compose up -d --build <service>` is usually simpler.
 
-# semantic-layer (from semantic-layer/)
+### Tests
+
+**`skill-builder/tests/` is the only test suite in the repo.** `semantic-layer`,
+`semantic-mcp-server`, `oob-ingest`, and the demos have none — verify changes to
+those by running the service (see the per-service verification recipes below and
+in the OOB section), not by looking for a pytest run that does not exist.
+(`semantic-layer/tests` was deleted in 9cf773a; pytest is not even in its
+requirements.)
+
+```bash
+# from skill-builder/
 VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
-VIRTUAL_ENV=.venv .venv/bin/python -m pytest tests/test_dbt_import.py -q
+VIRTUAL_ENV=.venv .venv/bin/python -m pytest tests/test_validation.py -q   # one file
+VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q -k executability           # one pattern
 ```
 
 ### UI dev
