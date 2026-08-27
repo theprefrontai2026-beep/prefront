@@ -92,6 +92,7 @@ def _public(s: dict) -> dict:
         "steps": [[f"{st['tool']}({', '.join(f'{k}={v}' for k, v in (st.get('args') or {}).items())})"
                    for st in (t["steps"] or [])] for t in turns],
         "risk": s.get("risk", ""), "expected_findings": s.get("expected_findings", []),
+        "demonstrates": s.get("demonstrates", []),
     }
 
 

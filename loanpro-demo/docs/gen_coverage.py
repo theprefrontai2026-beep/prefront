@@ -42,6 +42,9 @@ def check_policy_refs(sections: dict[str, str]) -> None:
     for s in SCENARIOS:
         for f in s.get("expected_findings", []):
             bad += [f"{s['id']}/{f['check']} -> §{r}" for r in _refs(f.get("policy")) if r not in sections]
+        for c in s.get("demonstrates", []):
+            bad += [f"{s['id']}/demonstrates -> §{c['policy']}" if c["policy"] not in sections else None]
+    bad = [b for b in bad if b]
     for name, m in app_tools.INTENTS.items():
         bad += [f"INTENTS[{name}] -> §{r}" for r in _refs((m or {}).get("policy")) if r not in sections]
     if bad:
@@ -176,10 +179,10 @@ def main() -> None:
       "it and the intents whose approved envelope cites it (`app_tools.INTENTS[*].policy`). "
       "A section with nothing against it is descriptive prose or a clause no session exercises yet.")
     p()
-    p("| § | Clause | Checks | Sessions | Intents citing it |")
-    p("|---|---|---|---|---|")
+    p("| § | Clause | Checks | Violating sessions | Complying baselines | Intents citing it |")
+    p("|---|---|---|---|---|---|")
     for sec, title in sections.items():
-        chks, sess = set(), []
+        chks, sess, comply = set(), [], []
         for s in SCENARIOS:
             hit = False
             for f in s.get("expected_findings", []):
@@ -187,9 +190,12 @@ def main() -> None:
                     chks.add(f["check"]); hit = True
             if hit:
                 sess.append(s["id"])
+            if any(c["policy"] == sec for c in s.get("demonstrates", [])):
+                comply.append(s["id"])
         intents = sorted(m["intent"] for m in app_tools.INTENTS.values() if m and sec in _refs(m.get("policy")))
         p(f"| {sec} | {title} | {', '.join(f'`{c}`' for c in sorted(chks)) or '—'} | "
-          f"{', '.join(f'`{i}`' for i in sess) or '—'} | {', '.join(f'`{i}`' for i in intents) or '—'} |")
+          f"{', '.join(f'`{i}`' for i in sess) or '—'} | {', '.join(f'`{i}`' for i in comply) or '—'} | "
+          f"{', '.join(f'`{i}`' for i in intents) or '—'} |")
     p()
     p("## Sessions")
     p()
@@ -206,9 +212,14 @@ def main() -> None:
             steps = s.get("steps") or [st for ts in s.get("steps_by_turn", []) for st in ts]
             step_s = " → ".join(f"{st['tool']}({', '.join(f'{k}={v}' for k, v in st.get('args', {}).items())})" for st in steps)
             what = turns + (f"<br>**steps:** {step_s}" if step_s else "")
-            findings = "<br>".join(
-                f"`{f['check']}`" + (f" §{f['policy']}" if f.get("policy") else "") + f" — {f['evidence']}"
-                for f in s.get("expected_findings", [])) or "none (baseline)"
+            if s.get("expected_findings"):
+                findings = "<br>".join(
+                    f"`{f['check']}`" + (f" §{f['policy']}" if f.get("policy") else "") + f" — {f['evidence']}"
+                    for f in s["expected_findings"])
+            elif s.get("demonstrates"):
+                findings = "<br>".join(f"complies §{c['policy']} — {c['note']}" for c in s["demonstrates"])
+            else:
+                findings = "none (baseline)"
             mode = "scripted" if s.get("mode") == "replay" else "LLM"
             if s.get("repeat", 1) > 1:
                 mode += f" ×{s['repeat']}"
