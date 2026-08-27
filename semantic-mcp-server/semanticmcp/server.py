@@ -18,9 +18,11 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
+import anyio
 import yaml
 
 from . import db
+from . import mcp_proxy
 from . import prefront_tracing as tracing
 from .governance import PolicyRegistry, govern, resolve_caller
 from .governance import identity as identity_mod
@@ -68,32 +70,50 @@ def load_templates(path: str | Path, *, governed: bool = False) -> dict[str, dic
     tools: dict[str, dict] = {}
     for template_id, t in templates.items():
         sql = t.get("sql", "")
+        kind = t.get("kind", "read")
         name = t.get("intent_id") or template_id
         param_types = {p["name"]: p.get("type", "string") for p in t.get("parameters", [])}
         props, required, injected = {}, [], []
-        for ph in db.placeholders(sql):
-            if governed and ph.startswith("caller_"):
-                injected.append(ph)
-                continue
-            props[ph] = {"type": _json_type(param_types.get(ph, "string")),
-                         "description": _describe_param(ph)}
-            required.append(ph)
-        # A write intent's request params (write_action) are governance facts —
-        # the agent must supply them even though the precheck SQL doesn't bind them.
-        for wp in (t.get("write_action") or {}).get("params", []) or []:
-            if wp in props or wp.startswith("caller_"):
-                continue
-            props[wp] = {"type": _json_type(param_types.get(wp, _guess_type(wp))),
-                         "description": f"Requested value for {wp} (evaluated by policy)."}
-            required.append(wp)
+        if kind == "mcp":
+            # No SQL to scan placeholders out of — the declared parameters (built
+            # 1:1 from the upstream tool's own input schema at design time) ARE
+            # the input schema.
+            for p in t.get("parameters", []):
+                pname = p["name"]
+                if governed and pname.startswith("caller_"):
+                    injected.append(pname)
+                    continue
+                props[pname] = {"type": _json_type(param_types.get(pname, "string")),
+                                "description": _describe_param(pname)}
+                if p.get("required", True):
+                    required.append(pname)
+        else:
+            for ph in db.placeholders(sql):
+                if governed and ph.startswith("caller_"):
+                    injected.append(ph)
+                    continue
+                props[ph] = {"type": _json_type(param_types.get(ph, "string")),
+                             "description": _describe_param(ph)}
+                required.append(ph)
+            # A write intent's request params (write_action) are governance facts —
+            # the agent must supply them even though the precheck SQL doesn't bind them.
+            for wp in (t.get("write_action") or {}).get("params", []) or []:
+                if wp in props or wp.startswith("caller_"):
+                    continue
+                props[wp] = {"type": _json_type(param_types.get(wp, _guess_type(wp))),
+                             "description": f"Requested value for {wp} (evaluated by policy)."}
+                required.append(wp)
         tools[name] = {
             "name": name,
             "template_id": template_id,
             "intent": t.get("intent_id") or name,
-            "kind": t.get("kind", "read"),
+            "kind": kind,
             "write_action": t.get("write_action"),
             "description": _describe(t, name),
             "sql": sql,
+            "mcp_server_url": t.get("mcp_server_url", ""),
+            "mcp_tool_name": t.get("mcp_tool_name", ""),
+            "mcp_destructive": bool(t.get("mcp_destructive", False)),
             "injected": injected,
             "input_schema": {
                 "type": "object",
@@ -105,19 +125,26 @@ def load_templates(path: str | Path, *, governed: bool = False) -> dict[str, dic
     return tools
 
 
-def call_template(tools: dict[str, dict], dsn: str, name: str, args: dict[str, Any]) -> dict:
+async def call_template(tools: dict[str, dict], dsn: str, name: str, args: dict[str, Any]) -> dict:
     """Ungoverned execution (legacy POC path + the `call` CLI debug command)."""
     tool = tools.get(name)
     if tool is None:
         return {"error": f"unknown tool {name!r}"}
+    if tool.get("kind") == "mcp":
+        try:
+            result = await mcp_proxy.call_upstream_tool(
+                tool["mcp_server_url"], tool["mcp_tool_name"], args or {})
+            return {"tool": name, "result": result}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}", "tool": name}
     try:
-        rows = db.run_select(dsn, tool["sql"], args or {})
+        rows = await anyio.to_thread.run_sync(db.run_select, dsn, tool["sql"], args or {})
         return {"tool": name, "row_count": len(rows), "rows": rows, "sql": tool["sql"]}
     except Exception as e:  # surface DB / bind errors to the caller, don't crash
         return {"error": f"{type(e).__name__}: {e}", "tool": name, "sql": tool["sql"]}
 
 
-def call_governed(
+async def call_governed(
     tool: dict,
     dsn: str,
     args: dict[str, Any],
@@ -133,7 +160,7 @@ def call_governed(
     """
     with _tracer.start_as_current_span(f"govern {tool.get('intent') or tool['name']}") as span:
         try:
-            result = _call_governed(tool, dsn, args, policy)
+            result = await _call_governed(tool, dsn, args, policy)
         except Exception as e:  # a crash here is a real error, unlike a block
             tracing.record_error(span, e)
             raise
@@ -186,7 +213,7 @@ def _annotate_decision(span: Any, tool: dict, args: dict[str, Any], result: dict
         tracing.mark_error(span, "; ".join(result.get("reasons") or []) or execution_status)
 
 
-def _call_governed(
+async def _call_governed(
     tool: dict,
     dsn: str,
     args: dict[str, Any],
@@ -224,11 +251,13 @@ def _call_governed(
     for ph in tool.get("injected", []):
         binds[ph] = caller.attrs.get(ph[len("caller_"):])
 
-    # Facts row: a write intent's own template IS its precheck SELECT.
+    # Facts row: a write intent's own template IS its precheck SELECT. An 'mcp'
+    # tool has no local SELECT to gather one from — facts are args + caller only,
+    # exactly like a plain 'read' tool already gets when it has no row either.
     row = None
     if kind == "precheck":
         try:
-            rows = db.run_select(dsn, tool["sql"], binds)
+            rows = await anyio.to_thread.run_sync(db.run_select, dsn, tool["sql"], binds)
         except Exception as e:
             return respond(Decision(status="blocked",
                                     reasons=[f"precheck_failed: {type(e).__name__}: {e}"]),
@@ -242,9 +271,11 @@ def _call_governed(
             )
         row = rows[0]
 
-    # Fields the write would touch (param names + their mapped columns + caller-
-    # filled columns, all from the DECLARATIVE spec) — restricted-field rules
-    # only block a write that actually touches them.
+    # Fields the write would touch — restricted-field rules only block a write
+    # that actually touches them. For SQL: param names + their mapped columns +
+    # caller-filled columns, from the declarative write_action. For a destructive
+    # MCP tool there's no column-level mapping to a local schema, so the tool's
+    # own declared parameter names are the closest equivalent signal.
     write_fields: set[str] = set()
     if kind == "precheck":
         wa = tool.get("write_action") or {}
@@ -253,8 +284,15 @@ def _call_governed(
             write_fields.add(p)
             write_fields.add(cmap.get(p, p))
         write_fields.update((wa.get("caller_columns") or {}).keys())
+    elif kind == "mcp" and tool.get("mcp_destructive"):
+        write_fields.update(tool.get("input_schema", {}).get("properties", {}).keys())
 
-    ctx = govern(intent=intent, kind=kind, args=args or {}, caller=caller,
+    # decide.aggregate() only special-cases the literal "read" kind (masking vs.
+    # blocking a restricted field); a destructive mcp call should get the same
+    # "does it touch a restricted field" treatment as a SQL write, so it is
+    # governed under any kind string other than "read".
+    govern_kind = "read" if kind != "mcp" or not tool.get("mcp_destructive") else "mcp_write"
+    ctx = govern(intent=intent, kind=govern_kind, args=args or {}, caller=caller,
                  row=row, bundle=bundle, write_fields=write_fields)
     decision = ctx.decision
 
@@ -278,14 +316,33 @@ def _call_governed(
                            row_count=len(out_rows), rows=out_rows,
                            masked_fields=masked or None)
         write_params = {k: args.get(k) for k in (wa.get("params") or []) if k in (args or {})}
-        result = writes_mod.perform(dsn, wa, write_params, caller)
+        result = await anyio.to_thread.run_sync(writes_mod.perform, dsn, wa, write_params, caller)
         status = {"executed": "write_executed", "dry_run": "write_dry_run"}.get(
             result.get("mode"), "write_error")
         return respond(decision, status, write=result)
 
+    if kind == "mcp":
+        if tool.get("mcp_destructive") and not writes_mod.enabled():
+            return respond(decision, "write_dry_run",
+                           write={"mode": "dry_run", "would_call": tool["mcp_tool_name"],
+                                  "args": args, "note": "set ENABLE_WRITES=1 to execute"})
+        try:
+            result = await mcp_proxy.call_upstream_tool(
+                tool["mcp_server_url"], tool["mcp_tool_name"], args or {},
+            )
+        except Exception as e:
+            return respond(Decision(status="blocked",
+                                    reasons=[f"upstream_call_failed: {type(e).__name__}: {e}"]),
+                           "error")
+        masked = [m.split(".")[-1] for m in decision.mask_fields]
+        if masked:
+            result = _mask_result(result, masked)
+        status = "write_executed" if tool.get("mcp_destructive") else "executed"
+        return respond(decision, status, result=result, masked_fields=masked or None)
+
     # Read: execute, then mask restricted fields for this caller.
     try:
-        rows = db.run_select(dsn, tool["sql"], binds)
+        rows = await anyio.to_thread.run_sync(db.run_select, dsn, tool["sql"], binds)
     except Exception as e:
         return respond(Decision(status="blocked",
                                 reasons=[f"query_failed: {type(e).__name__}: {e}"]),
@@ -335,9 +392,9 @@ def build_server(dsn: str, templates_path: str | Path):
         if tool is None:
             result: dict = {"error": f"unknown tool {name!r}"}
         elif policy.active or identity_mod.configured():
-            result = call_governed(tool, dsn, arguments or {}, policy)
+            result = await call_governed(tool, dsn, arguments or {}, policy)
         else:
-            result = call_template(registry.tools, dsn, name, arguments or {})
+            result = await call_template(registry.tools, dsn, name, arguments or {})
         return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
 
     return server, registry, policy
@@ -424,6 +481,26 @@ def serve_http(dsn: str, templates_path: str | Path, *, host: str = "0.0.0.0", p
 
 
 # --- small presentation helpers ----------------------------------------------
+
+
+def _mask_result(result: Any, masked: list[str]) -> Any:
+    """Redact restricted field names from an upstream MCP tool's JSON result.
+
+    Unlike a SQL row (a flat dict of known columns), a tool's result shape is
+    arbitrary — best-effort: mask top-level dict keys, and within any top-level
+    list of dicts (the common "rows"-style shape), never elsewhere."""
+    if isinstance(result, dict):
+        out = {}
+        for k, v in result.items():
+            if k in masked:
+                out[k] = "***"
+            elif isinstance(v, list):
+                out[k] = [{ik: ("***" if ik in masked else iv) for ik, iv in item.items()}
+                          if isinstance(item, dict) else item for item in v]
+            else:
+                out[k] = v
+        return out
+    return result
 
 
 def _json_type(t: str) -> str:

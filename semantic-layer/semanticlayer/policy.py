@@ -211,6 +211,28 @@ def policy_hints_from_extracted(extracted: dict, skill: dict | None = None) -> P
     )
 
 
+def policy_hints_from_mcp(catalog, datasource_id: str) -> PolicyHints:
+    """Default governance for an MCP-sourced catalog: one intent per learned tool,
+    with a decision derived from the tool's own annotation, not guessed —
+    ``approval_required`` when the tool is marked (or assumed) destructive, else
+    ``allow``. These are CANDIDATES: a human tightens ``allowed_roles`` / adds
+    real conditions in Policy Studio, same as any other suggested rule; pass
+    curated rules as the caller's own ``rules`` to override this default."""
+    rules = [
+        {
+            "rule_key": f"{t.name}_mcp_default",
+            "rule_type": "mcp_annotation",
+            "conditions": [],
+            "effect": {"decision": "approval_required" if t.mcp_destructive else "allow"},
+            "applies_to_intents": [t.name],
+        }
+        for t in catalog.tables
+    ]
+    return policy_hints_from_extracted(
+        {"domain": datasource_id, "rules": rules, "skill_id": f"{datasource_id}_mcp"}
+    )
+
+
 def load_policy(rules_dir: str | Path) -> PolicyHints:
     """Load a skill version directory (containing the skill-builder YAMLs)."""
     d = Path(rules_dir)

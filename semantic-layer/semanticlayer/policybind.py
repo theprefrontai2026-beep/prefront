@@ -56,6 +56,10 @@ def bind_rules(
         m = _FROM.search(t.get("sql") or "")
         if m:
             root_table_by_intent[intent] = m.group(1).strip('"').lower()
+        elif t.get("mcp_tool_name"):
+            # 'mcp' templates carry no SQL to parse a FROM table out of — the tool
+            # name IS the table (build_catalog_from_mcp), so use it directly.
+            root_table_by_intent[intent] = t["mcp_tool_name"].lower()
 
     bound: list[dict] = []
     rejected: list[dict] = []

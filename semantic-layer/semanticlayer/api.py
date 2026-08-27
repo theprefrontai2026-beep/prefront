@@ -6,6 +6,7 @@ PK/FK, enums, sensitivity markers) for the UI to render as an ER diagram.
 
     POST /design/semantic/catalog/parse        # {ddl, datasource_id}  OR  multipart file
     POST /design/semantic/catalog/introspect   # {dsn, datasource_id, schema}
+    POST /design/semantic/mcp/introspect       # {server_url, headers, datasource_id}
     GET  /healthz
 
 Run:  python -m semanticlayer api --port 8010
@@ -13,6 +14,7 @@ Run:  python -m semanticlayer api --port 8010
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -146,9 +148,19 @@ class IntrospectBody(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class McpIntrospectBody(BaseModel):
+    server_url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    datasource_id: Optional[str] = None
+
+
 def _catalog_payload(catalog) -> dict:
     """Catalog as JSON, a flat relationships list the ERD can draw edges from,
-    and a default set of suggested intents the UI pre-fills (then a human curates)."""
+    and a default set of suggested intents the UI pre-fills (then a human curates).
+    An MCP-sourced catalog's "suggested intents" are just the tool names — a tool
+    already IS the operation, so the CRUD-verb guessing suggest_intents() does for
+    a bare SQL schema would be actively wrong here (a tool named 'decide_loan'
+    does not become 'find_decide_loans')."""
     from .catalog import suggest_intents
 
     data = catalog.model_dump()
@@ -162,8 +174,44 @@ def _catalog_payload(catalog) -> dict:
                 "to_column": fk.to_columns[0] if fk.to_columns else None,
             })
     data["relationships"] = rels
-    data["suggested_intents"] = suggest_intents(catalog)
+    data["suggested_intents"] = (
+        [t.name for t in catalog.tables] if catalog.mcp_server_url is not None
+        else suggest_intents(catalog)
+    )
     return data
+
+
+def _resolve_catalog(*, ddl: Optional[str], dsn: Optional[str], datasource_id: Optional[str]):
+    """Build a PhysicalCatalog from an explicit ddl/dsn, or — when neither is
+    given — from the persisted datasource record (works for both 'sql' and 'mcp'
+    sources; always re-read live, same as a bare dsn already was, never cached).
+
+    This is what lets /build, /import/dbt and /publish-policy work from just a
+    datasource_id after a connect step, instead of requiring the raw ddl/dsn text
+    on every call — which an MCP-sourced datasource has no equivalent of at all."""
+    ds = datasource_id or "datasource"
+    if ddl:
+        return build_catalog(ddl, datasource_id=ds)
+    if dsn:
+        return build_catalog_from_dsn(dsn, datasource_id=ds)
+    src = store().get_datasource(ds)
+    if not src:
+        raise HTTPException(
+            400, "provide a schema via 'ddl' or 'dsn', or connect a datasource first")
+    if src.get("source_type") == "mcp":
+        from . import mcp_connect
+
+        cfg = json.loads(src.get("config_json") or "{}")
+        server_url = cfg.get("server_url")
+        if not server_url:
+            raise HTTPException(422, f"datasource {ds!r} has no stored MCP server_url")
+        tools = mcp_connect.list_mcp_tools_sync(server_url, cfg.get("headers"))
+        return mcp_connect.build_catalog_from_mcp(server_url, tools, datasource_id=ds)
+    if src.get("ddl"):
+        return build_catalog(src["ddl"], datasource_id=ds)
+    if src.get("dsn"):
+        return build_catalog_from_dsn(src["dsn"], datasource_id=ds)
+    raise HTTPException(400, f"no schema source stored for datasource {ds!r}")
 
 
 @app.get("/healthz")
@@ -424,27 +472,31 @@ def build_interfaces(body: BuildBody):
     from .llm import LLMClient
     from .mapper import promote, suggest
     from .mcptools import build_tools
-    from .policy import policy_hints_from_extracted
+    from .policy import policy_hints_from_extracted, policy_hints_from_mcp
     from .querygen import build_query_templates
+    from .schema import CandidateAttribute, CandidateEntity, CandidateSemanticModel
     from .validate import validate
-
-    if not body.rules:
-        raise HTTPException(400, "no policy rules provided")
-    if not (body.ddl or body.dsn):
-        raise HTTPException(400, "provide a schema via 'ddl' or 'dsn'")
 
     ds = body.datasource_id or "datasource"
     try:
-        catalog = (
-            build_catalog(body.ddl, datasource_id=ds) if body.ddl
-            else build_catalog_from_dsn(body.dsn, datasource_id=ds)
-        )
+        catalog = _resolve_catalog(ddl=body.ddl, dsn=body.dsn, datasource_id=ds)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"schema read failed: {type(e).__name__}: {e}")
     if not catalog.tables:
         raise HTTPException(422, "no tables found in the provided schema")
 
-    hints = policy_hints_from_extracted({"domain": body.domain, "rules": body.rules})
+    # An MCP-sourced datasource has no policy document to extract rules from — its
+    # tools' own annotations (destructiveHint/readOnlyHint) are a sensible default
+    # a human can still override by supplying curated 'rules', same as any source.
+    is_mcp = catalog.mcp_server_url is not None
+    if not body.rules and is_mcp:
+        hints = policy_hints_from_mcp(catalog, ds)
+    else:
+        if not body.rules:
+            raise HTTPException(400, "no policy rules provided")
+        hints = policy_hints_from_extracted({"domain": body.domain, "rules": body.rules})
     # Seed/override intents: generated rules often lack applies_to_intents, so
     # fall back to the explicit intents the caller requested.
     explicit = [i.strip() for i in (body.intents or []) if i.strip()]
@@ -456,14 +508,36 @@ def build_interfaces(body: BuildBody):
             "no intents to generate interfaces for — specify the operations "
             "(e.g. create_order, find_customers) or tag the rules with applies_to_intents",
         )
+    mapper_errors: list[str] = []
     try:
-        client = LLMClient()
-        mapped = suggest(catalog, hints, client=client)
-        model, rels, sens = promote(
-            mapped.candidate, catalog, hints,
-            model_id=body.model_id, domain=body.domain or hints.domain,
-            version=body.version, generated_by=client.model,
-        )
+        if is_mcp:
+            # No LLM entity-guessing for MCP tools: each tool already IS the
+            # operation, 1:1 — running the mapper here risks it merging unrelated
+            # tools into a fictitious entity, which is unnecessary and wrong.
+            candidate = CandidateSemanticModel(entities=[
+                CandidateEntity(
+                    entity_key=t.name, description=t.description, primary_table=t.name,
+                    attributes=[
+                        CandidateAttribute(attribute_key=c.name, physical_column=f"{t.name}.{c.name}")
+                        for c in t.columns
+                    ],
+                )
+                for t in catalog.tables if t.name in hints.intents
+            ])
+            model, rels, sens = promote(
+                candidate, catalog, hints,
+                model_id=body.model_id, domain=body.domain or hints.domain,
+                version=body.version, generated_by="mcp-introspect",
+            )
+        else:
+            client = LLMClient()
+            mapped = suggest(catalog, hints, client=client)
+            model, rels, sens = promote(
+                mapped.candidate, catalog, hints,
+                model_id=body.model_id, domain=body.domain or hints.domain,
+                version=body.version, generated_by=client.model,
+            )
+            mapper_errors = mapped.errors
     except Exception as e:
         raise HTTPException(502, f"semantic mapping failed: {type(e).__name__}: {e}")
 
@@ -487,7 +561,7 @@ def build_interfaces(body: BuildBody):
         "mcp_tools": [t.model_dump() for t in tools],
         "intents": [b.intent_id for b in bindings],
         "validation": {"ok": val.ok, "errors": val.errors},
-        "mapper_errors": mapped.errors,
+        "mapper_errors": mapper_errors,
     }
 
 
@@ -506,17 +580,14 @@ def import_dbt(body: ImportDbtBody):
 
     if not body.dbt_model:
         raise HTTPException(400, "no dbt_model provided")
-    if not (body.ddl or body.dsn):
-        raise HTTPException(400, "provide the datasource schema via 'ddl' or 'dsn'")
 
     ds = body.datasource_id or "datasource"
     log.debug("import_dbt: model_id=%s datasource=%s domain=%s has_ddl=%s has_dsn=%s",
               body.model_id, ds, body.domain, bool(body.ddl), bool(body.dsn))
     try:
-        catalog = (
-            build_catalog(body.ddl, datasource_id=ds) if body.ddl
-            else build_catalog_from_dsn(body.dsn, datasource_id=ds)
-        )
+        catalog = _resolve_catalog(ddl=body.ddl, dsn=body.dsn, datasource_id=ds)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"schema read failed: {type(e).__name__}: {e}")
     if not catalog.tables:
@@ -622,15 +693,12 @@ def publish_policy(body: PublishPolicyBody):
 
     if not body.rules:
         raise HTTPException(400, "no rules provided (approve rules in Policy Studio first)")
-    if not (body.ddl or body.dsn):
-        raise HTTPException(400, "provide the datasource vocabulary via 'ddl' or 'dsn'")
 
     ds = body.datasource_id or "datasource"
     try:
-        catalog = (
-            build_catalog(body.ddl, datasource_id=ds) if body.ddl
-            else build_catalog_from_dsn(body.dsn, datasource_id=ds)
-        )
+        catalog = _resolve_catalog(ddl=body.ddl, dsn=body.dsn, datasource_id=ds)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"schema read failed: {type(e).__name__}: {e}")
     if not catalog.tables:
@@ -708,6 +776,32 @@ def introspect(body: IntrospectBody):
     if not catalog.tables:
         raise HTTPException(422, f"no tables found in schema '{body.schema_}'")
     return _catalog_payload(catalog)
+
+
+@app.post("/design/semantic/mcp/introspect")
+def introspect_mcp(body: McpIntrospectBody):
+    """Learn a generic MCP server's tools and represent them as a catalog — one
+    table per tool, one column per input-schema property — the MCP analog of
+    /catalog/introspect. Persists the source (server_url + headers) so /build,
+    /import/dbt and /publish-policy can rebuild it later from just a
+    datasource_id, the same way a dsn-based datasource already can."""
+    from . import mcp_connect
+
+    ds = body.datasource_id or "datasource"
+    try:
+        tools = mcp_connect.list_mcp_tools_sync(body.server_url, body.headers)
+    except Exception as e:
+        raise HTTPException(502, f"mcp introspection failed: {type(e).__name__}: {e}")
+    if not tools:
+        raise HTTPException(422, f"no tools found at {body.server_url!r}")
+    catalog = mcp_connect.build_catalog_from_mcp(body.server_url, tools, datasource_id=ds)
+    store().upsert_datasource(
+        ds, None, None, source_type="mcp",
+        config_json=json.dumps({"server_url": body.server_url, "headers": body.headers}),
+    )
+    payload = _catalog_payload(catalog)
+    payload["mcp_tools"] = tools
+    return payload
 
 
 class ResetBody(BaseModel):

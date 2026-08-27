@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -57,7 +58,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 def _cmd_call(args: argparse.Namespace) -> int:
     tools = load_templates(args.templates)
     call_args = json.loads(args.args) if args.args else {}
-    result = call_template(tools, _dsn(args), args.tool, call_args)
+    result = asyncio.run(call_template(tools, _dsn(args), args.tool, call_args))
     print(json.dumps(result, indent=2, default=str))
     return 1 if "error" in result else 0
 

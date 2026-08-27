@@ -46,12 +46,17 @@ export default function Semantic({
 
   const catalog = schema?.catalog || null;
   const datasourceId = schema?.datasourceId || "ds_primary";
+  // An MCP-sourced datasource gets a default governance stance derived from each
+  // tool's own annotations (destructiveHint -> approval_required, else allow) —
+  // it doesn't need an approved rule to Build interfaces, only to Publish policy.
+  const isMcp = schema?.sourceType === "mcp";
 
   const approvedRules = useMemo(() => rules.filter(r => r.review_status === "approved").map(r => r.rule), [rules]);
 
   const readiness: Array<[string, boolean, string]> = [
     ["Schema connected", !!catalog, "connect datasource in step 1"],
-    ["Approved rules", approvedRules.length > 0, "approve at least one rule in step 2"],
+    ["Approved rules", approvedRules.length > 0 || isMcp,
+      isMcp ? "optional — MCP tools default from their own annotations" : "approve at least one rule in step 2"],
     ["Intents defined", intentList.length > 0, "add intents below"],
   ];
 
@@ -238,7 +243,7 @@ export default function Semantic({
             {" "}and {Object.keys(metrics).length} metric{Object.keys(metrics).length !== 1 ? "s" : ""}.
           </p>
           <div className="pf-publish-row">
-            <button className="pf-btn primary" onClick={handleBuild} disabled={busy || !catalog || approvedRules.length === 0}>
+            <button className="pf-btn primary" onClick={handleBuild} disabled={busy || !catalog || (approvedRules.length === 0 && !isMcp)}>
               {busy ? "Building…" : "Build interfaces"}
             </button>
             {status && <span className="pf-status">✓ {status}</span>}

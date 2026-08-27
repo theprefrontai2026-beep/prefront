@@ -59,6 +59,28 @@ def check_templates(
     warnings: list[str] = []
     for t in templates:
         tag = f"template {t.template_id!r}"
+
+        # 'mcp' templates carry no SQL by design — the runtime calls the upstream
+        # tool instead. Validate the mcp-specific fields in its place: a real tool
+        # name, and every declared parameter a real column of that tool's table
+        # (they were BUILT from those same columns in querygen._compose_mcp, so
+        # this is a construction-consistency check, not new discovery logic).
+        if t.kind == "mcp":
+            if not t.mcp_tool_name or not t.mcp_server_url:
+                errors.append(f"{tag}: mcp template missing mcp_tool_name or mcp_server_url")
+            else:
+                tbl = catalog.table(t.mcp_tool_name)
+                if not tbl:
+                    errors.append(f"{tag}: mcp tool {t.mcp_tool_name!r} not found in catalog")
+                else:
+                    unknown = sorted(p.name for p in t.parameters if not tbl.column(p.name))
+                    if unknown:
+                        errors.append(
+                            f"{tag}: parameter(s) {unknown} not in tool "
+                            f"{t.mcp_tool_name!r}'s input schema"
+                        )
+            continue
+
         placeholders = set(_PH.findall(t.sql))
         # Substitute placeholders with a literal so the AST parses cleanly; the
         # placeholder NAMES are validated separately from the regex set above.

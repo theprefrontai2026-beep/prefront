@@ -2,10 +2,11 @@
 psycopg[binary]>=3.2   # Postgres access
 # <2 is deliberate: mcp 2.0 removed the low-level `Server.list_tools()` /
 # `call_tool()` decorators this server is built on (AttributeError at startup).
-mcp>=1.24,<2           # MCP server (stdio + SSE/HTTP)
+mcp>=1.24,<2           # MCP server (stdio + SSE/HTTP) + MCP client (proxying to upstream tools)
 pyyaml>=6.0            # read query_templates.yaml
 starlette>=0.37        # HTTP transport app
 uvicorn>=0.29          # ASGI server for --http mode
+anyio>=4.0             # run blocking DB calls off the event loop in _call_governed
 
 # --- optional: OpenTelemetry / Arize Phoenix tracing ------------------------
 # Inert unless PHOENIX_COLLECTOR_ENDPOINT is set (see tracing/prefront_tracing.py).

@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
-import { introspect, parseSchema, resetDatasources, analyzePii } from "../api";
+import { introspect, introspectMcp, parseSchema, resetDatasources, analyzePii } from "../api";
 import type { DemoConfig } from "../demos";
 
-type Progress = { phase: "schema" | "pii" | "done"; tables: number; pii: number };
+type Progress = { phase: "schema" | "pii" | "done"; tables: number; pii: number; unit?: "table" | "tool" };
 
 // Live progress for the connect → PII-scan pipeline.
 function ConnectProgress({ p }: { p: Progress }) {
@@ -10,6 +10,7 @@ function ConnectProgress({ p }: { p: Progress }) {
   const piiActive = p.phase === "pii";
   const piiDone = p.phase === "done";
   const pct = p.phase === "schema" ? 40 : p.phase === "pii" ? 80 : 100;
+  const unit = p.unit || "table";
   return (
     <div className="pf-progress">
       <div className="pf-progressbar">
@@ -17,7 +18,7 @@ function ConnectProgress({ p }: { p: Progress }) {
       </div>
       <div className={`pf-progress-step ${schemaDone ? "done" : "active"}`}>
         <span className="pf-progress-icon">{schemaDone ? "✓" : <span className="pf-spin" />}</span>
-        <span>{schemaDone ? `Schema read — ${p.tables} table${p.tables !== 1 ? "s" : ""}` : "Reading schema…"}</span>
+        <span>{schemaDone ? `Schema read — ${p.tables} ${unit}${p.tables !== 1 ? "s" : ""}` : "Reading schema…"}</span>
       </div>
       <div className={`pf-progress-step ${piiDone ? "done" : piiActive ? "active" : "pending"}`}>
         <span className="pf-progress-icon">{piiDone ? "✓" : piiActive ? <span className="pf-spin" /> : "○"}</span>
@@ -42,6 +43,14 @@ interface Props {
 const DSN_PLACEHOLDER = "postgresql://user:pass@host:5432/db";
 
 export default function DataConnector({ demo, onSchema, onDisconnect, restored }: Props) {
+  const [sourceType, setSourceType] = useState<"postgres" | "mcp">(
+    restored?.sourceType === "mcp" ? "mcp" : "postgres"
+  );
+  // Prefilled as a real, editable value (not just a placeholder) so the field is
+  // ready to Connect immediately for a demo that ships a default target — the
+  // user can still clear/replace it before connecting.
+  const [mcpServerUrl, setMcpServerUrl] = useState(restored?.mcpServerUrl || demo.defaultMcpServerUrl || "");
+  const [mcpHeadersText, setMcpHeadersText] = useState("");
   const [mode, setMode] = useState<"dsn" | "ddl" | "catalog">("dsn");
   const [dsn, setDsn] = useState("");
   const [dbSchema, setDbSchema] = useState("public");
@@ -116,10 +125,19 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
 
   async function handleConnect() {
     setError(""); setStatus(""); setBusy(true);
-    setProgress({ phase: "schema", tables: 0, pii: 0 });
+    const unit = sourceType === "mcp" ? "tool" : "table";
+    setProgress({ phase: "schema", tables: 0, pii: 0, unit });
     try {
       let result: any;
-      if (mode === "ddl") {
+      if (sourceType === "mcp") {
+        if (!mcpServerUrl.trim()) throw new Error("Enter the MCP server's URL");
+        let headers: Record<string, string> = {};
+        if (mcpHeadersText.trim()) {
+          try { headers = JSON.parse(mcpHeadersText); }
+          catch { throw new Error("Invalid JSON — check the headers"); }
+        }
+        result = await introspectMcp(mcpServerUrl.trim(), headers, datasourceId);
+      } else if (mode === "ddl") {
         if (!ddl.trim()) throw new Error("Upload a .sql file or paste CREATE TABLE statements first");
         result = await parseSchema(ddl.trim(), datasourceId);
       } else if (mode === "dsn") {
@@ -133,10 +151,11 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
       const cat = result.catalog || result;
       const dsId = result.datasource_id || datasourceId;
       const tbl = cat.tables?.length ?? 0;
-      const intents = cat.suggestedIntents || [];
+      const intents = cat.suggestedIntents || cat.suggested_intents || [];
+      cat.suggestedIntents = intents;   // normalize snake_case from the API onto the shape this component renders
 
       // Auto-scan for PII as soon as the schema is in — no manual step.
-      setProgress({ phase: "pii", tables: tbl, pii: 0 });
+      setProgress({ phase: "pii", tables: tbl, pii: 0, unit });
       const piiMap: Record<string, { label: string; score: number }> = {};
       try {
         const fields = (cat.tables || []).flatMap((t: any) =>
@@ -149,8 +168,11 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
       setCatalog(cat);
       setResultId(dsId);
       setPii(piiMap);
-      onSchema({ catalog: cat, datasourceId: dsId, suggestedIntents: intents, pii: piiMap });
-      setProgress({ phase: "done", tables: tbl, pii: piiCount });
+      onSchema({
+        catalog: cat, datasourceId: dsId, suggestedIntents: intents, pii: piiMap,
+        sourceType, ...(sourceType === "mcp" ? { mcpServerUrl: mcpServerUrl.trim() } : {}),
+      });
+      setProgress({ phase: "done", tables: tbl, pii: piiCount, unit });
     } catch (e: any) {
       setError(String(e.message || e));
       setProgress(null);
@@ -165,17 +187,53 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
         <h2><span className="pf-step-badge">1</span>Connect your datasource</h2>
         <p className="pf-hint">
           Point Prefront at a Postgres connection string, upload or paste a <code>.sql</code> DDL file,
-          or drop in a catalog JSON. The schema is cached in your browser.
+          drop in a catalog JSON, or connect any API-based MCP server and learn its tools directly.
+          The schema is cached in your browser.
         </p>
 
-        {/* Mode tabs */}
+        {/* Source-type tabs */}
+        <div className="pf-tabs">
+          <button className={`pf-tab ${sourceType === "postgres" ? "active" : ""}`} onClick={() => setSourceType("postgres")}>Postgres</button>
+          <button className={`pf-tab ${sourceType === "mcp" ? "active" : ""}`} onClick={() => setSourceType("mcp")}>MCP Server</button>
+        </div>
+
+        {sourceType === "mcp" && (
+          <div className="pf-fields">
+            <label style={{ gridColumn: "1 / -1" }}>
+              MCP server URL
+              <input
+                value={mcpServerUrl}
+                onChange={(e) => setMcpServerUrl(e.target.value)}
+                placeholder="http://localhost:8102/sse"
+                type="text"
+              />
+            </label>
+            <label style={{ gridColumn: "1 / -1" }}>
+              Headers (JSON, optional — auth tokens, identity)
+              <textarea
+                value={mcpHeadersText}
+                onChange={(e) => setMcpHeadersText(e.target.value)}
+                placeholder='{"X-Api-Key": "..."}'
+                rows={3}
+              />
+            </label>
+            <label>
+              Datasource ID
+              <input value={datasourceId} onChange={(e) => setDatasourceId(e.target.value)} />
+            </label>
+          </div>
+        )}
+
+        {/* Mode tabs (Postgres only) */}
+        {sourceType === "postgres" && (
         <div className="pf-tabs">
           <button className={`pf-tab ${mode === "dsn" ? "active" : ""}`} onClick={() => setMode("dsn")}>Live database</button>
           <button className={`pf-tab ${mode === "ddl" ? "active" : ""}`} onClick={() => setMode("ddl")}>SQL / DDL</button>
           <button className={`pf-tab ${mode === "catalog" ? "active" : ""}`} onClick={() => setMode("catalog")}>Upload catalog</button>
         </div>
+        )}
 
-        {mode === "dsn" && (
+        {sourceType === "postgres" && mode === "dsn" && (
           <div className="pf-fields">
             <label style={{ gridColumn: "1 / -1" }}>
               Connection string
@@ -197,7 +255,7 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
           </div>
         )}
 
-        {mode === "ddl" && (
+        {sourceType === "postgres" && mode === "ddl" && (
           <div className="pf-fields">
             {/* Drop zone */}
             <div style={{ gridColumn: "1 / -1" }}>
@@ -259,7 +317,7 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
           </div>
         )}
 
-        {mode === "catalog" && (
+        {sourceType === "postgres" && mode === "catalog" && (
           <div className="pf-fields">
             <label style={{ gridColumn: "1 / -1" }}>
               Catalog JSON
@@ -298,9 +356,17 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
             </button>
           </div>
           <div className="pf-readiness" style={{ marginBottom: 16 }}>
-            <span className="pf-ready-item ok">{catalog.tables?.length ?? 0} tables</span>
+            <span className="pf-ready-item ok">
+              {catalog.tables?.length ?? 0} {sourceType === "mcp" ? "tools" : "tables"}
+            </span>
             {(catalog.tables || []).flatMap((t: any) => t.columns || []).filter((c: any) => c.markers?.includes("SENSITIVE")).length > 0 && (
               <span className="pf-ready-item ok">sensitive columns detected</span>
+            )}
+            {sourceType === "mcp" && (catalog.tables || []).filter((t: any) => t.mcp_destructive).length > 0 && (
+              <span className="pf-ready-item ok">
+                {(catalog.tables || []).filter((t: any) => t.mcp_destructive).length} destructive tool
+                {(catalog.tables || []).filter((t: any) => t.mcp_destructive).length !== 1 ? "s" : ""}
+              </span>
             )}
             {pii && Object.keys(pii).length > 0 && (
               <span className="pf-ready-item ok">{Object.keys(pii).length} PII fields</span>
@@ -311,16 +377,26 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
           </div>
           {catalog.suggestedIntents?.length > 0 && (
             <div style={{ marginBottom: 14 }}>
-              <p className="pf-hint" style={{ marginBottom: 6 }}>Suggested intents from schema:</p>
+              <p className="pf-hint" style={{ marginBottom: 6 }}>
+                {sourceType === "mcp" ? "Tools learned from the server — each becomes a governed intent:" : "Suggested intents from schema:"}
+              </p>
               <div className="pf-intents">
-                {catalog.suggestedIntents.map((i: string) => (
-                  <span key={i} className="pf-chip">{i}</span>
-                ))}
+                {catalog.suggestedIntents.map((i: string) => {
+                  const destructive = sourceType === "mcp"
+                    && (catalog.tables || []).find((t: any) => t.name === i)?.mcp_destructive;
+                  return (
+                    <span key={i} className={`pf-chip ${destructive ? "destructive" : ""}`}
+                      title={destructive ? "Marked destructive — defaults to approval_required" : "Read-only — defaults to allow"}>
+                      {i}{destructive ? " ⚠" : ""}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           )}
           <p className="pf-hint" style={{ marginBottom: 0 }}>
-            View the full schema — tables, relationships, sensitive columns, and applied policies — in the <strong>Data Graph</strong> tab.
+            View the full schema — {sourceType === "mcp" ? "tools, their parameters" : "tables, relationships, sensitive columns"},
+            {" "}and applied policies — in the <strong>Data Graph</strong> tab.
           </p>
         </div>
       )}

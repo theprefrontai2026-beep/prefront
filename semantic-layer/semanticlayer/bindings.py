@@ -69,6 +69,19 @@ def _required_entities(intent: str, model: SemanticModel, hints: PolicyHints) ->
             if ent and ent not in found:
                 found.append(ent)
     if not found and model.entities:
+        # Exact match: the intent IS an entity's key or table. Always true for an
+        # MCP-sourced intent (a tool's intent_id and entity_key are the same
+        # string by construction — build_catalog_from_mcp/_compose_mcp), where the
+        # noun-guessing heuristic below never fires (entity keys like
+        # "decide_loan" aren't a single pluralizable noun) and would otherwise
+        # silently fall through to model.entities[0] for every intent.
+        exact = next(
+            (e.entity_key for e in model.entities
+             if intent == e.entity_key or intent.lower() == e.primary_table.lower()),
+            None,
+        )
+        if exact:
+            return [exact]
         # Generic fallback: an entity whose name/table matches a noun in the
         # intent (find_customers -> customers), else the first entity.
         nouns = set(intent.lower().split("_"))

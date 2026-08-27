@@ -47,14 +47,18 @@ CREATE TABLE IF NOT EXISTS functions (
   PRIMARY KEY (datasource_id, name)
 );
 
--- The schema source for a datasource, kept so approving a function can rebuild
--- the catalog and regenerate its query template without re-uploading.
+-- The schema source for a datasource, kept so approving a function (or rebuilding
+-- interfaces/policy) can rebuild the catalog without re-uploading.
 -- owner_column = the column read templates scope by (WHERE owner = :caller_<owner>).
+-- source_type/config_json generalize this beyond ddl/dsn: 'mcp' stores
+-- {"server_url": ..., "headers": {...}} in config_json instead of ddl/dsn.
 CREATE TABLE IF NOT EXISTS datasources (
   datasource_id  TEXT PRIMARY KEY,
   ddl            TEXT,
   dsn            TEXT,
   owner_column   TEXT,
+  source_type    TEXT DEFAULT 'sql',
+  config_json    TEXT,
   updated_at     TEXT DEFAULT (datetime('now'))
 );
 """
@@ -69,11 +73,16 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._conn.executescript(SCHEMA)
-        # Lightweight migration: add owner_column to an existing datasources table.
+        # Lightweight migration: add columns introduced after the table existed.
         try:
             cols = {r[1] for r in self._conn.execute("PRAGMA table_info(datasources)")}
             if "owner_column" not in cols:
                 self._conn.execute("ALTER TABLE datasources ADD COLUMN owner_column TEXT")
+            if "source_type" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE datasources ADD COLUMN source_type TEXT DEFAULT 'sql'")
+            if "config_json" not in cols:
+                self._conn.execute("ALTER TABLE datasources ADD COLUMN config_json TEXT")
         except Exception:  # noqa: BLE001
             pass
         self._conn.commit()
@@ -199,19 +208,24 @@ class Store:
         return cur.rowcount
 
     def upsert_datasource(self, datasource_id: str, ddl: Optional[str], dsn: Optional[str],
-                          owner_column: Optional[str] = None) -> None:
+                          owner_column: Optional[str] = None, *,
+                          source_type: str = "sql", config_json: Optional[str] = None) -> None:
         with self._tx() as c:
             c.execute(
-                """INSERT INTO datasources (datasource_id, ddl, dsn, owner_column) VALUES (?,?,?,?)
+                """INSERT INTO datasources
+                     (datasource_id, ddl, dsn, owner_column, source_type, config_json)
+                   VALUES (?,?,?,?,?,?)
                    ON CONFLICT(datasource_id) DO UPDATE SET
                      ddl=excluded.ddl, dsn=excluded.dsn, owner_column=excluded.owner_column,
+                     source_type=excluded.source_type, config_json=excluded.config_json,
                      updated_at=datetime('now')""",
-                (datasource_id, ddl, dsn, owner_column))
+                (datasource_id, ddl, dsn, owner_column, source_type, config_json))
 
     def get_datasource(self, datasource_id: str) -> Optional[dict]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT datasource_id, ddl, dsn, owner_column FROM datasources WHERE datasource_id=?",
+                "SELECT datasource_id, ddl, dsn, owner_column, source_type, config_json "
+                "FROM datasources WHERE datasource_id=?",
                 (datasource_id,)).fetchone()
         return dict(row) if row else None
 

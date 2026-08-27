@@ -73,6 +73,13 @@ class ForeignKey(BaseModel):
 
 class PhysicalTable(BaseModel):
     name: str
+    # Human description — for an MCP-sourced table this is the tool's own
+    # description, carried forward rather than guessed by an LLM.
+    description: str = ""
+    # True when this "table" is actually an MCP tool whose annotations mark it
+    # destructiveHint / !readOnlyHint — the runtime write-safety gate (ENABLE_WRITES)
+    # applies to it the same way it applies to a local SQL write.
+    mcp_destructive: bool = False
     primary_key: list[str] = Field(default_factory=list)
     columns: list[PhysicalColumn] = Field(default_factory=list)
     foreign_keys: list[ForeignKey] = Field(default_factory=list)
@@ -87,6 +94,9 @@ class PhysicalCatalog(BaseModel):
     schema_version: str = "1.0"
     status: str = "published"
     tables: list[PhysicalTable] = Field(default_factory=list)
+    # Set only for an MCP-sourced catalog (type="mcp") — the server every "table"
+    # (tool) in this catalog was learned from, and where the runtime calls back to.
+    mcp_server_url: Optional[str] = None
 
     def table(self, name: str) -> Optional[PhysicalTable]:
         return next((t for t in self.tables if t.name.lower() == name.lower()), None)
@@ -277,12 +287,20 @@ class QueryTemplate(BaseModel):
     semantic_model_version: str = "1.0"
     # 'read' = the SELECT is the answer; 'precheck' = a read-only SELECT that
     # gathers the governed inputs a *write* intent's policies need before the
-    # write runs (the write itself stays a runtime action).
-    kind: Literal["read", "precheck"] = "read"
+    # write runs (the write itself stays a runtime action); 'mcp' = no SQL at
+    # all — the runtime calls an upstream MCP server's tool instead.
+    kind: Literal["read", "precheck", "mcp"] = "read"
     semantic_entities: list[str] = Field(default_factory=list)
     read_only: bool = True
     dialect: str = "postgres"
     sql: str = ""
+    # 'mcp' kind only: the upstream server + tool to call, and whether it needs
+    # the ENABLE_WRITES safety gate — carried here (not just on the catalog) so
+    # the runtime, which only ever loads query_templates.yaml, has everything it
+    # needs without seeing the physical catalog at all.
+    mcp_server_url: str = ""
+    mcp_tool_name: str = ""
+    mcp_destructive: bool = False
     parameters: list[TemplateParameter] = Field(default_factory=list)
     required_caller_context: list[str] = Field(default_factory=list)
     result_columns: list[ResultColumn] = Field(default_factory=list)

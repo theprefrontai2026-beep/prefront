@@ -100,6 +100,12 @@ def _compose(b, model, relationships, catalog, hints, attr_col, sens, *,
     root_tbl = _table_of(model, root)
     if not root_tbl:
         return None
+    if catalog.mcp_server_url is not None:
+        # A whole datasource is either SQL or MCP-sourced — never mixed — so this
+        # check must come before the write-verb heuristic below, which is SQL-only
+        # vocabulary (an MCP tool named e.g. "delete_document" is not a SQL write).
+        table = catalog.table(root_tbl)
+        return _compose_mcp(b, table, model, hints, catalog.mcp_server_url or "") if table else None
     if _is_write(b.intent_id):
         return _compose_precheck(b, model, catalog, hints, sens,
                                  root_tbl=root_tbl, dialect=dialect,
@@ -175,6 +181,36 @@ def _compose(b, model, relationships, catalog, hints, attr_col, sens, *,
         result_columns=result_cols,
         required_policies=[hints.skill_id] + required_policies,
         runtime_policy_predicates=runtime_preds,
+    )
+
+
+def _compose_mcp(b, table, model, hints, server_url: str) -> QueryTemplate:
+    """An MCP-sourced 'table' IS the tool: no SQL is generated or validated as
+    SQL — the runtime calls the upstream tool directly (semantic-mcp-server's
+    mcp_proxy). Parameters come 1:1 from the tool's input schema, already
+    captured as this table's columns by build_catalog_from_mcp."""
+    params = [
+        TemplateParameter(name=c.name, type=c.type, required=not c.nullable)
+        for c in table.columns
+    ]
+    required_policies = [hints.skill_id] + [r.rule_key for r in hints.rules_for_intent(b.intent_id)]
+    return QueryTemplate(
+        template_id=f"tmpl_{b.intent_id}_mcp_v1",
+        intent_id=b.intent_id,
+        description=table.description,
+        semantic_model_id=model.semantic_model_id,
+        semantic_model_version=model.version,
+        kind="mcp",
+        semantic_entities=[table.name],
+        read_only=not table.mcp_destructive,
+        dialect="mcp",
+        sql="",
+        mcp_server_url=server_url,
+        mcp_tool_name=table.name,
+        mcp_destructive=table.mcp_destructive,
+        parameters=params,
+        result_columns=[],
+        required_policies=required_policies,
     )
 
 

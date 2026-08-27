@@ -176,7 +176,7 @@ export default function PolicyStudio({
       setExtractStatus("Extracting rules…");
       const knownIntents = intents.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
       const knownFields = schema?.catalog
-        ? (schema.catalog.tables || []).flatMap((t: any) => t.columns.map((c: any) => c.name))
+        ? (schema.catalog.tables || []).flatMap((t: any) => (t.columns || []).map((c: any) => c.name))
         : [];
       const res = await api.extractRules(activeDocId, { provider, domain, knownIntents, knownFields });
       const errs = res.errors || [];
@@ -269,7 +269,7 @@ export default function PolicyStudio({
     setSubError(""); setSubStatus("Validating…"); setValidateBusy(true);
     try {
       const declaredParams = schema?.catalog
-        ? (schema.catalog.tables || []).flatMap((t: any) => t.columns.map((c: any) => c.name))
+        ? (schema.catalog.tables || []).flatMap((t: any) => (t.columns || []).map((c: any) => c.name))
         : [];
       const metricsList = Object.keys(metrics || {});
       const res = await api.validateDocument(activeDocId, { declaredParams, metrics: metricsList });

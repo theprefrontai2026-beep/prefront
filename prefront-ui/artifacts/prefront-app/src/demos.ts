@@ -28,6 +28,12 @@ export interface DemoConfig {
   // Data Connector defaults (prefills for connecting this demo's datasource).
   datasourceId: string;
   ddlPlaceholder: string;
+  // Prefilled (not just a placeholder — an actual editable default value) MCP
+  // server URL for the MCP Server connect tab, when this demo ships a plain,
+  // ungoverned app-tool MCP server worth connecting to directly. Omit when the
+  // demo has no such target (e.g. SecureBank's MCP server is itself Prefront's
+  // governed runtime, not a raw app API).
+  defaultMcpServerUrl?: string;
 
   // Semantic / Policy Studio defaults.
   defaultMetrics: string;
@@ -89,6 +95,10 @@ export const DEMOS: DemoConfig[] = [
     datasourceId: "loanpro",
     ddlPlaceholder:
       "CREATE TABLE users (\n  user_id INT PRIMARY KEY,\n  name TEXT,\n  role TEXT,\n  ssn TEXT\n);\n\nCREATE TABLE loan_applications (\n  loan_id INT PRIMARY KEY,\n  applicant_id INT,\n  requested_amount NUMERIC,\n  status TEXT\n);",
+    // The demo's own plain, ungoverned app-tool MCP server (loanpro-app-mcp) —
+    // reachable at this address from other containers on the compose network
+    // (not "localhost", which from Prefront's own containers means themselves).
+    defaultMcpServerUrl: "http://loanpro-app-mcp:8102/sse",
     defaultMetrics:
       "dti_ratio = requested_amount / annual_income\n" +
       "loan_to_income_pct = requested_amount / annual_income * 100",

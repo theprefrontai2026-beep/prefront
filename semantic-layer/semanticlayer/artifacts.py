@@ -71,6 +71,8 @@ def render_physical_catalog(cat: PhysicalCatalog) -> str:
                 "markers": c.markers,
             })
         tables[t.name] = _drop_none({
+            "description": t.description,
+            "mcp_destructive": t.mcp_destructive or None,
             "primary_key": (t.primary_key[0] if len(t.primary_key) == 1 else t.primary_key),
             "columns": cols,
             "foreign_keys": [
@@ -78,13 +80,14 @@ def render_physical_catalog(cat: PhysicalCatalog) -> str:
                 for fk in t.foreign_keys
             ],
         })
-    doc = {
+    doc = _drop_none({
         "datasource_id": cat.datasource_id,
         "type": cat.type,
         "schema_version": cat.schema_version,
         "status": cat.status,
+        "mcp_server_url": cat.mcp_server_url,
         "tables": tables,
-    }
+    })
     return _dump(doc)
 
 
@@ -222,6 +225,9 @@ def render_query_templates(templates: list[QueryTemplate]) -> str:
             "read_only": t.read_only,
             "dialect": t.dialect,
             "sql": _LiteralStr(t.sql),
+            "mcp_server_url": t.mcp_server_url or None,
+            "mcp_tool_name": t.mcp_tool_name or None,
+            "mcp_destructive": t.mcp_destructive or None,
             "parameters": [
                 {"name": p.name, "type": p.type, "required": p.required} for p in t.parameters
             ],

@@ -211,6 +211,19 @@ export function introspect(dsn: string, { datasourceId, schema }: any = {}) {
   }).then(jsonOrThrow);
 }
 
+/** Learn a generic MCP server's tools and represent them as a catalog — one
+ *  "table" per tool, one "column" per input-schema property — the MCP analog
+ *  of introspect(). Persists the source so build/import/publish-policy can
+ *  rebuild it later from just datasourceId, the same way a dsn-based
+ *  datasource already can. */
+export function introspectMcp(serverUrl: string, headers: Record<string, string>, datasourceId?: string) {
+  return fetch("/design/semantic/mcp/introspect", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ server_url: serverUrl, headers: headers || {}, datasource_id: datasourceId }),
+  }).then(jsonOrThrow);
+}
+
 export function buildInterfaces({ rules, ddl, dsn, domain, datasourceId, intents, metrics, callerContext, modelId }: any) {
   return fetch("/design/semantic/build", {
     method: "POST",
