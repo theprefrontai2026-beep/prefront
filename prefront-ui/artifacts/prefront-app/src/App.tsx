@@ -42,6 +42,7 @@ const TABS = [
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
+  { id: "semantic", label: "Semantic Layer",  sub: "Build governed interfaces",icon: IconLayers },
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconDiff },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
@@ -160,7 +161,7 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   graph:    { title: "Data Graph",       desc: "Interactive map of tables, relationships, sensitive columns, and applied governance policies." },
   bizgraph: { title: "Business Graph",   desc: "Domain model showing business entities, processes, roles, and applied governance policies." },
   policy:   { title: "Policy Studio",   desc: "Upload policy documents, extract rules, and manage the review pipeline." },
-  semantic: { title: "Semantic Layer",  desc: "Build governed SQL interfaces from approved rules and your schema." },
+  semantic: { title: "Semantic Layer",  desc: "Build governed interfaces — SQL query templates or MCP tool bindings — from approved rules and your schema." },
   runtime:  { title: "Runtime",         desc: "Run the sessions against the live agent. For an ungoverned demo each session is built to trigger one of Prefront's out-of-band checks; a governed demo shows the Prefront runtime beside the agent." },
   oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: sessions, the app agent's turns, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
 };

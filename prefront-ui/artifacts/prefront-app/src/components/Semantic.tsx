@@ -353,49 +353,110 @@ export default function Semantic({
   );
 }
 
+/** A write_action is a DECLARATIVE spec (table/columns/mapping) — the runtime
+ *  composes the actual parameterized SQL from it at call time (writes.py), it
+ *  is never stored as a string. This renders the same shape as a readable
+ *  preview of exactly what that composition does, so "generated code" for a
+ *  write intent isn't just an empty gap next to a read intent's real SQL. */
+function synthesizeWriteSql(wa: any): string {
+  if (!wa?.table) return "";
+  const table = wa.table;
+  const kind = wa.kind || "insert";
+  const callerClauses = Object.entries(wa.caller_columns || {})
+    .map(([col, attr]) => `${col} = :caller_${attr}`);
+
+  if (kind === "delete") {
+    const where = [...(wa.key_columns || []).map((k: string) => `${k} = :${k}`), ...callerClauses];
+    return `DELETE FROM ${table}\nWHERE ${where.join("\n  AND ")}`;
+  }
+  if (kind === "update") {
+    const keySet = new Set(wa.key_columns || []);
+    const setCols = (wa.params || []).filter((p: string) => !keySet.has(p));
+    const set = setCols.map((p: string) => `${wa.column_map?.[p] || p} = :${p}`);
+    const where = [...(wa.key_columns || []).map((k: string) => `${k} = :${k}`), ...callerClauses];
+    return `UPDATE ${table}\nSET ${set.join(",\n    ")}\nWHERE ${where.join("\n  AND ")}`;
+  }
+  // insert
+  const cols: string[] = [];
+  const vals: string[] = [];
+  for (const p of wa.params || []) {
+    cols.push(wa.column_map?.[p] || p);
+    vals.push(`:${p}`);
+  }
+  for (const [col, attr] of Object.entries(wa.caller_columns || {})) {
+    cols.push(col);
+    vals.push(`:caller_${attr}`);
+  }
+  for (const [col, literal] of Object.entries(wa.defaults || {})) {
+    cols.push(col);
+    vals.push(typeof literal === "string" ? `'${literal}'` : String(literal));
+  }
+  for (const [col, token] of Object.entries(wa.autofill || {})) {
+    cols.push(col);
+    vals.push(`<${token}>`);
+  }
+  return `INSERT INTO ${table} (${cols.join(", ")})\nVALUES (${vals.join(", ")})`;
+}
+
 function TemplateCard({ tmpl, onApprove, onReject }: { tmpl: any; onApprove: () => void; onReject: () => void }) {
   const decided = tmpl.status === "approved" || tmpl.status === "rejected";
-  const precheck = tmpl.precheck_sql || tmpl.query_template?.precheck_sql;
-  const cmd = tmpl.command_template || tmpl.query_template?.command_template;
+  const kind = tmpl.kind || "read";
+  const params: { name: string; type?: string; required?: boolean }[] = tmpl.parameters || [];
+  const writeSql = kind === "precheck" && tmpl.write_action ? synthesizeWriteSql(tmpl.write_action) : "";
   return (
     <div className={`pf-rule-card status-${tmpl.status}`}>
       <div className="pf-rule-head">
         <div className="pf-rule-title">
-          <code className="pf-rule-key">{tmpl.intent}</code>
+          <code className="pf-rule-key">{tmpl.intent_id || tmpl.intent}</code>
           <span className={`pf-badge review-${tmpl.status}`}>{tmpl.status}</span>
+          <span className="pf-chip" style={{ marginLeft: 6 }}>{kind}</span>
         </div>
       </div>
       <div className="pf-rule-body">
         {tmpl.description && <p className="pf-message">{tmpl.description}</p>}
-        {tmpl.parameters?.length > 0 && (
+        {params.length > 0 && (
           <div><span className="pf-label">Parameters</span>
-            {tmpl.parameters.map((p: string) => <span key={p} className="pf-chip" style={{ marginRight: 4 }}>{p}</span>)}
+            {params.map((p) => (
+              <span key={p.name} className="pf-chip" style={{ marginRight: 4 }}>
+                {p.name}{p.type ? `: ${p.type}` : ""}{p.required === false ? " (optional)" : ""}
+              </span>
+            ))}
           </div>
         )}
-        {precheck && (
+
+        {kind === "mcp" ? (
           <>
-            <div className="pf-phase-label">Precheck</div>
-            <pre className="pf-sql">{precheck}</pre>
+            <div className="pf-phase-label">MCP call</div>
+            <pre className="pf-sql">
+              {`tool     ${tmpl.mcp_tool_name}\nserver   ${tmpl.mcp_server_url}`}
+              {tmpl.mcp_destructive ? "\ndestructive  yes — gated by ENABLE_WRITES" : ""}
+            </pre>
+          </>
+        ) : (
+          <>
+            {tmpl.sql && (
+              <>
+                <div className="pf-phase-label">{kind === "precheck" ? "Precheck (gathers governed inputs)" : "SQL"}</div>
+                <pre className="pf-sql">{tmpl.sql}</pre>
+              </>
+            )}
+            {writeSql && (
+              <>
+                <div className="pf-phase-label">Write (synthesized preview — composed by the runtime at call time)</div>
+                <span className={`pf-badge write ${tmpl.write_action.kind === "delete" ? "delete" : ""}`}>
+                  {tmpl.write_action.kind || "insert"}
+                </span>
+                <pre className={`pf-sql cmd ${tmpl.write_action.kind === "delete" ? "cmd-delete" : ""}`}>{writeSql}</pre>
+              </>
+            )}
           </>
         )}
-        {cmd && (
-          <>
-            <div className="pf-phase-label">Command template</div>
-            {Array.isArray(cmd) ? cmd.map((c: any, i: number) => (
-              <div key={i}>
-                <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
-                  <span className={`pf-badge write ${c.type === "delete" ? "delete" : ""}`}>{c.type}</span>
-                </div>
-                <pre className={`pf-sql cmd ${c.type === "delete" ? "cmd-delete" : ""}`}>{c.sql}</pre>
-              </div>
-            )) : <pre className="pf-sql cmd">{cmd}</pre>}
-          </>
-        )}
-        {tmpl.applied_rules?.length > 0 && (
+
+        {tmpl.required_policies?.length > 0 && (
           <div>
-            <span className="pf-label">Applied rules</span>
+            <span className="pf-label">Applied policies</span>
             <div className="pf-intents">
-              {tmpl.applied_rules.map((r: string) => <span key={r} className="pf-chip">{r}</span>)}
+              {tmpl.required_policies.map((r: string) => <span key={r} className="pf-chip">{r}</span>)}
             </div>
           </div>
         )}
