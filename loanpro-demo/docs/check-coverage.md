@@ -80,7 +80,7 @@ Every numbered section of the policy, with the checks and sessions that attribut
 | 4.2.1 | Near prime | — | — | `decide_loan` |
 | 4.2.2 | Recent default | — | — | `decide_loan` |
 | 4.3 | Decision integrity | — | — | `decide_loan` |
-| 4.4 | Default outcome | — | — | — |
+| 4.4 | Default outcome | — | — | `decide_loan` |
 | 5 | Credit Tiers | — | — | — |
 | 6 | Loan Authority | — | — | — |
 | 6.1 | Underwriter authority | — | — | `decide_loan` |
@@ -186,7 +186,7 @@ What a reviewer signed off per tool. The app enforces none of it; the evaluator 
 | `update_application` | `amend_application` | write | Loan Officer, Underwriter, Branch Manager | officer_ui, underwriting, manager_console | loan_id, version | — | 1 | §6.3, §8.4, §8.6, §8.7 | — |
 | `apply_discount` | `apply_discount` | write | Underwriter, Branch Manager | underwriting, manager_console | loan_id, apr | — | 1 | §6.3, §8.2, §8.7 | requires_before=['get_risk_profile'] |
 | `request_manager_approval` | `request_approval` | write | Underwriter, Branch Manager | underwriting, manager_console | approval_id, loan_id, status | — | 1 | §6.2, §8.7 | — |
-| `decide_loan` | `decide_loan` | write | Underwriter, Branch Manager | underwriting, manager_console | loan_id, status | — | 1 | §4.1.1, §4.1.2, §4.1.3, §4.1.4, §4.2.1, §4.2.2, §4.3, §6.1, §6.2, §6.3, §8.3, §8.4, §8.5, §8.6, §8.7 | approval_over=50000; closing_obligation=send_decision_notice |
+| `decide_loan` | `decide_loan` | write | Underwriter, Branch Manager | underwriting, manager_console | loan_id, status | — | 1 | §4.1.1, §4.1.2, §4.1.3, §4.1.4, §4.2.1, §4.2.2, §4.3, §4.4, §6.1, §6.2, §6.3, §8.3, §8.4, §8.5, §8.6, §8.7 | approval_over=50000; closing_obligation=send_decision_notice |
 | `send_decision_notice` | `send_notice` | write | Underwriter, Branch Manager | underwriting, manager_console | notice_id, loan_id, kind | — | 1 | §8.5, §8.7 | — |
 | `fetch_document` | `read_document` | read | Loan Officer, Underwriter, Branch Manager | officer_ui, underwriting, manager_console | doc_id, applicant_id, kind, filename, content | — | 1 | §7.7, §7.8, §8.7 | trust=untrusted |
 | `search_applicants` | **off-catalog** | | | | | | | | |
