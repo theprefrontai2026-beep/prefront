@@ -78,12 +78,29 @@ POP_RULE_TREND = {"POP-03": "R-APPROVAL-OVER-50K"}
 
 
 def wait_for_ingestion(session_id: str) -> bool:
+    """Wait until the session's span count looks DONE, not just non-empty.
+
+    A session ingests over several oob-ingest poll cycles (root span, then
+    turn/LLM/tool spans land in later batches) - returning as soon as
+    `spans` is merely truthy caught the FIRST span and nothing else,
+    letting eval-engine run against a partial trace and silently produce
+    fewer (sometimes zero) verdicts than the full trace would - a real,
+    reproducible flake caught by re-running the grading harness live twice
+    in a row and seeing the same session's verdict count jump from 0 to 15
+    on a manual re-evaluation moments later. Debounced instead: only
+    "done" once the count is non-zero AND unchanged across two consecutive
+    polls (no growth since the last check) - generic, no per-scenario
+    expected span count needed.
+    """
     deadline = time.time() + INGEST_TIMEOUT_S
+    last_count: Optional[int] = None
     while time.time() < deadline:
         try:
             data = _get(f"{OOB_URL}/oob/sessions/{session_id}")
-            if data.get("spans"):
+            count = data.get("spans") or 0
+            if count and count == last_count:
                 return True
+            last_count = count
         except urllib.error.HTTPError:
             pass
         except Exception:  # noqa: BLE001

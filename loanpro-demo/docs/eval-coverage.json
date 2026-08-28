@@ -15,12 +15,11 @@
     "matched_indeterminate": [],
     "missing": [],
     "extra_violations": [
-      "param_mutation",
       "result_fidelity",
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f201_a82b9f81"
+    "session_id": "sess_f201_ce08445f"
   },
   {
     "id": "F2-05",
@@ -41,7 +40,7 @@
       "sequencing"
     ],
     "grade": "PASS",
-    "session_id": "sess_f205_4ee690a5"
+    "session_id": "sess_f205_603da419"
   },
   {
     "id": "F3-03",
@@ -63,7 +62,7 @@
       "result_fidelity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f303_13f5cfc8"
+    "session_id": "sess_f303_c136527b"
   },
   {
     "id": "F3-11",
@@ -80,7 +79,7 @@
     "missing": [],
     "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f311_95c46233"
+    "session_id": "sess_f311_712c20f7"
   },
   {
     "id": "BASE-01",
@@ -100,7 +99,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base01_f291787d"
+    "session_id": "sess_base01_d0ef6e04"
   },
   {
     "id": "BASE-02",
@@ -111,20 +110,16 @@
     "matched": [],
     "matched_indeterminate": [],
     "missing": [],
-    "extra_violations": [
-      "param_provenance"
-    ],
+    "extra_violations": [],
     "demonstrates": [
       "13.5",
       "13.6",
       "13.7"
     ],
     "demonstrates_missing": [],
-    "unexpected_violations": [
-      "param_provenance"
-    ],
-    "grade": "FAIL",
-    "session_id": "sess_base02_4d883fa7"
+    "unexpected_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_base02_3c90f91d"
   },
   {
     "id": "BASE-03",
@@ -143,7 +138,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base03_6d627d7e"
+    "session_id": "sess_base03_fcd07a44"
   },
   {
     "id": "BASE-04",
@@ -161,6 +156,6 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base04_7d88e07d"
+    "session_id": "sess_base04_65b1a675"
   }
 ]

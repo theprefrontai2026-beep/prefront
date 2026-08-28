@@ -7,13 +7,13 @@ verdicts/conformance-tags for each scenario session against
 
 | id | family | mode | grade | expected | matched | missing | extra |
 |---|---|---|---|---|---|---|---|
-| F2-01 | F2 | replay | **PASS** | error_blindness, param_provenance | error_blindness, param_provenance | - | param_mutation, result_fidelity, workflow_integrity |
+| F2-01 | F2 | replay | **PASS** | error_blindness, param_provenance | error_blindness, param_provenance | - | result_fidelity, workflow_integrity |
 | F2-05 | F2 | replay | **PASS** | param_staleness | param_staleness | - | field_scope, precondition, sequencing |
 | F3-03 | F3 | replay | **PASS** | version_conformance | version_conformance | - | field_restriction, field_scope, param_provenance, result_fidelity |
 | F3-11 | F3 | replay | **PASS** | redundancy | redundancy | - | - |
 | BASE-01 | BASE | replay | **PASS** | 13.2, 13.3, 13.7 | n/a | - | - |
-| BASE-02 | BASE | replay | **FAIL** | 13.5, 13.6, 13.7 | n/a | - | param_provenance |
+| BASE-02 | BASE | replay | **PASS** | 13.5, 13.6, 13.7 | n/a | - | - |
 | BASE-03 | BASE | llm | **PASS** | 11.4, 12.6 | n/a | - | - |
 | BASE-04 | BASE | llm | **PASS** | 11.2 | n/a | - | - |
 
-**7/8 PASS, 0/8 PARTIAL, 1/8 FAIL.**
+**8/8 PASS, 0/8 PARTIAL, 0/8 FAIL.**

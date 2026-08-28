@@ -5,7 +5,10 @@ them. Run with: python3 -m pytest test_grading_harness.py -q
 
 from __future__ import annotations
 
-from grading_harness import _cited, grade_scenario, render_report
+from unittest.mock import patch
+
+import grading_harness
+from grading_harness import _cited, grade_scenario, render_report, wait_for_ingestion
 
 
 def _verdict(check_id, status):
@@ -97,3 +100,24 @@ def test_render_report_counts_grades():
     assert "1/2 PASS, 0/2 PARTIAL, 1/2 FAIL" in report
     assert "| A | F1 | llm | **PASS**" in report
     assert "| B | F1 | llm | **FAIL**" in report
+
+
+# --- wait_for_ingestion --------------------------------------------------------
+# A real, reproducible flake this caught live: the old "spans truthy" check
+# returned as soon as the FIRST span landed, letting evaluate_session() run
+# against a partial trace and silently produce zero verdicts. Debounced
+# instead - only "done" once the span count is non-zero and unchanged across
+# two consecutive polls.
+
+def test_wait_for_ingestion_waits_for_a_stable_nonzero_count(monkeypatch):
+    monkeypatch.setattr(grading_harness, "INGEST_POLL_S", 0)
+    responses = iter([{"spans": 0}, {"spans": 2}, {"spans": 5}, {"spans": 5}])
+    with patch.object(grading_harness, "_get", lambda url: next(responses)):
+        assert wait_for_ingestion("sess-1") is True
+
+
+def test_wait_for_ingestion_never_stabilizing_times_out(monkeypatch):
+    monkeypatch.setattr(grading_harness, "INGEST_POLL_S", 0)
+    monkeypatch.setattr(grading_harness, "INGEST_TIMEOUT_S", 0)
+    with patch.object(grading_harness, "_get", lambda url: {"spans": 1}):
+        assert wait_for_ingestion("sess-1") is False

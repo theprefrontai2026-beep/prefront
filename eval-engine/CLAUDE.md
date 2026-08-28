@@ -238,15 +238,15 @@ skill-builder rule-pack compiler, `family3/` (call/scope/session checks),
 LoanPro's hand-authored `policy/rule_pack.yaml` + `policy/intent_catalog.yaml`,
 and the `intent_catalog.yaml` schema/generator (semantic-layer).
 
-## Step 15 (grading harness): run live, real bugs found and fixed
+## Step 15 (grading harness): run live, real bugs found and fixed - now 8/8
 
 `loanpro-demo/grading_harness.py` has now actually run against the live
-stack (8 scenarios: 4 baselines + F2-01/F2-05/F3-03/F3-11) - **7/8 PASS**,
-one documented known gap (below), report at `loanpro-demo/docs/eval-coverage.md`.
-Full 30-scenario catalogue run is still future work (this pass was
-deliberately scoped: mostly `mode: "replay"` scenarios plus a couple of
-`llm` ones, to keep the metered LLM cost small) - `make grade-loanpro` runs
-everything once someone's ready to spend that.
+stack (8 scenarios: 4 baselines + F2-01/F2-05/F3-03/F3-11) - **8/8 PASS**,
+report at `loanpro-demo/docs/eval-coverage.md`. Full 30-scenario catalogue
+run is still future work (this pass was deliberately scoped: mostly
+`mode: "replay"` scenarios plus a couple of `llm` ones, to keep the metered
+LLM cost small) - `make grade-loanpro` runs everything once someone's ready
+to spend that.
 
 Four real bugs the live run found and fixed, in order of discovery:
 
@@ -294,22 +294,64 @@ completing the field lists (the catalog is deliberately not exhaustively
 re-audited against the DB schema for every entry this pass - expect the
 same class of gap on other intents once more scenarios run).
 
-**Known, documented, NOT fixed this pass**: `param_provenance` flags
-agent-synthesized categorical decisions (`decide_loan`'s `decision:
-"approved"`, `send_decision_notice`'s `kind: "approval_letter"`,
-`request_manager_approval`'s free-text `reason`) as "fabricated," since
-their value never appears verbatim in a user message or prior tool result -
-true of ANY classification the agent is supposed to produce as its own
-judgment, not just literally-invented facts. `prefront-check-families.md`'s
-own examples for this check ("agent invented an account ID, amount, rate")
-are all traceable identifiers/quantities, not categorical choices - the
-check's current form doesn't distinguish the two. This is why `BASE-02`
-(the clean approval-with-notice baseline) still shows 1/8 FAIL: three
-`param_provenance` false positives, nothing else. Fixing this properly
-needs a real design decision (how does a generic engine recognize "this
-field's value SET is small/enumerated, so absence-of-a-verbatim-source
-isn't fabrication" without hardcoding field names?) - deliberately not
-guessed at under time pressure in this pass.
+**Two more real bugs, found and fixed in a later pass** (the ones that took
+`BASE-02` from FAIL to PASS and kept `F2-01`/`BASE-04` from regressing along
+the way):
+
+5. **`param_provenance` treated an untraceable NON-numeric value as
+   confidently fabricated, same as a numeric one.** `decide_loan`'s
+   `decision: "approved"`, `send_decision_notice`'s `kind:
+   "approval_letter"`, `request_manager_approval`'s free-text `reason` never
+   appear verbatim in a user message or prior tool result - true of ANY
+   classification the agent is supposed to produce as its own judgment, not
+   just literally-invented facts. `prefront-check-families.md`'s own
+   examples for this check ("agent invented an account ID, amount, rate")
+   are all numeric-shaped quantities/identifiers, never categorical choices.
+   Fixed generically (no field names, no artifacts - `is_numeric_like()` in
+   `provenance.py`, used by `param_provenance.py`): an untraceable NUMERIC
+   value is still `violated`/`block` (a genuine quantity/identifier, if
+   real, must have come from somewhere); an untraceable NON-numeric value is
+   now `indeterminate`/`approval_required` (Hard Rule 6/7 - the check
+   honestly can't tell "fabricated claim" from "agent's own judgment" from
+   the value alone, so it fail-safes instead of guessing). This is also why
+   `evaluate_family2_parameter_side` in `semantic-mcp-server` (Phase D /
+   step 18, below) excludes `param_provenance` from inline reuse entirely -
+   a much harder, unconditional version of this same shape of problem, found
+   while wiring that in.
+6. **`_find_transform`'s near-miss ("mutated") fallback used a hardcoded 50%
+   relative-tolerance window, unrelated to the caller's actual configured
+   tolerance.** This let TWO UNRELATED numeric identifiers of similar
+   magnitude "explain away" a fabrication as a mutation - caught live:
+   fixing bug 5 above removed a false-positive `param_provenance` verdict on
+   `F2-01`'s `decision` field, which had been (coincidentally) satisfying
+   the scenario's expected `param_provenance` finding for years - once it
+   was gone, the scenario's REAL fabricated value (`decide_loan`'s
+   `loan_id=7099`) turned out to have been matching an unrelated
+   `applicant_id` from earlier in the session as a "mutated `round()`"
+   origin the whole time (same order of magnitude, ~30% apart, well inside
+   the old 50% window) - masking the true finding completely, invisibly,
+   because the OLD bug's false positive happened to cover for it. Fixed:
+   the near-miss window now scales off the caller's own `rel_tol`
+   (`max(rel_tol * 20, 0.05)` - 10% at the production default of
+   `rel_tol=0.005`, floored at 5%) instead of a fixed 50%.
+
+Also a real, reproducible harness-side (not engine-side) race, found the
+same way - re-running the full 8-scenario set live, twice in a row, and
+diffing: **`wait_for_ingestion` returned as soon as a session's span count
+was merely non-zero**, which is only ever the FIRST span (the session's
+turn/LLM/tool spans land in later oob-ingest poll cycles) - `evaluate_session`
+would then run against a genuinely partial trace and silently produce zero
+verdicts, which isn't the "no spans ingested yet" case its retry logic
+checks for, so the first (wrong) result was accepted as final. Manually
+re-running `/eval/run?force=true` moments later against the SAME session
+reliably produced the full, correct verdict set - confirming it was a
+readiness-check bug, not a real regression. Fixed: `wait_for_ingestion` now
+waits for the span count to be non-zero AND unchanged across two
+consecutive polls (debounced completeness, not "spans truthy") - generic,
+no per-scenario expected count needed. Covered by
+`test_wait_for_ingestion_waits_for_a_stable_nonzero_count` /
+`test_wait_for_ingestion_never_stabilizing_times_out` in
+`loanpro-demo/test_grading_harness.py`.
 
 Step 17 (population checks) is also DONE - `family3/population.py`
 (`outcome_consistency`, `invocation_drift`, `verdict_trend`), invoked

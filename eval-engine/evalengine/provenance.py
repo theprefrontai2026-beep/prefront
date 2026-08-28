@@ -85,6 +85,17 @@ def _normalize(value: Any) -> Any:
     return value
 
 
+def is_numeric_like(value: Any) -> bool:
+    """True if `value` has an extractable numeric component. The shape
+    param_provenance uses to tell a factual quantity/identifier claim (an
+    account ID, an amount, a rate - prefront-check-families.md's own examples
+    for that check are all numeric-shaped) from a categorical judgment
+    (an approval decision, a notice kind) with no such component: only the
+    former needs a traceable origin to not be "fabricated" - see
+    param_provenance.py."""
+    return _numeric(value) is not None
+
+
 def _numeric(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
@@ -170,10 +181,28 @@ def _within_tolerance(a: float, b: float, abs_tol: float, rel_tol: float) -> boo
 
 def _find_transform(value: Any, candidates: list[Candidate], abs_tol: float,
                     rel_tol: float) -> tuple[Optional[Candidate], str, Optional[float]]:
-    """Returns (candidate, transform_name, delta) - delta set only on a near-miss ("mutated")."""
+    """Returns (candidate, transform_name, delta) - delta set only on a near-miss ("mutated").
+
+    The near-miss ("best_miss") bucket exists for param_mutation's real use
+    case - a value that's CLOSE to a transform of some candidate but outside
+    the tight exact-match tolerance (a genuine rounding/unit slip). Its
+    acceptance window scales off the caller's own rel_tol rather than a fixed
+    constant: a flat 50% window (this used to be hardcoded) means any two
+    same-order-of-magnitude numeric IDs are "near" each other by chance - a
+    live end-to-end run against a real fixture caught this for real (a
+    fabricated numeric identifier matched an UNRELATED identifier from
+    earlier in the session as a "mutated round()" origin, purely because they
+    happened to be the same order of magnitude, masking param_provenance's
+    fabrication finding entirely). 20x rel_tol keeps the near-miss window
+    meaningfully tighter than "same ballpark" while still wide enough to
+    catch a real rounding/unit-conversion slip (rel_tol's default of 0.005 ->
+    a 10% near-miss window), floored at 5% so a very tight configured rel_tol
+    doesn't make near-miss reporting useless.
+    """
     target = _numeric(value)
     if target is None:
         return None, "", None
+    near_miss_limit = max(rel_tol * 20, 0.05)
     best_miss: tuple[Optional[Candidate], str, Optional[float]] = (None, "", None)
     for c in candidates:
         base = _numeric(c.value)
@@ -188,7 +217,7 @@ def _find_transform(value: Any, candidates: list[Candidate], abs_tol: float,
                 return c, name, None
             delta = abs(derived - target)
             rel = delta / max(abs(target), 1.0)
-            if rel < 0.5 and (best_miss[2] is None or delta < best_miss[2]):
+            if rel < near_miss_limit and (best_miss[2] is None or delta < best_miss[2]):
                 best_miss = (c, name, delta)
     if best_miss[0] is not None:
         return best_miss

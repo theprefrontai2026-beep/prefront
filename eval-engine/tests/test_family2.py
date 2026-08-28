@@ -26,6 +26,19 @@ def test_param_provenance_fabricated_and_grounded():
     assert by_arg["get_balance.account_id"] == "satisfied"
 
 
+def test_param_provenance_untraceable_categorical_value_is_indeterminate_not_violated():
+    # decision="approved" has no origin (it's the agent's own synthesized
+    # judgment, not a relayed fact) and is non-numeric - unlike a fabricated
+    # numeric quantity/identifier, this must not be a confident violation.
+    step0 = make_step(0, "decide_loan", args={"loan_id": 7001, "decision": "approved"}, turn_seq=0)
+    session = make_session(steps=[step0])
+    verdicts = param_provenance.evaluate(session, make_ctx(session))
+    by_arg = {v.evidence.excerpt: v for v in verdicts}
+    assert by_arg["decide_loan.decision"].status == "indeterminate"
+    assert by_arg["decide_loan.decision"].effect == "approval_required"
+    assert by_arg["decide_loan.loan_id"].status == "violated"  # numeric, no origin: still fabrication
+
+
 # --- param_mutation -----------------------------------------------------------
 
 def test_param_mutation_near_miss_flags_violated():
