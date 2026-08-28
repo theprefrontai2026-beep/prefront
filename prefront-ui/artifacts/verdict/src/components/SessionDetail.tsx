@@ -19,6 +19,22 @@ type Span = {
   session_id?: string; user_id?: string; user_role?: string; channel?: string; intent_name?: string;
 };
 
+type EvalVerdict = {
+  session_id: string; check_id: string; family: string; rule_id: string;
+  status: "satisfied" | "violated" | "indeterminate"; effect: string;
+  indeterminate_reason: string; detail: string; evidence_span_ids: string[];
+  evidence_excerpt: string; source: string; mode: string; engine_version: string;
+  binding_profile_version: string; visibility_profile_version: string;
+  rule_pack_version: string; catalog_version: string; evaluated_at: string;
+};
+type ConformanceTag = {
+  session_id: string; check_id: string; rule_id: string; policy_document: string;
+  clause_id: string; section: string; page: number; clause_text: string;
+  evidence_span_ids: string[]; engine_version: string; rule_pack_version: string;
+  catalog_version: string; evaluated_at: string;
+};
+const STATUS_TONE: Record<string, string> = { violated: "red", satisfied: "green", indeterminate: "amber" };
+
 async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
   const text = await res.text();
@@ -165,8 +181,10 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
   const [spans, setSpans] = useState<Span[]>([]);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [verdicts, setVerdicts] = useState<EvalVerdict[]>([]);
+  const [tags, setTags] = useState<ConformanceTag[]>([]);
 
-  useEffect(() => { setSpans([]); setSelected(null); setErr(""); }, [sessionId]);
+  useEffect(() => { setSpans([]); setSelected(null); setErr(""); setVerdicts([]); setTags([]); }, [sessionId]);
   // A session handed over right after "Run" may not be ingested yet (the
   // OTLP tap batches for a few seconds; the orchestrator's root arrives via
   // the Phoenix poll). Re-fetch on every refresh tick until it lands.
@@ -175,6 +193,12 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
     getJSON<{ spans: Span[] }>(`/oob/sessions/${encodeURIComponent(sessionId)}`)
       .then((d) => { if (alive) { setSpans(d.spans); setErr(""); } })
       .catch((e) => { if (alive) setErr(/404/.test(String(e?.message || e)) ? "Not ingested yet — waiting for the OTLP tap / Phoenix poll…" : String(e?.message || e)); });
+    // Best-effort — eval-engine may not have evaluated this session yet, or
+    // Family 1/3 may simply not be configured; never blocks the trace view.
+    getJSON<{ verdicts: EvalVerdict[] }>(`/eval/sessions/${encodeURIComponent(sessionId)}/verdicts`)
+      .then((d) => { if (alive) setVerdicts(d.verdicts); }).catch(() => {});
+    getJSON<{ conformance_tags: ConformanceTag[] }>(`/eval/sessions/${encodeURIComponent(sessionId)}/conformance`)
+      .then((d) => { if (alive) setTags(d.conformance_tags); }).catch(() => {});
     return () => { alive = false; };
   }, [sessionId, refreshKey]);
 
@@ -196,6 +220,17 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
             {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turns · {tools.length} tool calls · {traces.length} trace{traces.length === 1 ? "" : "s"}
           </div>
           {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}{policy.map((c) => <span key={c} className="pf-oob-chip">§{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger and the policy sections they attribute to (from the harness, not a verdict)</span></div>}
+          {(verdicts.length > 0 || tags.length > 0) && (
+            <div style={{ marginTop: 4 }}>
+              {verdicts.filter((v) => v.status !== "satisfied").map((v, i) => (
+                <span key={"v" + i} className={`pf-oob-chip ${STATUS_TONE[v.status] || ""}`} title={v.detail}>{v.check_id} · {v.status}</span>
+              ))}
+              {tags.map((t, i) => (
+                <span key={"t" + i} className="pf-oob-chip green" title={t.clause_text || t.check_id}>{t.check_id}{t.section ? ` · §${t.section}` : ""} ✓</span>
+              ))}
+              <span className="pf-oob-subtle"> ← eval-engine's actual verdicts for this session (green = satisfied/conformance, red/amber = violated/indeterminate)</span>
+            </div>
+          )}
         </div>
         <div className="pf-oob-actions">
           {onOpenTrace && traces.map((t) => <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}>trace {short(t)}</button>)}

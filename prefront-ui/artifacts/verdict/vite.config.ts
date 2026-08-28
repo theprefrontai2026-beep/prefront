@@ -4,12 +4,14 @@ import path from "path";
 
 // Verdict is mostly a standalone app: the orchestrator calls
 // (/api/scenarios, /api/run) are plain cross-origin fetches at an absolute
-// URL, and that service already sends permissive CORS headers. The one
-// exception is SessionDetail's oob-ingest calls, which use a relative path
-// (/oob/sessions/:id) inherited from the main app's Observability.tsx — that
-// one needs a same-origin proxy, mirrored here for dev and in
-// verdict-nginx.conf for the built container.
+// URL, and that service already sends permissive CORS headers. The
+// exceptions are SessionDetail's oob-ingest calls (/oob/sessions/:id) and
+// eval-engine's verdict/conformance calls (/eval/sessions/:id/*), both
+// inherited from the main app's Observability.tsx — those need a
+// same-origin proxy, mirrored here for dev and in verdict-nginx.conf for
+// the built container.
 const OOB_TARGET = process.env.VITE_OOB_TARGET || "http://localhost:8110";
+const EVAL_TARGET = process.env.VITE_EVAL_TARGET || "http://localhost:8120";
 
 const rawPort = process.env.PORT;
 
@@ -57,6 +59,7 @@ export default defineConfig({
     },
     proxy: {
       "/oob": { target: OOB_TARGET, changeOrigin: true },
+      "/eval": { target: EVAL_TARGET, changeOrigin: true },
     },
   },
   preview: {

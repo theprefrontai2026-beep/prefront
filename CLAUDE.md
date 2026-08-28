@@ -408,7 +408,13 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
 - Cost is a list-price estimate from `config.price_for` (prefix match on model
   name; `OOB_MODEL_PRICES` JSON overrides). Unknown model ⇒ $0.
 - UI: `components/Observability.tsx` (tab id `oob`; views Overview / Sessions / Traces /
-  LLM / Ingestion), CSS under `.pf-oob-*`. Vite
+  LLM / Ingestion / **Findings**), CSS under `.pf-oob-*` (the Findings view and
+  `SessionDetail`'s verdict/conformance chips reuse this same prefix — no new
+  CSS needed). Findings queries eval-engine's `/eval/*` (autonomous_build.md
+  step 16), a separate nginx `location /eval/` block (and `VITE_EVAL_TARGET`
+  dev proxy) alongside the existing `/oob/` one; Verdict's `SessionDetail.tsx`
+  and `verdict-nginx.conf` carry the same addition (its own hand-curated CSS
+  copy already had the `.pf-oob-chip.red/green/amber` tone classes). Vite
   dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
 - Quick checks: `curl :8110/oob/status` (both sources + counts),
   `curl -X POST :8110/oob/sync` (pull now), `docker exec prefront-clickhouse-1

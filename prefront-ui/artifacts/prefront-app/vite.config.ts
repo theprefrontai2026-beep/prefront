@@ -30,6 +30,7 @@ const API_TARGET = process.env.VITE_API_TARGET || "http://localhost:8000";
 const SEMANTIC_TARGET = process.env.VITE_SEMANTIC_TARGET || "http://localhost:8010";
 const API_SERVER = "http://localhost:8080";
 const OOB_TARGET = process.env.VITE_OOB_TARGET || "http://localhost:8110";
+const EVAL_TARGET = process.env.VITE_EVAL_TARGET || "http://localhost:8120";
 
 export default defineConfig({
   base: basePath,
@@ -77,6 +78,7 @@ export default defineConfig({
       "/design/semantic": { target: SEMANTIC_TARGET, changeOrigin: true },
       "/design": { target: API_TARGET, changeOrigin: true },
       "/oob": { target: OOB_TARGET, changeOrigin: true },
+      "/eval": { target: EVAL_TARGET, changeOrigin: true },
     },
   },
   preview: {

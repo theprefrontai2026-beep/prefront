@@ -342,6 +342,7 @@ services:
       - api-server
       - pii-analyzer
       - oob-ingest
+      - eval-engine
 
   # ---- Verdict: standalone LoanPro scenario runner (nginx, static) ---------
   # The main UI's Runtime tab (SessionRunner), pulled out into its own small
@@ -357,6 +358,7 @@ services:
     ports: ["5180:80"]
     depends_on:
       - loanpro-orchestrator
+      - eval-engine
       - oob-ingest
 
   # ==========================================================================

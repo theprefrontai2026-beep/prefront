@@ -261,8 +261,21 @@ session. `grading_harness.py` drives this for POP-01/02/03 (`POP_VARIANT` /
 `POP_DRIFT` / `POP_RULE_TREND` maps in that file - demo-specific knowledge
 that belongs in the fixture-side harness, never in eval-engine).
 
-Still open: a Findings UI (step 16) and Phase D inline reuse (step 18, see
-below). Step 19 (Preflight)'s schema + structural validator + prompt +
+Step 16 (Findings UI) is also DONE: `prefront-app`'s Observability tab
+gained a "Findings" view over `/eval/findings` (family/check filters,
+click-through to `SessionDetail`), and `SessionDetail` (both the main app's
+and Verdict's copy) now shows real `/eval/sessions/<id>/verdicts` +
+`/eval/sessions/<id>/conformance` chips alongside the existing static
+"checks this scenario is built to trigger" ones - the former is what the
+harness EXPECTS, the latter is what the engine ACTUALLY found. nginx (both
+`nginx.conf` and `verdict-nginx.conf`) gained a `/eval/` proxy block
+mirroring the existing `/oob/` one; `ui`/`verdict` compose services now
+depend on `eval-engine`. Typechecked clean via the documented WSL docker-tsc
+workaround; not yet exercised against a running eval-engine in a browser
+(same "not run live" caveat as the grading harness).
+
+Still open: Phase D inline reuse (step 18, see below). Step 19 (Preflight)'s
+schema + structural validator + prompt +
 LLM-call plumbing are DONE in `semantic-layer/semanticlayer/preflight.py`
 (`CandidateScenario`, `validate_candidate_scenario`, `render_prompt`,
 `generate_candidate_scenarios` - the LLM client is dependency-injected, so

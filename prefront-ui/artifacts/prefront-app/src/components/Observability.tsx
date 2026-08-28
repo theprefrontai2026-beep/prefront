@@ -87,16 +87,36 @@ type LlmView = {
 };
 type Scenario = { scenario_id: string; runs: number; capability: string; role: string; p50_ms: number; last_run: string };
 
+// eval-engine (/eval/*) — verdicts are family2/family1/family3 checks over a
+// session; findings are the violated subset; conformance tags are the
+// satisfied-and-exercised subset with a policy citation when one exists.
+type EvalVerdict = {
+  session_id: string; check_id: string; family: string; rule_id: string;
+  status: "satisfied" | "violated" | "indeterminate"; effect: string;
+  indeterminate_reason: string; detail: string; evidence_span_ids: string[];
+  evidence_excerpt: string; source: string; mode: string; engine_version: string;
+  binding_profile_version: string; visibility_profile_version: string;
+  rule_pack_version: string; catalog_version: string; evaluated_at: string;
+};
+type ConformanceTag = {
+  session_id: string; check_id: string; rule_id: string; policy_document: string;
+  clause_id: string; section: string; page: number; clause_text: string;
+  evidence_span_ids: string[]; engine_version: string; rule_pack_version: string;
+  catalog_version: string; evaluated_at: string;
+};
+type FindingsPage = { findings: EvalVerdict[]; total: number; limit: number; offset: number };
+
 /* ── helpers ────────────────────────────────────────────────────────────── */
 
 const RANGES: { label: string; seconds: number }[] = [
   { label: "15m", seconds: 900 }, { label: "1h", seconds: 3600 }, { label: "6h", seconds: 6 * 3600 },
   { label: "24h", seconds: 86400 }, { label: "7d", seconds: 7 * 86400 }, { label: "All", seconds: 0 },
 ];
-const VIEWS = ["overview", "sessions", "traces", "llm", "ingestion"] as const;
+const VIEWS = ["overview", "sessions", "traces", "llm", "ingestion", "findings"] as const;
 type View = typeof VIEWS[number];
 const VIEW_LABEL: Record<View, string> = {
   overview: "Overview", sessions: "Sessions", traces: "Traces", llm: "LLM", ingestion: "Ingestion",
+  findings: "Findings",
 };
 
 const num = (n: number | undefined | null) => (n ?? 0).toLocaleString();
@@ -708,8 +728,10 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
   const [spans, setSpans] = useState<Span[]>([]);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [verdicts, setVerdicts] = useState<EvalVerdict[]>([]);
+  const [tags, setTags] = useState<ConformanceTag[]>([]);
 
-  useEffect(() => { setSpans([]); setSelected(null); setErr(""); }, [sessionId]);
+  useEffect(() => { setSpans([]); setSelected(null); setErr(""); setVerdicts([]); setTags([]); }, [sessionId]);
   // A session just run (e.g. via Verdict) may not be ingested yet (the OTLP
   // tap batches for a few seconds; the orchestrator's root arrives via the
   // Phoenix poll). Re-fetch on every refresh tick until it lands.
@@ -718,6 +740,12 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
     getJSON<{ spans: Span[] }>(`/oob/sessions/${encodeURIComponent(sessionId)}`)
       .then((d) => { if (alive) { setSpans(d.spans); setErr(""); } })
       .catch((e) => { if (alive) setErr(/404/.test(String(e?.message || e)) ? "Not ingested yet — waiting for the OTLP tap / Phoenix poll…" : String(e?.message || e)); });
+    // Best-effort — eval-engine may not have evaluated this session yet, or
+    // Family 1/3 may simply not be configured; never blocks the trace view.
+    getJSON<{ verdicts: EvalVerdict[] }>(`/eval/sessions/${encodeURIComponent(sessionId)}/verdicts`)
+      .then((d) => { if (alive) setVerdicts(d.verdicts); }).catch(() => {});
+    getJSON<{ conformance_tags: ConformanceTag[] }>(`/eval/sessions/${encodeURIComponent(sessionId)}/conformance`)
+      .then((d) => { if (alive) setTags(d.conformance_tags); }).catch(() => {});
     return () => { alive = false; };
   }, [sessionId, refreshKey]);
 
@@ -739,6 +767,17 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
             {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turns · {tools.length} tool calls · {traces.length} trace{traces.length === 1 ? "" : "s"}
           </div>
           {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}{policy.map((c) => <span key={c} className="pf-oob-chip">§{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger and the policy sections they attribute to (from the harness, not a verdict)</span></div>}
+          {(verdicts.length > 0 || tags.length > 0) && (
+            <div style={{ marginTop: 4 }}>
+              {verdicts.filter((v) => v.status !== "satisfied").map((v, i) => (
+                <span key={"v" + i} className={`pf-oob-chip ${STATUS_TONE[v.status] || ""}`} title={v.detail}>{v.check_id} · {v.status}</span>
+              ))}
+              {tags.map((t, i) => (
+                <span key={"t" + i} className="pf-oob-chip green" title={t.clause_text || t.check_id}>{t.check_id}{t.section ? ` · §${t.section}` : ""} ✓</span>
+              ))}
+              <span className="pf-oob-subtle"> ← eval-engine's actual verdicts for this session (green = satisfied/conformance, red/amber = violated/indeterminate)</span>
+            </div>
+          )}
         </div>
         <div className="pf-oob-actions">
           {traces.map((t) => <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}>trace {short(t)}</button>)}
@@ -894,6 +933,80 @@ function IngestionView({ status, scenarios, onSync, onClear, busy }: {
   );
 }
 
+/* ── findings (eval-engine) ────────────────────────────────────────────── */
+
+const STATUS_TONE: Record<string, string> = { violated: "red", satisfied: "green", indeterminate: "amber" };
+
+function StatusChip({ status }: { status: string }) {
+  return <span className={`pf-oob-chip ${STATUS_TONE[status] || ""}`}>{status}</span>;
+}
+
+function FindingsView({ onOpenSession }: { onOpenSession: (id: string | null) => void }) {
+  const [family, setFamily] = useState("");
+  const [checkId, setCheckId] = useState("");
+  const [rows, setRows] = useState<EvalVerdict[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [err, setErr] = useState("");
+  const limit = 50;
+
+  useEffect(() => { setOffset(0); }, [family, checkId]);
+  useEffect(() => {
+    let alive = true;
+    getJSON<FindingsPage>(`/eval/findings${qs({ family, check_id: checkId, limit, offset })}`)
+      .then((d) => { if (alive) { setRows(d.findings); setTotal(d.total); setErr(""); } })
+      .catch((e) => { if (alive) setErr(String(e?.message || e)); });
+    return () => { alive = false; };
+  }, [family, checkId, offset]);
+
+  const checkIds = useMemo(() => Array.from(new Set(rows.map((r) => r.check_id))).sort(), [rows]);
+  const sel = (label: string, value: string, set: (v: string) => void, opts: string[]) => (
+    <label className="pf-oob-filter">
+      <span>{label}</span>
+      <select value={value} onChange={(e) => set(e.target.value)}>
+        <option value="">All</option>
+        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </label>
+  );
+
+  return (
+    <div className="pf-oob-stack">
+      <section className="pf-panel">
+        <div className="pf-oob-filters">
+          {sel("Family", family, setFamily, ["family1", "family2", "family3"])}
+          {sel("Check", checkId, setCheckId, checkIds)}
+          <span className="pf-oob-subtle">Violations only — eval-engine's shadow evaluation of every ingested session (see eval-engine/CLAUDE.md). A clean stack shows none.</span>
+        </div>
+        {err && <div className="pf-oob-error">Findings backend: {err}</div>}
+        {rows.length ? (
+          <table className="pf-oob-table">
+            <thead><tr><th>When</th><th>Session</th><th>Family</th><th>Check</th><th>Effect</th><th>Rule</th><th>Detail</th></tr></thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable" onClick={() => onOpenSession(r.session_id)}>
+                  <td className="nowrap">{when(r.evaluated_at)}</td>
+                  <td className="mono">{r.session_id}</td>
+                  <td className="mono">{r.family}</td>
+                  <td><StatusChip status={r.status} />{" "}{r.check_id}</td>
+                  <td className="mono">{r.effect}</td>
+                  <td className="mono">{r.rule_id || "—"}</td>
+                  <td className="pf-oob-preview" title={r.detail}>{r.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <Empty text={err ? "" : "No findings in range — either nothing violated, or Family 1/3 have no rule_pack/intent_catalog configured."} />}
+        <div className="pf-oob-pager">
+          <span>{total ? `${offset + 1}–${Math.min(total, offset + rows.length)} of ${num(total)}` : "0 findings"}</span>
+          <button className="pf-btn sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
+          <button className="pf-btn sm" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}>Next ›</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 /* ── root ───────────────────────────────────────────────────────────────── */
 
 export default function Observability({ active = true }: { active?: boolean }) {
@@ -980,6 +1093,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
       {view === "traces" && <TracesView since={since} project={project} facets={facets} refreshKey={tick} initialTrace={openTrace} onOpenTrace={goTrace} />}
       {view === "llm" && <LlmView data={llm} onOpenTrace={goTrace} />}
       {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}
+      {view === "findings" && <FindingsView onOpenSession={goSession} />}
     </div>
   );
 }
