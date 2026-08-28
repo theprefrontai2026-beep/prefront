@@ -608,12 +608,13 @@ reconstruction pipeline). Run `sh eval-engine/sync.sh` after editing any
 vendored file; `sh eval-engine/sync.sh --check` reports drift - IS wired into
 CI (`.github/workflows/tests.yml`'s `eval-engine` job, added step 20).
 
-**Live-verified against the real LoanPro Postgres** (scoped bring-up:
-`docker compose --profile mcp --profile securebank up -d --build loanpro-db
-loanpro-seed loanpro-mcp` - the `securebank` profile is required alongside
-`mcp` only because `semantic-mcp-server`'s own compose entry, itself behind
-`mcp`, depends on `securebank-db`, which compose validates even when that
-service is never actually started here). Two `call_governed()` calls made in
+**Live-verified against the real LoanPro Postgres** (scoped bring-up, at the
+time of this run still on the single shared compose file - now (see root
+CLAUDE.md's "Demo deployments are separate from the engine") the equivalent
+command is `docker compose -f loanpro-demo/docker-compose.yml --profile mcp
+up -d --build loanpro-db loanpro-seed loanpro-mcp`, with no `securebank`
+profile needed at all since LoanPro's compose file no longer shares a
+project with SecureBank's). Two `call_governed()` calls made in
 one Python process against the running `loanpro-mcp` container, with a single
 `session_state` session id and `identity.act_as_var` set once (Olivia Reed, a
 Loan Officer) to mimic one real SSE connection making two tool calls:

@@ -21,10 +21,14 @@ skill-builder, so the policy compiler / semantic layer can ground rules here.
 ## Quick start (everything live, in Docker)
 
 ```bash
-docker compose up -d --build      # Postgres + the live services:
+# from the repo root, engine first (this demo's compose attaches to its
+# network/artifacts volume — see this file's own docker-compose.yml header):
+docker compose up -d --build
+docker compose -f securebank-demo/docker-compose.yml up -d --build
+                                  # Postgres + the live services:
                                   #   securebank-ungoverned  :8096  (LLM + raw SQL)
                                   #   securebank-mcp         :8100  (ONE Prefront MCP server)
-                                  #   securebank-demo        :8095  (orchestrator)
+                                  #   securebank-orchestrator :8095  (orchestrator)
 ```
 
 Then open the engine UI's **Runtime** tab (`http://localhost:5173` → 4 · Runtime,

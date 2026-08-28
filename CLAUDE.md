@@ -19,9 +19,9 @@ Anything an LLM emits is a **candidate** that must pass schema validation + huma
 
 ## Domain independence (this repo's defining principle)
 
-The engine names **no table, column, policy, or tenant** — it is pure mechanism (README §"domain independence"). All application vocabulary lives in the published artifacts/config, not in code: `grep -rin securebank` over the Python/JS finds hits only in `docker-compose.yaml` (the bundled example's DSN / artifact paths) and the demo's published `securebank-demo/policy/` artifacts, never in engine code. Keep it that way — do not hardcode a domain's tables, roles, or thresholds into any service.
+The engine names **no table, column, policy, or tenant** — it is pure mechanism (README §"domain independence"). All application vocabulary lives in the published artifacts/config, not in code: `grep -rin securebank` over the Python/JS finds hits only in `docker-compose.yaml` (one DSN default — see below) and the demo's OWN `securebank-demo/` directory (its `docker-compose.yml`, code, and published `policy/` artifacts), never in engine code proper. Keep it that way — do not hardcode a domain's tables, roles, or thresholds into any service.
 
-The bundled `docker-compose.yaml` wires **SecureBank as the example deployment** (see `securebank-demo/`, in-repo): the runtime `semantic-mcp-server` serves `/artifacts/securebank-demo/` against the SecureBank Postgres (in this compose at `:5434`). The demo ships curated artifacts (`securebank-demo/policy/`) seeded into the shared `artifacts` volume; this repo is the engine plus that one worked example.
+This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml` defines no demo's Postgres, agent, or orchestrator — LoanPro and SecureBank each have their own compose file (`loanpro-demo/docker-compose.yml`, `securebank-demo/docker-compose.yml`), separate Compose projects that attach to the engine's network + `artifacts` volume as `external: true` (see either file's header, or "Active demo: LoanPro" below). The one remaining demo-shaped default left IN the engine file is `semantic-mcp-server`'s `DATABASE_URL`/artifact paths, which still point at SecureBank by default (see that service's own comment for why this one is a deliberate exception) — it is a URL/path *string*, not demo code, and resolves to nothing until you've also brought `securebank-demo/docker-compose.yml` up.
 
 ## Services (`docker-compose.yaml`)
 
@@ -32,7 +32,7 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call — native `governance/rules.py`/`decide.py` over `policy.yaml`, **plus** (autonomous_build.md step 18) eval-engine's single-call-safe checks inline (`governance/inline_checks.py`: `family3.call` pre-execution, `family1.content` post-execution, and five of Family 2's six parameter-side checks pre-execution using a new per-connection `governance/session_state.py` history — `param_provenance` excluded, unconditional false positives with no turn/message corpus at this layer, see `eval-engine/CLAUDE.md`'s step 18 section — all over `rule_pack.yaml`/`intent_catalog.yaml`, vendored from `eval-engine/` via `eval-engine/sync.sh`, unconfigured by default). Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`). **Behind compose profile `mcp` — `docker compose up` does NOT start it**; the demos run their own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101, the latter pointed at LoanPro's `rule_pack.yaml`/`intent_catalog.yaml`) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/pii/` → :8020 |
-| verdict | `prefront-ui/artifacts/verdict` | 5180 | **Verdict** — standalone "business decision evaluator": what was the LoanPro Runtime tab (`SessionRunner`), extracted into its own small app so it can run/share independently of the design-time UI. Talks to `loanpro-orchestrator` by absolute URL (cross-origin, CORS already open); nginx proxies only `/oob/` → :8110 for session inspection. The main UI's Runtime tab (and SecureBank's governed-vs-ungoverned diff view, which lived in the same `RuntimeDiff.tsx`) has since been **removed** — Verdict is the only place to run LoanPro's scenario catalogue interactively now |
+| verdict | `prefront-ui/artifacts/verdict` | 5180 | **Verdict** — standalone "business decision evaluator": what was the LoanPro Runtime tab (`SessionRunner`), extracted into its own small app so it can run/share independently of the design-time UI. Talks to `loanpro-orchestrator` by absolute URL (cross-origin, CORS already open); nginx proxies only `/oob/` → :8110 for session inspection. The main UI's Runtime tab (and SecureBank's governed-vs-ungoverned diff view, which lived in the same `RuntimeDiff.tsx`) has since been **removed** — Verdict is the only place to run LoanPro's scenario catalogue interactively now. **Deployed from `loanpro-demo/docker-compose.yml` now, not the engine's** — it's a LoanPro-specific tool, moved there in the demo/engine compose split (see "Active demo: LoanPro" below) |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
@@ -57,19 +57,35 @@ The UI is a **pnpm workspace** (`pnpm-workspace.yaml`) with packages under `arti
 
 The `db` lib is the Drizzle schema shared between the `api-server` and the Drizzle migrations (`lib/db/src/`). The OpenAPI spec at `lib/api-spec/openapi.yaml` is the contract; `api-client-react` (generated by orval) is the typed React-Query client.
 
-## Active demo: LoanPro (`loanpro-demo/`), SecureBank is profile-disabled
+## Active demo: LoanPro (`loanpro-demo/`)
 
-**LoanPro is the demo a plain `docker compose up` brings up** (orchestrator :8098,
-ungoverned agent :8097, app-mcp :8102, engine MCP :8101, Postgres :5435) and the
-UI's default (`DEFAULT_DEMO` in `demos.ts`, and the api-server's fallback in
-`routes/decisions.ts`).
-**SecureBank sits behind compose profile `securebank`** and does not start:
+**LoanPro and SecureBank each have their OWN `docker-compose.yml`, separate
+from the engine's `docker-compose.yaml`** (see "Demo deployments are separate
+from the engine" below) — a plain `docker compose up` (the engine's own file)
+starts NEITHER any more. Bring LoanPro up explicitly:
 
 ```bash
-docker compose --profile securebank up -d                    # bring SecureBank back
-docker compose --profile securebank --profile mcp up -d      # + the engine MCP, which
-                                                             #   is wired to SecureBank's DB
+docker compose -f loanpro-demo/docker-compose.yml up --build -d
+# orchestrator :8098, ungoverned agent :8097, app-mcp :8102, Postgres :5435,
+# verdict :5180 (now lives here — see that file's own header). loanpro-mcp
+# (the engine MCP, unused) is behind that file's OWN `mcp` profile:
+docker compose -f loanpro-demo/docker-compose.yml --profile mcp up -d loanpro-mcp
 ```
+
+LoanPro is still the UI's default demo (`DEFAULT_DEMO` in `demos.ts`, and the
+api-server's fallback in `routes/decisions.ts`) — that's a UI-layer default,
+unrelated to which compose file(s) you've actually brought up.
+
+```bash
+docker compose -f securebank-demo/docker-compose.yml up --build -d   # bring SecureBank up
+```
+
+`securebank-mcp` (that demo's own governed MCP, NOT unused — the
+orchestrator depends on it) has no profile gate; the engine's OWN
+`semantic-mcp-server` (defaulting to SecureBank's DSN/artifacts as a
+convenience — see `docker-compose.yaml`'s header) is a separate, optional
+instance behind the engine file's `mcp` profile, only useful if you also
+have `securebank-demo/docker-compose.yml` up.
 
 **LoanPro is the SUBJECT of Prefront's out-of-band checks** — the three
 families in `prefront-check-families.md`. It is an ungoverned deployment whose
@@ -101,7 +117,7 @@ evaluator SHOULD report — which Verdict shows beside the transcript (see
 tab any more).
 
 - **`db/*.sql` only run on a fresh volume.** After any schema/seed change:
-  `docker compose rm -sf loanpro-db && docker volume rm prefront_loanpro_pgdata`,
+  `docker compose -f loanpro-demo/docker-compose.yml rm -sf loanpro-db && docker volume rm prefront-loanpro-demo_loanpro_pgdata`,
   then `up -d`. Seed facts the checks depend on: KYC `pending` for 5006/5009;
   no bureau file / income verification for 5009 (and no income row for 5003) so
   those tools ERROR; document 9003 carries the injected instruction; 20 loans
@@ -129,13 +145,17 @@ tab any more).
   policy index in `check-coverage.md`. `gen_coverage.py` exits non-zero when a
   cited § has no heading — run it after editing the doc, the catalogue or INTENTS.
   Tool spans/results never carry policy ids (the app is policy-blind).
-- `loanpro-mcp` (Prefront's governed MCP) is still declared behind the `mcp`
+- `loanpro-mcp` (Prefront's governed MCP, now declared in
+  `loanpro-demo/docker-compose.yml`) is still behind that file's own `mcp`
   profile and unused; `policy.yaml`/`query_templates.yaml` are its legacy
   artifacts and are NOT derived from the current `loan_underwriting_policy.md`.
   `policy/intent_catalog.yaml` is a THIRD, unrelated file in the same
-  directory — eval-engine's Family 3 artifact (`EVAL_INTENT_CATALOG_PATH`),
-  hand-transcribed from `app_tools.py`'s `INTENTS` + `_POLICY`, read only by
-  eval-engine, never by `loanpro-mcp`.
+  directory — eval-engine's Family 3 artifact (`EVAL_INTENT_CATALOG_PATH`,
+  read from the shared `artifacts` volume now, not a bind mount — see the
+  engine `docker-compose.yaml`'s eval-engine comment), hand-transcribed from
+  `app_tools.py`'s `INTENTS` + `_POLICY`, read only by eval-engine, never by
+  `loanpro-mcp` (which bind-mounts `./policy` directly for its OWN inline
+  reuse — a different, unrelated mechanism, see that service's own comment).
 
 - **An MCP SSE endpoint MUST return a Response.** Starlette >=1.0 does
   `await (await endpoint(request))(scope, receive, send)`, so an SSE handler that
@@ -154,7 +174,10 @@ tab any more).
 
 ## SecureBank in-repo demo (`securebank-demo/`)
 
-A retail-banking example that ships **inside this repo** and runs from the same compose. It demonstrates the before/after governance contrast using the same engine:
+A retail-banking example that ships **inside this repo** and runs from its
+**own** `securebank-demo/docker-compose.yml` (separate from the engine's
+`docker-compose.yaml` — see "Active demo: LoanPro" above for the split).
+It demonstrates the before/after governance contrast using the same engine:
 
 - **`securebank-ungoverned`** (`:8096`) — real LLM + raw SQL (`gpt-4o-mini` with a `run_sql` tool); reads can leak, writes are attempted but rolled back via read-only transaction
 - **`securebank-mcp`** (`:8100`) — same `semantic-mcp-server` image pointed at `securebank-demo/policy/`; identity resolved per-connection from `X-Prefront-Act-As`
@@ -214,7 +237,12 @@ A second connector alongside Postgres: point the Data Connector tab's **MCP Serv
   blocked for weeks against an Aug-16 volume copy. Diagnose by comparing
   `md5sum securebank-demo/policy/*.yaml` with the same files inside the volume;
   fix with the RW helper above (the MCP hot-reloads on mtime — no restart), or
-  `docker compose down -v` to rebuild the volume from scratch.
+  rebuild the volume from scratch — since the demo/engine compose split, `artifacts`
+  is declared `external: true` in every demo compose file (the ENGINE project
+  owns it), so `docker compose -f loanpro-demo/docker-compose.yml down -v` will
+  NOT touch it (external volumes are never removed by `down -v`, by design —
+  correct now that it's shared). Run `docker compose down -v` on the ENGINE's
+  own `docker-compose.yaml` instead, then bring every compose back up.
 - **`mcp` must stay `<2`.** mcp 2.0 removed the low-level `Server.list_tools()` /
   `call_tool()` decorators `semanticmcp/server.py` is built on — every MCP container
   dies at startup with `AttributeError: 'Server' object has no attribute 'list_tools'`.
@@ -423,20 +451,28 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
 ## Commands
 
 ### Run the bundled stack
+
+The engine and every demo deployment are now SEPARATE Compose projects (see
+"Active demo: LoanPro" above for why) — bring the engine up first, since a
+demo compose attaches to its network/volume as `external: true`:
+
 ```bash
 cp .env.example .env          # add an LLM key (e.g. NVIDIA_API_KEY=…; GROQ_API_KEY also supported)
-docker compose up --build     # ui:5173  verdict:5180  skill-builder:8000  semantic-layer-api:8010
-                              # oob-ingest:8110  clickhouse:8123  phoenix:6006
+docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:8010
+                              # oob-ingest:8110  clickhouse:8123  phoenix:6006  eval-engine:8120
+docker compose -f loanpro-demo/docker-compose.yml up --build -d
                               # LoanPro (the active demo): orchestrator:8098
-                              #   agent:8097  app-mcp:8102  postgres:5435
+                              #   agent:8097  app-mcp:8102  postgres:5435  verdict:5180
 curl 'localhost:8098/api/run?only=F2-05'          # one LoanPro session (see loanpro-demo/README.md)
 curl 'localhost:8110/oob/sessions?since=3600'     # what OOB ingested, per session
-docker compose down           # add -v to wipe the artifacts/data volumes
+docker compose -f loanpro-demo/docker-compose.yml down   # tear the demo down
+docker compose down           # then the engine — add -v on either to wipe that project's volumes
 
-# NOT started by the line above — both are behind profiles:
-docker compose --profile securebank up -d                 # the SecureBank demo
-docker compose --profile securebank --profile mcp up -d   # + the engine MCP (:8090),
-                                                          #   which is wired to SecureBank's DB
+# NOT started by the two `up` lines above:
+docker compose -f securebank-demo/docker-compose.yml up --build -d   # the SecureBank demo
+docker compose --profile mcp up -d semantic-mcp-server               # the engine's OWN MCP
+                                                                     #   instance (:8090), defaults
+                                                                     #   to SecureBank's DSN/artifacts
 ```
 
 ### Per-package dev (uv-managed venv per package)

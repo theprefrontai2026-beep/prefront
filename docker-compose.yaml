@@ -1,18 +1,38 @@
-# Prefront — full design-time + runtime stack.
+# Prefront ENGINE — the design-time + runtime platform, with no demo/example
+# deployment defined in it. This file is intentionally demo-free: the engine
+# names no table, column, policy, or tenant (see root CLAUDE.md's "Domain
+# independence" section) — that principle now extends to the deployment
+# layer too. No demo's Postgres, agent, or orchestrator is defined here.
 #
 #   skill-builder        docs -> rules        (FastAPI)         :8000
 #   semantic-layer-api   schema introspection / build (design-time API) :8010
 #   semantic-mcp-server  templates -> live MCP query tools (HTTP/SSE) :8090
 #   api-server           UI companion: audit log + review websocket (Express) :8080
 #   ui                   Prefront front-end (React/Vite -> nginx) :5173
-#   verdict              Standalone LoanPro scenario runner (React/Vite -> nginx) :5180
-#   phoenix              Arize Phoenix trace collector + UI          :6006
-#   clickhouse           OOB trace store (ClickHouse)                :8123
-#   oob-ingest           Phoenix/OTLP -> ClickHouse + /oob query API :8110
-#   eval-engine          spans -> checks -> verdicts/findings; /eval query API :8120
+#   phoenix               Arize Phoenix trace collector + UI          :6006
+#   clickhouse            OOB trace store (ClickHouse)                :8123
+#   oob-ingest            Phoenix/OTLP -> ClickHouse + /oob query API :8110
+#   eval-engine           spans -> checks -> verdicts/findings; /eval query API :8120
 #
-# The bundled example datasource is SecureBank (see ./securebank-demo), wired in
-# below; the engine itself is domain-independent.
+# Worked-example deployments (LoanPro, SecureBank) live in their OWN compose
+# files now — `loanpro-demo/docker-compose.yml`, `securebank-demo/docker-compose.yml`
+# (and Verdict, LoanPro's standalone scenario-runner UI, moved into the
+# LoanPro one — it IS a LoanPro-specific tool). Each is its OWN Compose
+# project, attaching to THIS project's network + `artifacts` volume as
+# `external: true` (see either file's header for exactly how — the short
+# version: bring this file up FIRST, since a demo compose assumes the
+# network/volume it attaches to already exist; Docker's embedded DNS
+# resolves a service by name across compose projects on the same network,
+# so e.g. `api-server` here can still reach `http://loanpro-orchestrator:8098`
+# by name once that demo's compose is up, with no cross-project `depends_on`
+# needed — that only works within a single compose invocation, so none of
+# THIS file's services declare a demo as a dependency).
+#
+# `semantic-mcp-server` below still defaults to the bundled SecureBank
+# example's DATABASE_URL (see .env.example) purely as a convenient day-one
+# target for `semanticmcp doctor`/`call` — nothing here depends on the
+# SecureBank demo compose being up for that to be a valid default string;
+# it only resolves to a live database once that demo's compose is also up.
 #
 # The ui (nginx) reverse-proxies /design -> skill-builder, /design/semantic ->
 # semantic-layer-api, and /api (+ /api/ws) -> api-server, so the SPA stays
@@ -21,6 +41,8 @@
 # Quick start:
 #   cp .env.example .env   # put your LLM key in it (GROQ_API_KEY=...)
 #   docker compose up --build
+#   # then, for a worked example:
+#   docker compose -f loanpro-demo/docker-compose.yml up --build -d
 #
 # The LLM key is needed by skill-builder (extract-rules) and semantic-layer (mapper).
 
@@ -45,35 +67,15 @@ x-tracing-env: &tracing-env
   PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-prefront}
   PREFRONT_TRACING: ${PREFRONT_TRACING:-1}
 
-# Out-of-band tap: ONLY the app-layer (ungoverned) agents fan their spans out to
-# oob-ingest — nothing inline (Prefront's engine, the governed agent) is tapped.
-# The Phoenix pull additionally drops any inline span it sees (OOB_EXCLUDE_*).
-x-oob-tap-env: &oob-tap-env
-  PREFRONT_TRACE_FANOUT: ${PREFRONT_TRACE_FANOUT:-http://oob-ingest:8110}
-
-# ---------------------------------------------------------------------------
-# Keeping Prefront OUT of the inline observability path, at the DEPLOYMENT layer.
-#
-# The OOB ingester also filters inline spans (OOB_EXCLUDE_*), but filtering is a
-# second line of defence — these two anchors stop the spans from ever being
-# created, so nothing inline reaches Phoenix either.
-#
-#   PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}
-#                   set DIRECTLY on Prefront's own services (engine runtime +
-#                   design-time), so they do not trace at all. It is written out
-#                   per service rather than merged from an anchor because YAML
-#                   merge keys resolve first-wins: *tracing-env already defines
-#                   PREFRONT_TRACING, so an anchor listed after it would be
-#                   silently ignored. An explicit key always wins. Set
-#                   PREFRONT_ENGINE_TRACING=1 to trace Prefront while debugging it.
-#   *no-governed-span-env
-#                   The demo orchestrators DO trace (their `scenario <id>` span
-#                   is the app-agent trace's root), but the governed branch —
-#                   the `governed agent` span and every LLM/MCP call under it —
-#                   is not recorded.
-# ---------------------------------------------------------------------------
-x-no-governed-span-env: &no-governed-span-env
-  PREFRONT_TRACE_EXCLUDE_SPANS: ${PREFRONT_TRACE_EXCLUDE_SPANS:-governed agent}
+# Keeping Prefront OUT of the inline observability path, at the DEPLOYMENT
+# layer: PREFRONT_TRACING is set DIRECTLY (not merged from *tracing-env — YAML
+# merge keys resolve first-wins, so an anchor listed after it would be
+# silently ignored) to ${PREFRONT_ENGINE_TRACING:-0} on every one of
+# Prefront's own services below, so none of them trace by default. Set
+# PREFRONT_ENGINE_TRACING=1 to trace Prefront while debugging it. The demo
+# compose files carry the OOB-tap and no-governed-span anchors that used to
+# live here — those are demo-orchestrator/app-agent concepts with nothing in
+# this file to apply them to now.
 
 services:
   # ---- skill builder's own design-time database ----------------------------
@@ -172,8 +174,8 @@ services:
       OOB_EXCLUDE_ATTR_PREFIXES: ${OOB_EXCLUDE_ATTR_PREFIXES:-prefront.}
       OOB_EXCLUDE_SPAN_NAMES: ${OOB_EXCLUDE_SPAN_NAMES:-governed agent,govern }
       OOB_EXCLUDE_SERVICES: ${OOB_EXCLUDE_SERVICES:-}
-      # Attributes scrubbed from spans that ARE kept (the harness's scenario root
-      # annotates the governed side too).
+      # Attributes scrubbed from spans that ARE kept (a demo harness's scenario
+      # root annotates the governed side too).
       OOB_STRIP_ATTR_PREFIXES: ${OOB_STRIP_ATTR_PREFIXES:-scenario.governed_,scenario.expected}
     ports: ["8110:8110"]
     depends_on:
@@ -199,14 +201,18 @@ services:
       EVAL_QUIET_SECONDS: ${EVAL_QUIET_SECONDS:-30}
       EVAL_TRACE_BINDING_PATH: ${EVAL_TRACE_BINDING_PATH:-}
       EVAL_VISIBILITY_PROFILE_PATH: ${EVAL_VISIBILITY_PROFILE_PATH:-}
-      # Family 1/3: default to LoanPro's hand-authored artifacts (mounted
-      # below), so the bundled demo gets real findings with no setup. Point
-      # at a published skills/<id>/v<version>/rule_pack.yaml (skill-builder)
-      # for a different deployment.
-      EVAL_RULE_PACK_PATH: ${EVAL_RULE_PACK_PATH:-/policy/rule_pack.yaml}
-      EVAL_INTENT_CATALOG_PATH: ${EVAL_INTENT_CATALOG_PATH:-/policy/intent_catalog.yaml}
+      # Family 1/3: UNCONFIGURED by default (Hard Rule 9 - no artifacts, no
+      # findings from those two families, Family 2 still runs). A demo or a
+      # real deployment points these at its own rule_pack.yaml/
+      # intent_catalog.yaml via the shared `artifacts` volume below - e.g.
+      # set EVAL_RULE_PACK_PATH=/artifacts/loanpro-demo/rule_pack.yaml in
+      # your .env once loanpro-demo/docker-compose.yml's seed job has put it
+      # there (see that file). Nothing here bind-mounts a demo directory -
+      # the engine doesn't know a demo's directory exists.
+      EVAL_RULE_PACK_PATH: ${EVAL_RULE_PACK_PATH:-}
+      EVAL_INTENT_CATALOG_PATH: ${EVAL_INTENT_CATALOG_PATH:-}
     volumes:
-      - ./loanpro-demo/policy:/policy:ro
+      - artifacts:/artifacts:ro
     ports: ["8120:8120"]
     depends_on:
       clickhouse:
@@ -254,8 +260,11 @@ services:
       # /artifacts/<datasource_id>/ under this path's grandparent (/artifacts).
       SEMANTICLAYER_PUBLISH_PATH: /artifacts/example/query_templates.yaml
       SEMANTICLAYER_POLICY_PUBLISH_PATH: /artifacts/example/policy.yaml
-      # Bundled demo baselines that a datasource "reset" must never wipe.
-      SEMANTICLAYER_KEEP_DATASOURCES: securebank-demo,loanpro-demo
+      # Bundled demo baselines that a datasource "reset" must never wipe. Set
+      # in your .env if you bring up a demo compose and want its published
+      # artifacts protected the same way (empty here - the engine doesn't
+      # default to naming a demo).
+      SEMANTICLAYER_KEEP_DATASOURCES: ${SEMANTICLAYER_KEEP_DATASOURCES:-}
     volumes:
       - semanticlayer_data:/data
       - artifacts:/artifacts          # publish writes the approved templates here
@@ -264,10 +273,14 @@ services:
       - "host.docker.internal:host-gateway"   # reach a Postgres on the host
 
   # ---- service 3: semantic MCP server (templates -> live query tools) ------
-  # The engine runtime, serving the bundled SecureBank example artifacts.
-  # DISABLED by default while the OOB work is the focus: it sits behind the
-  # `mcp` profile, so a plain `docker compose up` does not start it. Opt in with
+  # The engine runtime. DISABLED by default: it sits behind the `mcp` profile,
+  # so a plain `docker compose up` does not start it. Opt in with
   #   docker compose --profile mcp up -d semantic-mcp-server
+  # Defaults to the bundled SecureBank example's artifacts/DSN purely as a
+  # convenient day-one target - see this file's header comment. Override
+  # DATABASE_URL/POLICY_PATH/the --templates arg (or the whole `command`) to
+  # point it at your own deployment; nothing here requires the SecureBank demo
+  # compose to be running, only for that default DSN to resolve to a live DB.
   semantic-mcp-server:
     profiles: ["mcp"]
     build: ./semantic-mcp-server
@@ -293,11 +306,6 @@ services:
       - artifacts:/artifacts:ro
       - mcp_data:/data                # decision traces
     ports: ["8090:8090"]
-    depends_on:
-      securebank-db:
-        condition: service_healthy
-      securebank-seed:
-        condition: service_completed_successfully
 
   # ---- api server (new UI companion: audit log + review websocket) ---------
   # Node/Express service backing the new UI's persistent audit log
@@ -312,13 +320,16 @@ services:
       DATABASE_URL: postgresql://prefront:prefront@api-db:5432/prefront_audit
       PORT: "8080"
       NODE_ENV: production
-      # Where POST /api/decisions/refresh runs the live governance catalog. One
-      # orchestrator per bundled demo; the request's ?demo= selects which. The
-      # bare ORCHESTRATOR_URL is the default for legacy callers — LoanPro, since
-      # SecureBank is profile-disabled.
-      ORCHESTRATOR_URL: http://loanpro-orchestrator:8098
-      ORCHESTRATOR_URL_SECUREBANK: http://securebank-orchestrator:8095
-      ORCHESTRATOR_URL_LOANPRO: http://loanpro-orchestrator:8098
+      # Where POST /api/decisions/refresh runs a live governance catalog. One
+      # orchestrator per demo compose; the request's ?demo= selects which.
+      # These are URL DEFAULTS ONLY (a naming convention, not demo code) -
+      # they resolve to nothing until the matching demo compose is up, same
+      # as this service's other env vars resolve to nothing until their own
+      # dependency exists. The bare ORCHESTRATOR_URL is the legacy-caller
+      # default.
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://loanpro-orchestrator:8098}
+      ORCHESTRATOR_URL_SECUREBANK: ${ORCHESTRATOR_URL_SECUREBANK:-http://securebank-orchestrator:8095}
+      ORCHESTRATOR_URL_LOANPRO: ${ORCHESTRATOR_URL_LOANPRO:-http://loanpro-orchestrator:8098}
     ports: ["8080:8080"]
     depends_on:
       api-db:
@@ -344,251 +355,11 @@ services:
       - oob-ingest
       - eval-engine
 
-  # ---- Verdict: standalone LoanPro scenario runner (nginx, static) ---------
-  # The main UI's Runtime tab (SessionRunner), pulled out into its own small
-  # app so it can be run/shared independently of the design-time Prefront UI.
-  # Orchestrator calls are cross-origin fetches at an absolute URL (it already
-  # sends permissive CORS); the one relative path (oob-ingest session lookups)
-  # is proxied by its own nginx conf (verdict-nginx.conf), same pattern as the
-  # main ui service's /oob/ block.
-  verdict:
-    build:
-      context: ./prefront-ui
-      dockerfile: Dockerfile.verdict
-    ports: ["5180:80"]
-    depends_on:
-      - loanpro-orchestrator
-      - eval-engine
-      - oob-ingest
-
-  # ==========================================================================
-  # SecureBank demo — DISABLED by default: every service below sits behind the
-  # `securebank` profile, so `docker compose up` does not start it. LoanPro is
-  # the active demo. Bring SecureBank back with:
-  #     docker compose --profile securebank up -d
-  # NOTE: the engine `semantic-mcp-server` (profile `mcp`) is wired to the
-  # SecureBank datasource, so enabling it needs BOTH profiles:
-  #     docker compose --profile securebank --profile mcp up -d
-  #
-  # (originally: moved in-repo under ./securebank-demo) — the before/after harness. Its own Postgres + an app-layer agent service
-  # (typed business functions, no access-control policy — the realistic "before")
-  # + ONE Prefront MCP server (curated artifacts) + the orchestrator the UI's
-  # Runtime tab points at (http://localhost:8095). Shares the engine's
-  # `artifacts` volume; the demo owns /artifacts/securebank-demo/ so UI
-  # publishing to /artifacts/<id>/ never clobbers it.
-  # ==========================================================================
-
-  # ---- SecureBank sample datasource (schema + seed auto-apply on first boot)
-  securebank-db:
-    profiles: ["securebank"]
-    image: postgres:16
-    environment:
-      POSTGRES_USER: securebank
-      POSTGRES_PASSWORD: securebank
-      POSTGRES_DB: securebank
-    volumes:
-      - ./securebank-demo/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./securebank-demo/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
-      - securebank_pgdata:/var/lib/postgresql/data
-    ports: ["5434:5432"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U securebank -d securebank"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # ---- the "before": app-layer agent — typed functions, no access-control policy ----
-  securebank-ungoverned:
-    profiles: ["securebank"]
-    build: ./securebank-demo
-    command: ["python", "ungoverned_server.py"]
-    environment:
-      <<: [*llm-env, *tracing-env, *oob-tap-env]   # OPENAI_API_KEY; OOB tap
-      SECUREBANK_DSN: postgresql://securebank:securebank@securebank-db:5432/securebank
-      UNGOVERNED_MODEL: gpt-4o-mini
-      SECUREBANK_READONLY: "on"          # writes attempted but rolled back
-    ports: ["8096:8096"]
-    depends_on:
-      securebank-db: {condition: service_healthy}
-
-  # ---- seed the curated SecureBank artifacts the MCP serves ----
-  # Idempotent copy into the demo-owned /artifacts/securebank-demo/ dir.
-  securebank-seed:
-    profiles: ["securebank"]
-    image: alpine
-    command:
-      - sh
-      - -c
-      - mkdir -p /artifacts/securebank-demo &&
-        ([ -f /artifacts/securebank-demo/query_templates.yaml ] ||
-         cp /src/query_templates.yaml /src/policy.yaml /artifacts/securebank-demo/) &&
-        echo "securebank curated artifacts ready in /artifacts/securebank-demo"
-    volumes:
-      - artifacts:/artifacts
-      - ./securebank-demo/policy:/src:ro
-    restart: "no"
-
-  # ---- Prefront, exposed as ONE MCP server (the single endpoint the LLM uses)
-  # Same engine image as semantic-mcp-server, but serving the demo's curated
-  # artifacts against the SecureBank DB; identity resolved per-connection.
-  securebank-mcp:
-    profiles: ["securebank"]
-    build: ./semantic-mcp-server
-    command: ["--templates=/artifacts/securebank-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
-    environment:
-      <<: *tracing-env
-      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront runtime: not traced
-      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
-      DATABASE_URL: postgresql://securebank:securebank@securebank-db:5432/securebank
-      POLICY_PATH: /artifacts/securebank-demo/policy.yaml
-    volumes:
-      - artifacts:/artifacts:ro          # shared with the engine; read-only here
-    ports: ["8100:8090"]                 # host 8100 (engine MCP owns 8090)
-    depends_on:
-      securebank-db: {condition: service_healthy}
-      securebank-seed: {condition: service_completed_successfully}
-
-  # ---- the "after" orchestrator: gpt-4o-mini as an MCP CLIENT of the server
-  securebank-orchestrator:
-    profiles: ["securebank"]
-    build: ./securebank-demo
-    command: ["python", "demo_server.py"]
-    environment:
-      <<: [*llm-env, *tracing-env, *no-governed-span-env]   # OPENAI_API_KEY
-      GOVERNED_MODEL: gpt-4o-mini
-      UNGOVERNED_URL: http://securebank-ungoverned:8096/run
-      GOVERNED_MCP_URL: http://securebank-mcp:8090/sse
-    ports: ["8095:8095"]
-    depends_on:
-      securebank-ungoverned: {condition: service_started}
-      securebank-mcp: {condition: service_started}
-
-  # ==========================================================================
-  # LoanPro demo (in-repo under ./loanpro-demo) — the ACTIVE worked example, a
-  # retail loan-origination shop. Same engine image, different domain: its own
-  # Postgres + curated artifacts + an app-layer "before" agent + ONE Prefront MCP
-  # server + the orchestrator the UI's Runtime tab points at when the LoanPro
-  # demo is selected (http://localhost:8098). Shares the engine's `artifacts`
-  # volume; the demo owns /artifacts/loanpro-demo/.
-  # ==========================================================================
-
-  # ---- LoanPro sample datasource (schema + seed auto-apply on first boot)
-  loanpro-db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: loanpro
-      POSTGRES_PASSWORD: loanpro
-      POSTGRES_DB: loanpro
-    volumes:
-      - ./loanpro-demo/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      - ./loanpro-demo/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
-      - loanpro_pgdata:/var/lib/postgresql/data
-    ports: ["5435:5432"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U loanpro -d loanpro"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # ---- the loan shop's OWN tool API, served over MCP (ungoverned) ----------
-  # This is the application's API — typed business functions over its Postgres,
-  # exposed as MCP tools. No Prefront, no policy, no decision: a call arrives and
-  # the SQL runs. Identity is a per-connection header the agent cannot set, but
-  # only get_my_applications() honours it — that is the governance gap on show.
-  loanpro-app-mcp:
-    build: ./loanpro-demo
-    command: ["python", "app_mcp_server.py"]
-    environment:
-      <<: [*tracing-env, *oob-tap-env]   # app-layer, so it IS observed by OOB
-      LOANPRO_DSN: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
-      LOANPRO_APP_MCP_PORT: "8102"
-      LOANPRO_READONLY: "on"             # writes execute, then roll back
-      LOANPRO_TRACE_ROWS: "20"           # rows kept in each tool span's output.value
-      PREFRONT_TRACE_MAX_VALUE: "16000"  # tool results carry rows: don't clip them at 4k
-    ports: ["8102:8102"]
-    depends_on:
-      loanpro-db: {condition: service_healthy}
-
-  # ---- the agent: an LLM that reaches its tools as an MCP CLIENT -----------
-  # No DSN here — the agent never touches the database, it only calls tools.
-  # Keeps a server-side conversation per session id (POST /sessions, then
-  # /sessions/{id}/messages or /replay) — the traces are the OOB checks' subject.
-  loanpro-ungoverned:
-    build: ./loanpro-demo
-    command: ["python", "ungoverned_server.py"]
-    environment:
-      <<: [*llm-env, *tracing-env, *oob-tap-env]   # OPENAI_API_KEY; OOB tap
-      UNGOVERNED_MODEL: gpt-4o-mini
-      UNGOVERNED_MODEL_V2: ${LOANPRO_MODEL_V2:-gpt-4o-mini}   # prompt/model variant v2
-      UNGOVERNED_MAX_ITERS: "6"          # multi-tool sessions need more round-trips
-      UNGOVERNED_PORT: "8097"
-      LOANPRO_APP_MCP_URL: http://loanpro-app-mcp:8102/sse
-      PREFRONT_TRACE_MAX_VALUE: "16000"
-    ports: ["8097:8097"]
-    depends_on:
-      loanpro-app-mcp: {condition: service_started}
-
-  # ---- seed the curated LoanPro artifacts the MCP serves ----
-  loanpro-seed:
-    image: alpine
-    command:
-      - sh
-      - -c
-      - mkdir -p /artifacts/loanpro-demo &&
-        ([ -f /artifacts/loanpro-demo/query_templates.yaml ] ||
-         cp /src/query_templates.yaml /src/policy.yaml /artifacts/loanpro-demo/) &&
-        echo "loanpro curated artifacts ready in /artifacts/loanpro-demo"
-    volumes:
-      - artifacts:/artifacts
-      - ./loanpro-demo/policy:/src:ro
-    restart: "no"
-
-  # ---- Prefront, exposed as ONE MCP server (the single endpoint the LLM uses)
-  # Prefront's governed MCP for LoanPro. UNUSED — LoanPro has no governed agent
-  # any more, so this sits behind the `mcp` profile with the engine runtime.
-  loanpro-mcp:
-    profiles: ["mcp"]
-    build: ./semantic-mcp-server
-    command: ["--templates=/artifacts/loanpro-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
-    environment:
-      <<: *tracing-env
-      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront runtime: not traced
-      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
-      DATABASE_URL: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
-      POLICY_PATH: /artifacts/loanpro-demo/policy.yaml
-      # Inline reuse of eval-engine's safe checks (autonomous_build.md step 18,
-      # see semanticmcp/governance/inline_checks.py) - a direct bind mount, not
-      # the artifacts NAMED VOLUME's seed-once pattern (that has a documented
-      # staleness trap in the root CLAUDE.md); same approach eval-engine uses.
-      PREFRONT_RULE_PACK_PATH: /loanpro-policy/rule_pack.yaml
-      PREFRONT_INTENT_CATALOG_PATH: /loanpro-policy/intent_catalog.yaml
-    volumes:
-      - artifacts:/artifacts:ro          # shared with the engine; read-only here
-      - ./loanpro-demo/policy:/loanpro-policy:ro
-    ports: ["8101:8090"]                 # host 8101 (engine MCP owns 8090, securebank 8100)
-    depends_on:
-      loanpro-db: {condition: service_healthy}
-      loanpro-seed: {condition: service_completed_successfully}
-
-  # ---- scenario orchestrator: runs the catalogue against the app agent -----
-  loanpro-orchestrator:
-    build: ./loanpro-demo
-    command: ["python", "demo_server.py"]
-    environment:
-      <<: [*llm-env, *tracing-env, *no-governed-span-env]   # OPENAI_API_KEY
-      LOANPRO_DEMO_PORT: "8098"
-      AGENT_URL: http://loanpro-ungoverned:8097
-    ports: ["8098:8098"]
-    depends_on:
-      loanpro-ungoverned: {condition: service_started}
-
 volumes:
   skillbuilder_db:
   api_db:
   semanticlayer_data:
   mcp_data:
   artifacts:
-  securebank_pgdata:
-  loanpro_pgdata:
   phoenix_data:
   clickhouse_data:

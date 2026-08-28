@@ -1,0 +1,139 @@
+# SecureBank — a worked example deployment, SEPARATE from the Prefront
+# engine's own compose project (../docker-compose.yaml). Same pattern as
+# loanpro-demo/docker-compose.yml (see that file's header for the full
+# explanation of the external network/volume sharing) — its own Compose
+# project, attaching to the engine's `prefront_default` network and
+# `prefront_artifacts` volume as `external: true`.
+#
+#   securebank-db            SecureBank's own Postgres                :5434
+#   securebank-ungoverned    the "before": raw SQL, no policy          :8096
+#   securebank-mcp           Prefront's governed MCP for SecureBank    :8100
+#   securebank-orchestrator  before/after diff runner (UI's old         :8095
+#                            Runtime tab pointed here; now curl-only)
+#
+# Quick start (engine must already be up — see ../docker-compose.yaml):
+#   docker compose -f docker-compose.yml up --build -d
+# From the repo root, equivalently:
+#   docker compose -f securebank-demo/docker-compose.yml up --build -d
+#
+# This file's mere existence/invocation IS the opt-in now (there is no
+# `securebank` Compose profile any more — that only made sense when this
+# demo shared a file with everything else and needed a way to stay off by
+# default). Unlike loanpro-mcp (unused, profile `mcp`-gated in that file),
+# `securebank-mcp` has no profile gate here — securebank-orchestrator
+# actively depends on it (GOVERNED_MCP_URL), it's core to this demo's
+# before/after diff, not a vestigial extra.
+
+name: prefront-securebank-demo
+
+x-llm-env: &llm-env
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+
+x-tracing-env: &tracing-env
+  PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006}
+  PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-prefront}
+  PREFRONT_TRACING: ${PREFRONT_TRACING:-1}
+
+x-oob-tap-env: &oob-tap-env
+  PREFRONT_TRACE_FANOUT: ${PREFRONT_TRACE_FANOUT:-http://oob-ingest:8110}
+
+x-no-governed-span-env: &no-governed-span-env
+  PREFRONT_TRACE_EXCLUDE_SPANS: ${PREFRONT_TRACE_EXCLUDE_SPANS:-governed agent}
+
+services:
+  # ---- SecureBank sample datasource (schema + seed auto-apply on first boot)
+  securebank-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: securebank
+      POSTGRES_PASSWORD: securebank
+      POSTGRES_DB: securebank
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+      - securebank_pgdata:/var/lib/postgresql/data
+    ports: ["5434:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U securebank -d securebank"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- the "before": app-layer agent — typed functions, no access-control policy ----
+  securebank-ungoverned:
+    build: .
+    command: ["python", "ungoverned_server.py"]
+    environment:
+      <<: [*llm-env, *tracing-env, *oob-tap-env]   # OPENAI_API_KEY; OOB tap
+      SECUREBANK_DSN: postgresql://securebank:securebank@securebank-db:5432/securebank
+      UNGOVERNED_MODEL: gpt-4o-mini
+      SECUREBANK_READONLY: "on"          # writes attempted but rolled back
+    ports: ["8096:8096"]
+    depends_on:
+      securebank-db: {condition: service_healthy}
+
+  # ---- seed the curated SecureBank artifacts into the engine's shared volume
+  # Idempotent copy into the demo-owned /artifacts/securebank-demo/ dir.
+  securebank-seed:
+    image: alpine
+    command:
+      - sh
+      - -c
+      - mkdir -p /artifacts/securebank-demo &&
+        ([ -f /artifacts/securebank-demo/query_templates.yaml ] ||
+         cp /src/query_templates.yaml /src/policy.yaml /artifacts/securebank-demo/) &&
+        echo "securebank curated artifacts ready in /artifacts/securebank-demo"
+    volumes:
+      - artifacts:/artifacts
+      - ./policy:/src:ro
+    restart: "no"
+
+  # ---- Prefront, exposed as ONE MCP server (the single endpoint the LLM uses)
+  # Same engine image as the top-level semantic-mcp-server, but serving the
+  # demo's curated artifacts against the SecureBank DB; identity resolved
+  # per-connection. No profile gate (unlike loanpro-mcp) - securebank-orchestrator
+  # actively depends on this one (GOVERNED_MCP_URL below), it is not vestigial.
+  securebank-mcp:
+    build: ../semantic-mcp-server
+    command: ["--templates=/artifacts/securebank-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
+    environment:
+      <<: *tracing-env
+      PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront runtime: not traced
+      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
+      DATABASE_URL: postgresql://securebank:securebank@securebank-db:5432/securebank
+      POLICY_PATH: /artifacts/securebank-demo/policy.yaml
+    volumes:
+      - artifacts:/artifacts:ro          # shared with the engine; read-only here
+    ports: ["8100:8090"]                 # host 8100 (engine MCP owns 8090)
+    depends_on:
+      securebank-db: {condition: service_healthy}
+      securebank-seed: {condition: service_completed_successfully}
+
+  # ---- the "after" orchestrator: gpt-4o-mini as an MCP CLIENT of the server
+  securebank-orchestrator:
+    build: .
+    command: ["python", "demo_server.py"]
+    environment:
+      <<: [*llm-env, *tracing-env, *no-governed-span-env]   # OPENAI_API_KEY
+      GOVERNED_MODEL: gpt-4o-mini
+      UNGOVERNED_URL: http://securebank-ungoverned:8096/run
+      GOVERNED_MCP_URL: http://securebank-mcp:8090/sse
+    ports: ["8095:8095"]
+    depends_on:
+      securebank-ungoverned: {condition: service_started}
+      securebank-mcp: {condition: service_started}
+
+networks:
+  default:
+    name: prefront_default
+    external: true
+
+volumes:
+  securebank_pgdata:
+  artifacts:
+    name: prefront_artifacts
+    external: true

@@ -5,9 +5,11 @@
 .PHONY: grade-loanpro test
 
 # autonomous_build.md step 15: the acceptance gate for eval-engine Phases A-B.
-# Needs the bundled stack up (docker compose up --build) with an LLM key
-# configured, since most scenarios run mode:"llm" turns against the real
-# ungoverned agent. Exits non-zero on any FAIL grade. Deliberately NOT in
+# Needs the engine's compose up (docker compose up --build) AND LoanPro's own
+# (docker compose -f loanpro-demo/docker-compose.yml up --build -d - see that
+# file's header comment for why it's separate) with an LLM key configured,
+# since most scenarios run mode:"llm" turns against the real ungoverned
+# agent. Exits non-zero on any FAIL grade. Deliberately NOT in
 # `.github/workflows/tests.yml` for the same reason it isn't in `test`
 # below - it needs the live stack + a metered LLM key, neither of which a
 # plain CI runner has; wire it in once one does.

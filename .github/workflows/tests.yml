@@ -68,8 +68,17 @@ jobs:
       - run: python -m pytest -q loanpro-demo/test_grading_harness.py loanpro-demo/test_preflight_import.py
 
   compose-config:
+    # Validates all three compose files - the engine's own plus both demos'
+    # (loanpro-demo/, securebank-demo/), split out from it (see root
+    # CLAUDE.md's "Demo deployments are separate from the engine"). `config`
+    # only renders/validates YAML - it does not contact the Docker daemon to
+    # check that an `external: true` network/volume actually exists (verified
+    # locally: it exits 0 against a deliberately-nonexistent external name),
+    # so the demo files validate here with no engine network/volume present.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
       - run: docker compose config --quiet
+      - run: docker compose -f loanpro-demo/docker-compose.yml config --quiet
+      - run: docker compose -f securebank-demo/docker-compose.yml config --quiet

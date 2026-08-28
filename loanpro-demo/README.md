@@ -13,17 +13,20 @@ session → span attributes that carry the evidence**. Regenerate it with
 `python docs/gen_coverage.py > docs/check-coverage.md` after editing the
 catalogue or the intent metadata.
 
-## Services (`docker compose up`)
+## Services (`docker compose -f docker-compose.yml up` — the engine's own
+`../docker-compose.yaml` must already be up first; see this file's own
+header comment for why)
 
 | Service | File | Port | Role |
 |---|---|---|---|
-| `loanpro-db` | `db/schema.sql`, `db/seed.sql` | 5435 | Postgres. Re-seeds only on a fresh volume: `docker compose rm -sf loanpro-db && docker volume rm prefront_loanpro_pgdata` after a schema change |
+| `loanpro-db` | `db/schema.sql`, `db/seed.sql` | 5435 | Postgres. Re-seeds only on a fresh volume: `docker compose rm -sf loanpro-db && docker volume rm prefront-loanpro-demo_loanpro_pgdata` after a schema change |
 | `loanpro-app-mcp` | `app_mcp_server.py` + `app_tools.py` | 8102 | the shop's API as **plain MCP tools**. One `tool <name>` span per call, stamped with session, user, role, channel, intent, side-effect, args, SQL, rows |
 | `loanpro-ungoverned` | `ungoverned_server.py` | 8097 | the agent: an MCP **client** with server-side **sessions** (`POST /sessions`, `/sessions/{id}/messages`, `/sessions/{id}/replay`) |
 | `loanpro-orchestrator` | `demo_server.py` + `scenarios.py` | 8098 | runs the catalogue as sessions (`GET /api/scenarios`, `GET /api/run?only=&repeat=&variant=`) and opens the `session <id>` root span |
+| `verdict` | `../prefront-ui/artifacts/verdict` | 5180 | standalone scenario-runner UI |
 
-`loanpro-mcp` (Prefront's governed MCP) is still declared but sits behind the
-`mcp` compose profile and plays no part here.
+`loanpro-mcp` (Prefront's governed MCP) is still declared but sits behind
+this file's own `mcp` compose profile and plays no part here.
 
 ## Sessions, two ways to drive a turn, one trace shape
 
@@ -75,8 +78,10 @@ Phases A-B: runs the catalogue via the orchestrator, evaluates every session
 through eval-engine, and diffs both halves against `scenarios.py` - actual
 verdicts vs `expected_findings`, actual conformance tags vs a baseline's
 `demonstrates`. `test_grading_harness.py` covers its grading/diff logic with
-no network calls; running the harness itself needs the bundled stack up
-(`docker compose up --build`) and an LLM key configured, since most
+no network calls; running the harness itself needs the engine's compose up
+(`docker compose up --build`, repo root) AND this file's own compose up
+(`docker compose -f loanpro-demo/docker-compose.yml up --build -d`), plus an
+LLM key configured, since most
 scenarios run `mode: "llm"` turns against the real ungoverned agent -
 that's a real, metered cost, so it is not run automatically by anything in
 this repo. `make grade-loanpro` (repo root) is the one-word invocation once
