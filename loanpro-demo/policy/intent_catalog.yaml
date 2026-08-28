@@ -13,7 +13,7 @@
 # deliberately ABSENT here - their absence is what makes a call to them
 # catalog_membership: off-catalog action, not something to list and exempt.
 intent_catalog:
-  version: 1
+  version: 3
   policy_document: loan_underwriting_policy.md
   intents:
     - intent: view_my_pipeline
@@ -48,7 +48,8 @@ intent_catalog:
       allowed_callers:
         roles: [Applicant, Loan Officer, Underwriter, Branch Manager]
         channels: [portal, officer_ui, underwriting, manager_console]
-      fields: [loan_id, applicant_id, product, requested_amount, term_months, status, version, updated_at]
+      fields: [loan_id, applicant_id, product, requested_amount, term_months, status, version, updated_at,
+               apr, assigned_officer, decided_by]
       mandatory_filters: ["loan_id = <own application> for an Applicant"]
       expected_volume: {rows_p99: 1}
       policy: ["11.2", "11.4", "13.4", "13.8", "12.9"]
@@ -118,7 +119,12 @@ intent_catalog:
       allowed_callers:
         roles: [Underwriter, Branch Manager]
         channels: [underwriting, manager_console]
-      fields: [applicant_id, tier, risk_grade, pd_estimate, updated_at]
+      # internal_risk_score/model_version are legitimately fetchable (the
+      # policy sanctions using them for internal pricing - §8.6) but must
+      # never appear in the final answer; that narrower rule lives in
+      # policy/rule_pack.yaml's R-INTERNAL-RISK-SCORE, scoped to
+      # final_answer only. field_scope (this file) governs FETCH, not output.
+      fields: [applicant_id, tier, risk_grade, pd_estimate, updated_at, internal_risk_score, model_version]
       restricted_fields: [internal_risk_score]
       expected_volume: {rows_p99: 1}
       policy: ["11.4", "12.5", "13.3", "13.8"]
@@ -130,7 +136,7 @@ intent_catalog:
       allowed_callers:
         roles: [Loan Officer, Underwriter, Branch Manager]
         channels: [officer_ui, underwriting, manager_console]
-      fields: [loan_id, amount, term_months, apr, monthly_payment, total_cost]
+      fields: [loan_id, amount, term_months, apr, monthly_payment, total_cost, applicant_id, tier]
       expected_volume: {rows_p99: 1}
       policy: ["7.3", "13.2", "13.3", "13.4", "13.7", "13.8"]
 
@@ -163,7 +169,7 @@ intent_catalog:
       allowed_callers:
         roles: [Underwriter, Branch Manager]
         channels: [underwriting, manager_console]
-      fields: [approval_id, loan_id, status]
+      fields: [approval_id, loan_id, status, approver_role, created_at]
       expected_volume: {rows_p99: 1}
       policy: ["10.3", "10.4", "13.8"]
 
@@ -174,7 +180,7 @@ intent_catalog:
       allowed_callers:
         roles: [Underwriter, Branch Manager]
         channels: [underwriting, manager_console]
-      fields: [loan_id, status]
+      fields: [loan_id, status, decided_by, version]
       expected_volume: {rows_p99: 1}
       closing_obligation: send_notice
       policy: ["9.2.1", "9.2.2", "9.2.3", "9.2.5", "9.3.1", "9.3.2", "9.3.3", "9.3.8",
@@ -188,7 +194,7 @@ intent_catalog:
       allowed_callers:
         roles: [Underwriter, Branch Manager]
         channels: [underwriting, manager_console]
-      fields: [notice_id, loan_id, kind]
+      fields: [notice_id, loan_id, kind, channel, sent_at]
       expected_volume: {rows_p99: 1}
       policy: ["13.6", "13.8", "15.1", "15.5"]
 

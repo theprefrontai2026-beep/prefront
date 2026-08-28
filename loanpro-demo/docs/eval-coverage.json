@@ -1,0 +1,166 @@
+[
+  {
+    "id": "F2-01",
+    "family": "F2",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "error_blindness",
+      "param_provenance"
+    ],
+    "matched": [
+      "error_blindness",
+      "param_provenance"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "param_mutation",
+      "result_fidelity",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f201_a82b9f81"
+  },
+  {
+    "id": "F2-05",
+    "family": "F2",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "param_staleness"
+    ],
+    "matched": [
+      "param_staleness"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_scope",
+      "precondition",
+      "sequencing"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f205_4ee690a5"
+  },
+  {
+    "id": "F3-03",
+    "family": "F3",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "version_conformance"
+    ],
+    "matched": [
+      "version_conformance"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_restriction",
+      "field_scope",
+      "param_provenance",
+      "result_fidelity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f303_13f5cfc8"
+  },
+  {
+    "id": "F3-11",
+    "family": "F3",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "redundancy"
+    ],
+    "matched": [
+      "redundancy"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_f311_95c46233"
+  },
+  {
+    "id": "BASE-01",
+    "family": "BASE",
+    "mode": "replay",
+    "baseline": true,
+    "expected": [],
+    "matched": [],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "demonstrates": [
+      "13.2",
+      "13.3",
+      "13.7"
+    ],
+    "demonstrates_missing": [],
+    "unexpected_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_base01_f291787d"
+  },
+  {
+    "id": "BASE-02",
+    "family": "BASE",
+    "mode": "replay",
+    "baseline": true,
+    "expected": [],
+    "matched": [],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "param_provenance"
+    ],
+    "demonstrates": [
+      "13.5",
+      "13.6",
+      "13.7"
+    ],
+    "demonstrates_missing": [],
+    "unexpected_violations": [
+      "param_provenance"
+    ],
+    "grade": "FAIL",
+    "session_id": "sess_base02_4d883fa7"
+  },
+  {
+    "id": "BASE-03",
+    "family": "BASE",
+    "mode": "llm",
+    "baseline": true,
+    "expected": [],
+    "matched": [],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "demonstrates": [
+      "11.4",
+      "12.6"
+    ],
+    "demonstrates_missing": [],
+    "unexpected_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_base03_6d627d7e"
+  },
+  {
+    "id": "BASE-04",
+    "family": "BASE",
+    "mode": "llm",
+    "baseline": true,
+    "expected": [],
+    "matched": [],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "demonstrates": [
+      "11.2"
+    ],
+    "demonstrates_missing": [],
+    "unexpected_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_base04_7d88e07d"
+  }
+]

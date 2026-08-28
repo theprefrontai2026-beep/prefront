@@ -31,10 +31,7 @@ def version_key(binding: BindingProfile, visibility: VisibilityProfile, rule_pac
 
 
 def evaluate_session(session_id: str, binding: BindingProfile, visibility: VisibilityProfile,
-                     rule_pack: RulePack, catalog: IntentCatalog) -> list[Finding]:
-    spans = store.session_spans(session_id)
-    if not spans:
-        return []
+                     rule_pack: RulePack, catalog: IntentCatalog, spans: list) -> list[Finding]:
     session = reconstruct(session_id, spans, binding)
     prov = build_provenance(session, config.PARAM_ROUND_ABS_TOLERANCE, config.PARAM_ROUND_REL_TOLERANCE)
     ctx = CheckContext(
@@ -67,7 +64,14 @@ def evaluate_and_persist(session_id: str, binding: BindingProfile, visibility: V
     vkey = version_key(binding, visibility, rule_pack, catalog)
     if not force and store.is_evaluated(session_id, vkey):
         return {"session_id": session_id, "skipped": True, "reason": "already evaluated at this version"}
-    findings = evaluate_session(session_id, binding, visibility, rule_pack, catalog)
+    spans = store.session_spans(session_id)
+    if not spans:
+        # Not a genuine "evaluated to zero findings" result - the session
+        # isn't ingested yet (or lost a race with ingestion). Do NOT
+        # mark_evaluated: that would permanently skip a session that was
+        # simply not ready yet, since nothing else ever retries it.
+        return {"session_id": session_id, "skipped": True, "reason": "no spans ingested yet"}
+    findings = evaluate_session(session_id, binding, visibility, rule_pack, catalog, spans)
     counts = store.persist(findings)
     store.mark_evaluated(session_id, vkey)
     return {"session_id": session_id, "skipped": False, "version_key": vkey, **counts}

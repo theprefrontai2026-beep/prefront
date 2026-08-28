@@ -93,7 +93,18 @@ def wait_for_ingestion(session_id: str) -> bool:
 
 
 def evaluate_session(session_id: str) -> dict:
-    return _post(f"{EVAL_URL}/eval/run?session_id={session_id}&force=true")
+    # wait_for_ingestion's own check (oob-ingest) can pass a moment before
+    # eval-engine's OWN ClickHouse read sees the same rows (two separate
+    # services, two separate queries) - eval-engine now refuses to
+    # mark_evaluated on an empty read (a real bug this caught: it used to
+    # permanently skip a session that just wasn't ready yet), so retrying
+    # here is safe and sufficient.
+    for attempt in range(4):
+        result = _post(f"{EVAL_URL}/eval/run?session_id={session_id}&force=true")
+        if not (result.get("skipped") and "no spans" in str(result.get("reason", ""))):
+            return result
+        time.sleep(2)
+    return result
 
 
 def fetch_verdicts(session_id: str) -> list[dict]:

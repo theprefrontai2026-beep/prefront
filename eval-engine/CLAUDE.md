@@ -236,18 +236,80 @@ curl ':8120/eval/sessions/<id>/conformance'
 Phase B (steps 9-14) is DONE: `family1/` (temporal/predicate/content), the
 skill-builder rule-pack compiler, `family3/` (call/scope/session checks),
 LoanPro's hand-authored `policy/rule_pack.yaml` + `policy/intent_catalog.yaml`,
-and the `intent_catalog.yaml` schema/generator (semantic-layer). Step 15's
-grading harness (`loanpro-demo/grading_harness.py`) is BUILT and its own
-diff/grading logic is unit-tested (`loanpro-demo/test_grading_harness.py`,
-no network) - but it has **not yet been run live end-to-end** against the
-real stack (needs `docker compose up --build` + a metered LLM key for the
-`mode: "llm"` scenarios, so it wasn't run unprompted). Running it is the next
-concrete step: `make grade-loanpro` from the repo root, or see
-`loanpro-demo/README.md`'s "The grading harness" section. Expect the first
-live run to surface real gaps to fix (engine bugs, citation mismatches,
-scenarios needing a rule/catalog tweak) - that IS what an acceptance gate is
-for; do not assume Phase B is fully validated until it has actually run
-clean, or with documented, understood deltas.
+and the `intent_catalog.yaml` schema/generator (semantic-layer).
+
+## Step 15 (grading harness): run live, real bugs found and fixed
+
+`loanpro-demo/grading_harness.py` has now actually run against the live
+stack (8 scenarios: 4 baselines + F2-01/F2-05/F3-03/F3-11) - **7/8 PASS**,
+one documented known gap (below), report at `loanpro-demo/docs/eval-coverage.md`.
+Full 30-scenario catalogue run is still future work (this pass was
+deliberately scoped: mostly `mode: "replay"` scenarios plus a couple of
+`llm` ones, to keep the metered LLM cost small) - `make grade-loanpro` runs
+everything once someone's ready to spend that.
+
+Four real bugs the live run found and fixed, in order of discovery:
+
+1. **`param_staleness` couldn't detect the exact staleness pattern the demo
+   is built to test.** It only looked for a later RE-READ disagreeing with
+   the origin value. LoanPro's app rolls every write back (seed data stays
+   stable across runs - see `loanpro-demo/README.md`), so a re-read of the
+   same tool always shows the pre-write value, forever - the re-read signal
+   could never fire even though the agent unambiguously issued a change.
+   Fixed: `family2/param_staleness.py` now ALSO treats an intervening WRITE
+   step's own args (not just a later read) as a refresh signal.
+2. **`result_fidelity` treated markdown ordered-list markers as numeric
+   claims.** `"1. **Loan ID 7001**..."` extracted `1` as a "claim," which
+   naturally matches no tool result - 7 spurious violations on one clean
+   baseline answer. Fixed: strip a leading `N. ` at the start of a line
+   before scanning (`family2/result_fidelity.py`).
+3. **A content-engine detector scoped to `result` is a permanent false
+   positive against an app that always returns the field raw.** LoanPro is
+   "policy-blind" by design (see its own CLAUDE.md) - `get_risk_profile`
+   always includes `internal_risk_score` in its raw SQL result, and the
+   policy explicitly sanctions that for internal pricing use; only the
+   FINAL ANSWER leaking it is the actual violation. `policy/rule_pack.yaml`'s
+   three content-engine rules (`R-INTERNAL-RISK-SCORE`,
+   `R-SSN-TAXID-BANK-RESTRICTION`, `R-CREDIT-SCORE-OFFICER-RESTRICTION`) now
+   scope to `final_answer` only - `result` scope is right for a field the
+   app should never fetch AT ALL, wrong for one it's allowed to use
+   internally but never repeat back.
+4. **`evaluate_and_persist` marked a session "evaluated" even when it read
+   zero spans** - a real race: `wait_for_ingestion` (harness, via oob-ingest)
+   and eval-engine's own `store.session_spans()` read (a separate
+   ClickHouse query) aren't the same check, so eval-engine could run a
+   moment before its own read caught up, get nothing, and then NEVER retry
+   (the version-key gate treated "evaluated to zero findings" and "not
+   ready yet" as the same state). Fixed: `evaluate_and_persist` no longer
+   calls `mark_evaluated` when `session_spans()` comes back empty; the
+   harness also retries `POST /eval/run` a few times on that specific
+   "skipped: no spans ingested yet" response.
+
+Plus fixture-only fixes (not engine bugs): several `intent_catalog.yaml`
+entries under-declared `fields` relative to what their tools actually
+return (`decide_loan`, `view_application`, `request_approval`, `send_notice`,
+`view_risk_profile`, `quote_terms`) - `field_scope` was correctly flagging a
+REAL gap between the catalog and reality, not a false positive; fixed by
+completing the field lists (the catalog is deliberately not exhaustively
+re-audited against the DB schema for every entry this pass - expect the
+same class of gap on other intents once more scenarios run).
+
+**Known, documented, NOT fixed this pass**: `param_provenance` flags
+agent-synthesized categorical decisions (`decide_loan`'s `decision:
+"approved"`, `send_decision_notice`'s `kind: "approval_letter"`,
+`request_manager_approval`'s free-text `reason`) as "fabricated," since
+their value never appears verbatim in a user message or prior tool result -
+true of ANY classification the agent is supposed to produce as its own
+judgment, not just literally-invented facts. `prefront-check-families.md`'s
+own examples for this check ("agent invented an account ID, amount, rate")
+are all traceable identifiers/quantities, not categorical choices - the
+check's current form doesn't distinguish the two. This is why `BASE-02`
+(the clean approval-with-notice baseline) still shows 1/8 FAIL: three
+`param_provenance` false positives, nothing else. Fixing this properly
+needs a real design decision (how does a generic engine recognize "this
+field's value SET is small/enumerated, so absence-of-a-verbatim-source
+isn't fabrication" without hardcoding field names?) - deliberately not
+guessed at under time pressure in this pass.
 
 Step 17 (population checks) is also DONE - `family3/population.py`
 (`outcome_consistency`, `invocation_drift`, `verdict_trend`), invoked

@@ -106,6 +106,22 @@ def test_param_staleness_confirmed_unchanged_satisfied():
     assert [v.status for v in verdicts if "amount" in v.evidence.excerpt] == ["satisfied"]
 
 
+def test_param_staleness_write_supersedes_even_without_reread_confirmation():
+    # Simulates a demo where every write is rolled back (loanpro-demo's
+    # actual behavior): the re-read still shows the OLD value, but the
+    # write step's own args prove the agent believed it changed - that
+    # must still flag staleness.
+    step0 = make_step(0, "get_application", result={"requested_amount": 30000}, turn_seq=0)
+    step1 = make_step(1, "update_application", args={"requested_amount": 32000},
+                      side_effect="write", turn_seq=0)
+    step2 = make_step(2, "get_application", result={"requested_amount": 30000}, turn_seq=0)
+    step3 = make_step(3, "quote_terms", args={"amount": 30000}, turn_seq=0)
+    session = make_session(steps=[step0, step1, step2, step3])
+    verdicts = param_staleness.evaluate(session, make_ctx(session))
+    hit = [v for v in verdicts if "amount" in v.evidence.excerpt]
+    assert hit and hit[0].status == "violated" and "write" in hit[0].detail
+
+
 def test_param_staleness_not_applicable_without_refresh():
     step0 = make_step(0, "get_balance", result={"balance": 500}, turn_seq=0)
     step1 = make_step(1, "transfer", args={"amount": 500}, turn_seq=0)
@@ -160,6 +176,18 @@ def test_result_fidelity_no_answer_not_applicable():
     step0 = make_step(0, "get_balance", result={"balance": 500}, turn_seq=0)
     session = make_session(steps=[step0])
     assert result_fidelity.evaluate(session, make_ctx(session)) == []
+
+
+def test_result_fidelity_ignores_markdown_list_markers():
+    # "1. **Loan ID 7001**..." - the leading "1." is list formatting, not a
+    # claim; 7001 IS a real claim and must be checked (and here, grounded).
+    step0 = make_step(0, "get_my_applications", result={"rows": [{"loan_id": 7001}]}, turn_seq=0)
+    turn0 = make_turn(0, assistant_message="You have applications:\n1. **Loan ID 7001**: pending.\n2. more text")
+    session = make_session(steps=[step0], turns=[turn0])
+    verdicts = result_fidelity.evaluate(session, make_ctx(session))
+    claims = {v.evidence.excerpt: v.status for v in verdicts}
+    assert "claim 1" not in claims and "claim 2" not in claims
+    assert claims.get("claim 7001") == "satisfied"
 
 
 # --- error_blindness -----------------------------------------------------------

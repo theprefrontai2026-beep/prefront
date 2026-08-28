@@ -16,9 +16,14 @@ from ..provenance import flatten
 CHECK_ID = "result_fidelity"
 
 _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
+# A markdown ordered-list marker ("1. ", "2. ", ...) at the start of a line is
+# formatting, not a data claim - stripped before scanning so "1. **Loan ID
+# 7001**..." contributes 7001 (a real claim) but not 1 (a list index).
+_LIST_MARKER_RE = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
 
 
 def _claims(text: str) -> list[float]:
+    text = _LIST_MARKER_RE.sub("", text)
     seen: list[float] = []
     for m in _NUM_RE.finditer(text.replace(",", "")):
         try:

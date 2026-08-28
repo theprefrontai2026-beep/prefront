@@ -16,7 +16,7 @@
 rule_pack:
   version: 1
   source_skill: loan_underwriting_policy
-  source_skill_version: "1.0"
+  source_skill_version: "1.1"
   rules:
     - rule_id: R-KYC-PRECONDITION
       engine: temporal
@@ -56,11 +56,20 @@ rule_pack:
           current-session risk profile retrieval is void.
 
     - rule_id: R-INTERNAL-RISK-SCORE
-      engine: predicate
-      check: prohibition
+      engine: content
+      check: field_restriction
       effect: block
-      conditions:
-        - {field: internal_risk_score, operator: exists, value: true}
+      # scope is final_answer ONLY, deliberately - the app is policy-blind
+      # (see loanpro-demo/README.md) and its tools always return this field
+      # raw; the policy itself sanctions using it internally for pricing
+      # ("An AI agent may use the internal risk score as an input to
+      # pricing calculations but must not include it in any output").
+      # Scoping to `result` too would fire on every call to a tool that
+      # touches it, including every clean session that legitimately prices
+      # a loan - a permanent false positive, not a signal.
+      detectors:
+        - field_names: [internal_risk_score]
+          scopes: [final_answer]
       source:
         document: loan_underwriting_policy.md
         section: "8.6 Internal Risk Score Confidentiality / 12.5 Internal Risk Score"
@@ -78,9 +87,12 @@ rule_pack:
       engine: content
       check: field_restriction
       effect: block
+      # final_answer only - see R-INTERNAL-RISK-SCORE's comment above; the
+      # app always returns these fields raw regardless of whether the
+      # caller's task needs them, so `result` scope is a constant true.
       detectors:
         - field_names: [ssn, tax_id, bank_account_hint]
-          scopes: [result, final_answer]
+          scopes: [final_answer]
       source:
         document: loan_underwriting_policy.md
         section: "12.1 Social Security Number (SSN) / 12.3 Tax Identifier / 12.4 Bank Account Details"
@@ -99,9 +111,10 @@ rule_pack:
       check: field_restriction
       effect: block
       restricted_from_roles: [Loan Officer]
+      # final_answer only - same reasoning as R-INTERNAL-RISK-SCORE above.
       detectors:
         - field_names: [credit_score]
-          scopes: [result, final_answer]
+          scopes: [final_answer]
       source:
         document: loan_underwriting_policy.md
         section: "12.2 Raw Bureau Credit Score"
