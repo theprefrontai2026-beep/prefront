@@ -261,8 +261,49 @@ session. `grading_harness.py` drives this for POP-01/02/03 (`POP_VARIANT` /
 `POP_DRIFT` / `POP_RULE_TREND` maps in that file - demo-specific knowledge
 that belongs in the fixture-side harness, never in eval-engine).
 
-Still open: a Findings UI (step 16). Phase D reuses `family1` +
-`family2`(parameter-side) + `family3`(call/scope) + `combinator.combine_inline`
-inside semantic-mcp-server's govern pipeline, and adds the Preflight
-generator (steps 18-19). `combine_inline` is implemented and unit-tested but
-has no caller yet.
+Still open: a Findings UI (step 16), Phase D inline reuse (step 18), and the
+Preflight generator (step 19).
+
+## Phase D / step 18 (inline reuse): a real blocker, not yet attempted
+
+Investigated (not wired in): `semantic-mcp-server/semanticmcp/server.py`'s
+`_call_governed` is a **stateless per-call gateway** - it has `args` + a
+precheck row + caller facts for ONE call, never a session history.
+Most of Family 2's "parameter-side" checks (`param_provenance`,
+`param_mutation`, `param_taint`, `param_staleness`, `param_discard`,
+`entity_consistency`) are inherently cross-step: `provenance.build()` only
+finds an origin by looking at EARLIER steps in `Session.steps`. Wire these
+in against a synthetic one-`Step` `Session` and every single governed call
+fails `param_provenance` - there is never an earlier step to trace an origin
+to. That is not a wiring bug to fix, it is a missing prerequisite: the
+runtime has no session-state accumulation across calls at all. Building that
+(a session-scoped store in semantic-mcp-server that grows a `Session` object
+call by call, keyed by the caller's session id) is real, scoped work, not
+part of this pass - **do not** wire Family 2 in against a single-call
+`Session` without it; that would turn every governed call into a false
+positive, in a live authorization path.
+
+What IS safely single-call (no session-state prerequisite), for whenever
+this is picked up: `family3/call.py` (`catalog_membership`, `entitlement`,
+`version_conformance`, `side_effect_class` - args + caller only) and
+`family1/content.py` (`field_restriction` - needs only the post-execution
+result, available at `server.py`'s write/mcp/read branches). `family1/
+predicate.py`'s prohibition/approval_gate rules are ALSO single-call-safe in
+principle, but reusing them here would run in parallel with - not replace -
+the native `governance/rules.py`/`decide.py` pipeline skill-builder's
+published `policy.yaml` already drives; the two rule representations
+(`policy.yaml` for native inline enforcement, `rule_pack.yaml` for
+eval-engine's OOB shadow evaluation) are currently separate lowerings of the
+same approved rules, and unifying them is a bigger design decision than
+"call combine_inline somewhere," out of scope for a single pass.
+
+Two more reconciliation points, confirmed but not resolved: the native
+engine's `decide.aggregate()` precedence is `block > approval_required >
+allow` **with no `flag` concept at all** - `combine_inline`'s `flag` effect
+would need an explicit policy (most natural: `flag` never changes
+`decision.status`, i.e. treated as `allowed`, but IS still recorded on the
+span - never silently dropped). And `_annotate_decision` (server.py, the
+`tracing.set_attributes(span, {...})` call keyed on `prefront.rules.fired`/
+`.indeterminate`) is the right pattern to extend with
+`prefront.rule.satisfied`/`prefront.rule.clause`, once there's something
+real to annotate.
