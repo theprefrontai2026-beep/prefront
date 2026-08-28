@@ -3,11 +3,9 @@
  *
  * The dashboard fetches from the api-server only (`GET /api/decisions`, proxied
  * by nginx to :8080 → Postgres `decision_trace`). It never re-runs the LLM
- * catalog on load. Traces are written elsewhere: the Runtime tab persists each
- * run, and `POST /api/decisions/refresh` runs the SecureBank catalog
- * server-side and stores every governed result. `populate()` triggers that
- * refresh and then re-reads — the only write path the dashboard exposes, kept
- * as an explicit user action.
+ * catalog on load. `POST /api/decisions/refresh` runs the SecureBank catalog
+ * server-side and stores every governed result — the only write path,
+ * triggered by `populate()` as an explicit user action.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

@@ -41,7 +41,6 @@ Warm Japandi paper palette:
 - `DataConnector.tsx` — dsn/ddl/catalog modes; shows SchemaDiagram ERD on success
 - `PolicyStudio.tsx` — sidebar doc explorer + co-reviewer sidebar section; upload/extract/classify/atoms/validate/unresolved sub-tabs; RuleCard review with focus/broadcast wired
 - `Semantic.tsx` — build/dbt/templates/publish sub-tabs; TemplateCard inline component
-- `RuntimeDiff.tsx` — loads test scenarios from `${server}/api/scenarios`; diff view governed vs ungoverned
 - `RuleCard.tsx` — accepts focusers[], onMouseEnter/Leave for presence; shows focus chips above card
 - `ClauseLedger.tsx`, `ValidationReport.tsx`, `UnresolvedItems.tsx`, `SchemaDiagram.tsx` — leaf components
 

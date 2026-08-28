@@ -441,7 +441,6 @@ function PolicyPanel({ documentId }: { documentId: string }) {
 | **Business Graph** | `BusinessGraph.tsx` | Static stub data (SecureBank BRD) | ✅ No server call |
 | **Policy Studio** | `PolicyStudio.tsx` | Full `/design/skills/*` suite | ⚠️ Design backend |
 | **Semantic Layer** | `Semantic.tsx` | `/design/semantic/build`, `/design/semantic/templates/*` | ⚠️ Design backend |
-| **Runtime Diff** | `RuntimeDiff.tsx` | `/design/semantic/publish-policy` | ⚠️ Design backend |
 | **Audit Log** | `PolicyStudio.tsx` | `GET /api/audit?documentId=` | ✅ Connected |
 | **Live Presence** | `useReviewSync.ts` | `WS /api/ws/review` | ✅ Connected |
 

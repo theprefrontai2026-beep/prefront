@@ -198,7 +198,7 @@ function Bars({ rows, label, value, max, tone }: {
 /* Time-series: bars (throughput) + line (p95 latency) + error ticks, inline SVG */
 function Series({ points, bucket }: { points: SeriesPoint[]; bucket: number }) {
   const W = 900, H = 180, PAD = { l: 44, r: 44, t: 12, b: 26 };
-  if (!points.length) return <Empty text="No spans in range yet — run a scenario in the Runtime tab." />;
+  if (!points.length) return <Empty text="No spans in range yet — run a scenario against a demo agent (e.g. via Verdict)." />;
   const iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
   const maxT = Math.max(1, ...points.map((p) => p.spans));
   const maxL = Math.max(1, ...points.map((p) => p.p95_ms));
@@ -641,7 +641,7 @@ function SessionsView({ since, project, facets, refreshKey, initialSession, onOp
               ))}
             </tbody>
           </table>
-        ) : <Empty text={err ? "" : "No sessions in range. Run a scenario from the Runtime tab."} />}
+        ) : <Empty text={err ? "" : "No sessions in range. Run a scenario against a demo agent (e.g. via Verdict)."} />}
         <div className="pf-oob-pager">
           <span>{total ? `${offset + 1}–${Math.min(total, offset + rows.length)} of ${num(total)}` : "0 sessions"}</span>
           <button className="pf-btn sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
@@ -710,8 +710,8 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => { setSpans([]); setSelected(null); setErr(""); }, [sessionId]);
-  // A session handed over from the Runtime tab may not be ingested yet (the
-  // OTLP tap batches for a few seconds; the orchestrator's root arrives via the
+  // A session just run (e.g. via Verdict) may not be ingested yet (the OTLP
+  // tap batches for a few seconds; the orchestrator's root arrives via the
   // Phoenix poll). Re-fetch on every refresh tick until it lands.
   useEffect(() => {
     let alive = true;
@@ -896,7 +896,7 @@ function IngestionView({ status, scenarios, onSync, onClear, busy }: {
 
 /* ── root ───────────────────────────────────────────────────────────────── */
 
-export default function Observability({ active = true, openSession = null, openTraceId = null }: { active?: boolean; openSession?: string | null; openTraceId?: string | null }) {
+export default function Observability({ active = true }: { active?: boolean }) {
   const [view, setView] = useState<View>("overview");
   const [openSess, setOpenSess] = useState<string | null>(null);
   const [since, setSince] = useState<number>(86400);
@@ -938,14 +938,6 @@ export default function Observability({ active = true, openSession = null, openT
 
   const goTrace = (id: string | null) => { setOpenTrace(id); if (id) setView("traces"); };
   const goSession = (id: string | null) => { setOpenSess(id); if (id) setView("sessions"); };
-  // The Runtime tab hands over a session id ("open in Observability").
-  useEffect(() => { if (openTraceId) { goTrace(openTraceId); refresh(); } }, [openTraceId]); // eslint-disable-line
-  useEffect(() => {
-    if (!openSession) return;
-    goSession(openSession); refresh();
-    const t = window.setTimeout(refresh, 4000); // the tap batches spans for a few seconds
-    return () => window.clearTimeout(t);
-  }, [openSession]); // eslint-disable-line
 
   const sync = async () => {
     setBusy(true);

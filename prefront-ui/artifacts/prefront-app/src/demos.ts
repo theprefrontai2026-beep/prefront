@@ -1,14 +1,15 @@
 /*
  * Demo registry — the single source of truth for "which worked example am I
  * walking through." The engine is domain-neutral; every piece of demo-specific
- * vocabulary the SPA needs (orchestrator URL, default datasource id, the
- * sensitive fields to flag, the role→agent-surface names, sample intent flows)
- * lives HERE, keyed by demo, instead of hardcoded across components.
+ * vocabulary the SPA needs (default datasource id, the sensitive fields to
+ * flag, the role→agent-surface names, sample intent flows) lives HERE, keyed
+ * by demo, instead of hardcoded across components.
  *
  * Each bundled demo ships its own stack in docker-compose.yaml (a Postgres, a
  * seed job, a Prefront MCP server, an app-layer "before" service, and an
- * orchestrator). `orchestratorUrl` is what the Runtime tab points at; `id` is
- * what the api-server uses to scope persisted decision traces per demo.
+ * orchestrator — the orchestrator itself is what Verdict and the demo's own
+ * scenario/diff CLIs point at, prefront-app has no Runtime tab any more).
+ * `id` is what the api-server uses to scope persisted decision traces per demo.
  */
 
 export type DemoId = "securebank" | "loanpro";
@@ -21,9 +22,6 @@ export interface DemoConfig {
   accent: string;       // card/pill accent color
   glyph: string;        // short badge glyph (emoji)
   scenarioCount: number;
-
-  // Runtime tab: the before/after orchestrator this demo runs.
-  orchestratorUrl: string;
 
   // Data Connector defaults (prefills for connecting this demo's datasource).
   datasourceId: string;
@@ -48,11 +46,6 @@ export interface DemoConfig {
 
   // Fallback approver shown when a decision routes for approval but names no role.
   defaultApprover: string;
-
-  // How the Runtime tab drives this demo: a governed-vs-ungoverned "diff" per
-  // request, or a session runner (multi-turn sessions + the OOB checks each
-  // one should trigger) for an ungoverned deployment.
-  runner: "diff" | "sessions";
 }
 
 export const DEMOS: DemoConfig[] = [
@@ -65,7 +58,6 @@ export const DEMOS: DemoConfig[] = [
     accent: "#2563eb",
     glyph: "🏦",
     scenarioCount: 8,
-    orchestratorUrl: "http://localhost:8095",
     datasourceId: "securebank",
     ddlPlaceholder:
       "CREATE TABLE users (\n  user_id INT PRIMARY KEY,\n  name TEXT,\n  role TEXT,\n  ssn TEXT\n);\n\nCREATE TABLE accounts (\n  account_id INT PRIMARY KEY,\n  user_id INT REFERENCES users(user_id),\n  balance NUMERIC,\n  status TEXT\n);",
@@ -80,7 +72,6 @@ export const DEMOS: DemoConfig[] = [
       "Bank Manager": "Manager Console",
     },
     defaultApprover: "Bank Manager",
-    runner: "diff",
   },
   {
     id: "loanpro",
@@ -91,7 +82,6 @@ export const DEMOS: DemoConfig[] = [
     accent: "#7c3aed",
     glyph: "💳",
     scenarioCount: 34,
-    orchestratorUrl: "http://localhost:8098",
     datasourceId: "loanpro",
     ddlPlaceholder:
       "CREATE TABLE users (\n  user_id INT PRIMARY KEY,\n  name TEXT,\n  role TEXT,\n  ssn TEXT\n);\n\nCREATE TABLE loan_applications (\n  loan_id INT PRIMARY KEY,\n  applicant_id INT,\n  requested_amount NUMERIC,\n  status TEXT\n);",
@@ -111,7 +101,6 @@ export const DEMOS: DemoConfig[] = [
       "Branch Manager": "Manager Console",
     },
     defaultApprover: "Branch Manager",
-    runner: "sessions",
   },
 ];
 

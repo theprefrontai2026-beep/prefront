@@ -309,7 +309,7 @@ export default function Dashboard({ demo, onViewAllTraces }: { demo: DemoConfig;
             )}
             {feed.status === "ready" && feed.rows.length === 0 && (
               <div className="pf-dash-feed-status">
-                No decisions recorded yet. Run scenarios in the Runtime tab, or{" "}
+                No decisions recorded yet.{" "}
                 <button className="pf-dash-link" type="button" onClick={feed.populate} disabled={feed.populating}>
                   {feed.populating ? "populating…" : "populate from the demo →"}
                 </button>

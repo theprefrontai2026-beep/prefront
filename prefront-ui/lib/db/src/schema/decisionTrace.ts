@@ -7,8 +7,8 @@ import { z } from "zod/v4";
  * runtime produces (the SecureBank demo orchestrator's `/api/diff`). The
  * Dashboard's Live Decision Trace Feed reads from THIS table only; it never
  * re-runs the LLM catalog. Rows are written by the api-server (POST
- * /api/decisions from the Runtime tab, or POST /api/decisions/refresh which
- * runs the catalog server-side and persists each result).
+ * /api/decisions/refresh, which runs the catalog server-side and persists
+ * each result).
  *
  * Append-only audit log: repeated runs accumulate as distinct timestamped
  * events; the dashboard shows the most recent N.

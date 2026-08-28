@@ -32,6 +32,7 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call. Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`). **Behind compose profile `mcp` — `docker compose up` does NOT start it**; the demos run their own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/pii/` → :8020 |
+| verdict | `prefront-ui/artifacts/verdict` | 5180 | **Verdict** — standalone "business decision evaluator": what was the LoanPro Runtime tab (`SessionRunner`), extracted into its own small app so it can run/share independently of the design-time UI. Talks to `loanpro-orchestrator` by absolute URL (cross-origin, CORS already open); nginx proxies only `/oob/` → :8110 for session inspection. The main UI's Runtime tab (and SecureBank's governed-vs-ungoverned diff view, which lived in the same `RuntimeDiff.tsx`) has since been **removed** — Verdict is the only place to run LoanPro's scenario catalogue interactively now |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
@@ -45,11 +46,13 @@ The `semantic-layer` LLM mapper is the **only** agentic step; everything it emit
 
 A customer can also bypass the mapper entirely by **importing a dbt semantic model** + a Prefront governance overlay (`semantic-layer/semanticlayer/dbt_import.py`, `pipeline.run_import_pipeline`, `POST /design/semantic/import/dbt`, CLI `import-dbt`). This path is **deterministic (no LLM)**: dbt supplies structure (entities/attributes/joins), the overlay supplies governance (intents, rules, sensitivity, caller scoping, metrics). It rejoins the *same* `build_bindings → build_query_templates → build_tools → validate` tail, so a customer model is held to the identical §19/§23 gate — and dbt's implicit joins are kept **only** when backed by a real FK (others are dropped + reported, never auto-approved).
 
-In the UI, both the LLM-generate and dbt-import paths are unified in one **Semantic** tab (`prefront-ui/artifacts/prefront-app/src/components/Semantic.tsx`): the dbt upload is **optional** — provide a dbt model + overlay for the deterministic import, or leave it empty to generate from the Policy Studio rules via the mapper. The publish-policy step is driven from the overlay (dbt mode) or the Policy Studio rules (LLM mode). Tab order reflects the dependency pipeline: **Data Connector → Data Graph → Business Graph → Policy Studio → Semantic → Runtime**.
+In the UI, both the LLM-generate and dbt-import paths are unified in one **Semantic** tab (`prefront-ui/artifacts/prefront-app/src/components/Semantic.tsx`): the dbt upload is **optional** — provide a dbt model + overlay for the deterministic import, or leave it empty to generate from the Policy Studio rules via the mapper. The publish-policy step is driven from the overlay (dbt mode) or the Policy Studio rules (LLM mode). Tab order reflects the dependency pipeline: **Data Connector → Data Graph → Business Graph → Policy Studio → Semantic**.
 
 ## UI layout (`prefront-ui/`)
 
-The UI is a **pnpm workspace** (`pnpm-workspace.yaml`) with packages under `artifacts/` (the React SPA and api-server) and `lib/` (shared: `api-spec`, `api-zod`, `api-client-react`, `db`). The React SPA lives at `prefront-ui/artifacts/prefront-app/src/`.
+The UI is a **pnpm workspace** (`pnpm-workspace.yaml`) with packages under `artifacts/` (the React SPA, api-server, and `verdict` — see below) and `lib/` (shared: `api-spec`, `api-zod`, `api-client-react`, `db`). The React SPA lives at `prefront-ui/artifacts/prefront-app/src/`.
+
+`artifacts/verdict/` is a second, independent Vite/React app (`@workspace/verdict`, modeled on the pre-existing `artifacts/mockup-sandbox/` pattern for a standalone package in this workspace) — it has its own `package.json`/`vite.config.ts`/`Dockerfile.verdict`/`verdict-nginx.conf` and no shared code with `prefront-app` at build time (it started as a copy of `prefront-app`'s `SessionRunner.tsx`, plus a `SessionDetail.tsx` extracted from `Observability.tsx`, which bundled it with views Verdict doesn't need — `prefront-app` no longer has either component: its own Runtime tab, `RuntimeDiff.tsx`, and `DecisionTrace.tsx` were removed once Verdict existed, taking SecureBank's governed-vs-ungoverned diff view down with them). Verdict's `index.css` is a curated subset of what the main app's stylesheet *used to* carry for those two components (design tokens + `.pf-sess-*`/`.pf-diff-*`/`.pf-oob-*`/`.pf-flyout*`) — there is no shared stylesheet between the two apps, so a style change meant for both has to be made in both places by hand.
 
 The `db` lib is the Drizzle schema shared between the `api-server` and the Drizzle migrations (`lib/db/src/`). The OpenAPI spec at `lib/api-spec/openapi.yaml` is the contract; `api-client-react` (generated by orval) is the typed React-Query client.
 
@@ -92,7 +95,9 @@ Both yield `session → turn → ChatCompletion → tool …`; the replay's stan
 span carries `app.replay=true`. Catalogue ids: `F1-*`, `F2-*`, `F3-*`, `POP-*`
 (carry `repeat`/`variant`), `BASE-*` (clean controls); `F2-04R` is hidden
 (runnable by id). Each scenario declares `expected_findings` — what the
-evaluator SHOULD report — which the Runtime tab shows beside the transcript.
+evaluator SHOULD report — which Verdict shows beside the transcript (see
+"Verdict" in the services table above; the main Prefront UI has no Runtime
+tab any more).
 
 - **`db/*.sql` only run on a fresh volume.** After any schema/seed change:
   `docker compose rm -sf loanpro-db && docker volume rm prefront_loanpro_pgdata`,
@@ -148,19 +153,19 @@ A retail-banking example that ships **inside this repo** and runs from the same 
 
 - **`securebank-ungoverned`** (`:8096`) — real LLM + raw SQL (`gpt-4o-mini` with a `run_sql` tool); reads can leak, writes are attempted but rolled back via read-only transaction
 - **`securebank-mcp`** (`:8100`) — same `semantic-mcp-server` image pointed at `securebank-demo/policy/`; identity resolved per-connection from `X-Prefront-Act-As`
-- **`securebank-orchestrator`** (`:8095`) — fans each scenario out to both, merges results; the UI **Runtime tab** points at whichever demo is selected (LoanPro `:8098` by default now — see `demos.ts`), so reaching this one means selecting SecureBank in the switcher AND starting its profile
+- **`securebank-orchestrator`** (`:8095`) — fans each scenario out to both, merges results. **No UI tab reaches this any more** — `RuntimeDiff.tsx` (the component that rendered this governed-vs-ungoverned diff, alongside LoanPro's SessionRunner) was removed from `prefront-app` once Verdict took over the LoanPro side; this orchestrator is now driven only via its own HTTP API (`curl`, or `POST /api/decisions/refresh` below) or a future dedicated UI, not the main Prefront app
 
 The curated artifacts (`securebank-demo/policy/query_templates.yaml`, `policy.yaml`) are committed. The `securebank-seed` one-shot service copies them into the shared `artifacts` volume at startup. `OpenAI API key` required for the ungoverned and orchestrator services.
 
-The test-case catalog lives in `securebank-demo/scenarios.py` (`CALLERS` dict + `get_scenarios()`). `demo_server.py` serves `GET /api/scenarios` (metadata only) and `GET /api/diff?only=B1,B4` (live run both ways). `governed_agent.py` implements the full OpenAI tool-calling loop: LLM picks an MCP tool → Prefront enforces policy → tool result passed back to LLM for natural-language synthesis → `decision["answer"]` set. The Runtime tab (`RuntimeDiff.tsx`) points at `http://localhost:8095` by default (configurable in the UI).
+The test-case catalog lives in `securebank-demo/scenarios.py` (`CALLERS` dict + `get_scenarios()`). `demo_server.py` serves `GET /api/scenarios` (metadata only) and `GET /api/diff?only=B1,B4` (live run both ways) — `http://localhost:8095` by default, `curl` it directly.
 
-- **Two scenario classes**: **B1–B9** show governance as a **gate** (block/mask/approval/scope). **C1–C2** ("Decision Support: grounded context") show the complement — governance as **enablement**: the outcome is **ALLOW on both sides**, but Prefront's intent returns a *curated context bundle* (C1 `view_account_activity` = an aggregate velocity signal over `transactions`; C2 `view_loan_context` = a `loans`+`users` join + SQL-derived `score_margin`) so the governed agent's answer is grounded/correct where the raw-SQL agent is shallow or ungrounded. The contrast is the two `model` answer lines, not the verdict; `RuntimeDiff.tsx` renders a `pf-grounded-note` caption on any ALLOW-vs-ALLOW row. These need no engine change — just published artifacts + a raw `get_loan` parity tool on the ungoverned side.
+- **Two scenario classes**: **B1–B9** show governance as a **gate** (block/mask/approval/scope). **C1–C2** ("Decision Support: grounded context") show the complement — governance as **enablement**: the outcome is **ALLOW on both sides**, but Prefront's intent returns a *curated context bundle* (C1 `view_account_activity` = an aggregate velocity signal over `transactions`; C2 `view_loan_context` = a `loans`+`users` join + SQL-derived `score_margin`) so the governed agent's answer is grounded/correct where the raw-SQL agent is shallow or ungrounded. The contrast is the two `model` answer lines, not the verdict. These need no engine change — just published artifacts + a raw `get_loan` parity tool on the ungoverned side.
 
-- **Concurrency flake — root cause found and fixed.** Each governed run opens its own MCP SSE connection, and firing all scenarios at once (the UI's old "Run all") produced random `ERROR` scenarios. That was the SSE endpoint returning `None` (see the entry below), not concurrency or governance; it is fixed in `semanticmcp/server.py`. The mitigations remain as defence in depth and are still reasonable: `governed_agent.run_agent` **retries** the MCP interaction (a governed decision returns a dict and never raises, so a raised exception is always a transport failure; reads/prechecks are idempotent), and `RuntimeDiff.runAll` **caps concurrency** to a small worker pool.
+- **Concurrency flake — root cause found and fixed.** Each governed run opens its own MCP SSE connection, and firing all scenarios at once (the old UI's "Run all") produced random `ERROR` scenarios. That was the SSE endpoint returning `None` (see the entry below), not concurrency or governance; it is fixed in `semanticmcp/server.py`. The mitigation remains as defence in depth and is still reasonable: `governed_agent.run_agent` **retries** the MCP interaction (a governed decision returns a dict and never raises, so a raised exception is always a transport failure; reads/prechecks are idempotent).
 
 ## Dashboard & decision-trace persistence (`api-server` + `decision_*` tables)
 
-Governed decisions are persisted so the Dashboard and Decision Traces page read history from the DB rather than re-running the LLM on every load. Flow: the Runtime tab (`RuntimeDiff.tsx`) best-effort `POST`s each run to `/api/decisions`, and `POST /api/decisions/refresh` runs the whole SecureBank catalog server-side (via `ORCHESTRATOR_URL`) and stores every result. All routes live in `prefront-ui/artifacts/api-server/src/routes/decisions.ts`.
+Governed decisions are persisted so the Dashboard and Decision Traces page read history from the DB rather than re-running the LLM on every load. Flow: `POST /api/decisions/refresh` runs the whole SecureBank catalog server-side (via `ORCHESTRATOR_URL`) and stores every result — this is now the only path in, since the UI component that used to best-effort `POST` each interactive run (`RuntimeDiff.tsx`) has been removed. All routes live in `prefront-ui/artifacts/api-server/src/routes/decisions.ts`.
 
 - **`decision_trace`** — one row per decision (append-only). **Capped at 100**, oldest pruned on every write (`pruneOldTraces`). `GET /api/decisions?limit=N` returns newest-first. `DELETE /api/decisions` (the Dashboard "Clear" control) wipes only this table.
 - **Cumulative counters, persistent FOREVER** — never pruned, never reset by Clear: `decision_stat` (per-metric totals → Agent Activity + Decision Outcomes), `decision_agent` (distinct callers → "Agents Active"), `decision_policy` (per-policy trigger counts → the Policies Enforced leaderboard, extracted from the governance trace's fired `rules_evaluated[].rule_key` plus engine-authz reasons), `decision_intent` (per-intent counts + effect buckets → Most Used Intents, with a data-derived risk level). `recordStats`/`recordPolicies`/`recordIntents` fold each insert in via atomic `ON CONFLICT DO UPDATE`.
@@ -409,7 +414,7 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
 ### Run the bundled stack
 ```bash
 cp .env.example .env          # add an LLM key (e.g. NVIDIA_API_KEY=…; GROQ_API_KEY also supported)
-docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:8010
+docker compose up --build     # ui:5173  verdict:5180  skill-builder:8000  semantic-layer-api:8010
                               # oob-ingest:8110  clickhouse:8123  phoenix:6006
                               # LoanPro (the active demo): orchestrator:8098
                               #   agent:8097  app-mcp:8102  postgres:5435
@@ -472,6 +477,8 @@ pnpm --filter ./lib/api-spec run codegen   # runs orval + typecheck:libs
 docker run --rm -v "$PWD":/w -w /w/artifacts/prefront-app node:24-slim \
   node /w/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
 ```
+Same pattern for `artifacts/verdict` (swap the `-w` path).
+
 `api-server` and `prefront-app` are **composite TS projects that consume `@workspace/db`'s emitted `dist/*.d.ts`** (project references), *not* its src — so after editing a `lib/db` schema, rebuild declarations first or the app typecheck won't see new exports:
 ```bash
 docker run --rm -v "$PWD":/w -w /w node:24-slim node /w/node_modules/typescript/bin/tsc --build lib/db lib/api-zod
@@ -517,7 +524,7 @@ Artifacts reach the runtime by HTTP, then land in the shared `artifacts` volume 
 
 ## UI tab architecture (`prefront-ui/artifacts/prefront-app/src/`)
 
-`App.tsx` owns a single `useState("dashboard")` for the active tab (in the `TABS` array — the source of truth for nav order). All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Runtime → Decision Traces → Intent Flows → Observability**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` owns a single `useState("dashboard")` for the active tab (in the `TABS` array — the source of truth for nav order). All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Decision Traces → Intent Flows → Observability**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
 `Dashboard.tsx` is **wired to real persisted data** (via `useDecisionFeed`, `/api/*` — see the persistence section below), not fixtures. `DecisionTraces.tsx` (the last tab) is a filterable log over the latest traces; the Dashboard feed's "View all →" navigates to it.
 

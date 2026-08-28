@@ -7,7 +7,6 @@ import DataConnector from "./components/DataConnector";
 import DataGraph from "./components/DataGraph";
 import BusinessGraph from "./components/BusinessGraph";
 import Semantic from "./components/Semantic";
-import RuntimeDiff from "./components/RuntimeDiff";
 import Observability from "./components/Observability";
 import DemoChooser from "./components/DemoChooser";
 import { useDemo } from "./DemoContext";
@@ -43,7 +42,6 @@ const TABS = [
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
   { id: "semantic", label: "Semantic Layer",  sub: "Build governed interfaces",icon: IconLayers },
-  { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconDiff },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
   { id: "oob",      label: "Observability",   sub: "Traces, LLM, cost (OOB)",   icon: IconPulse },
@@ -127,15 +125,6 @@ function IconBusiness() {
     </svg>
   );
 }
-function IconDiff() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="18" rx="1"/>
-      <rect x="14" y="3" width="7" height="18" rx="1"/>
-      <path d="M6.5 8h0M6.5 12h0M6.5 16h0" strokeWidth="2.5"/>
-    </svg>
-  );
-}
 function IconBell() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -162,7 +151,6 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   bizgraph: { title: "Business Graph",   desc: "Domain model showing business entities, processes, roles, and applied governance policies." },
   policy:   { title: "Policy Studio",   desc: "Upload policy documents, extract rules, and manage the review pipeline." },
   semantic: { title: "Semantic Layer",  desc: "Build governed interfaces — SQL query templates or MCP tool bindings — from approved rules and your schema." },
-  runtime:  { title: "Runtime",         desc: "Run the sessions against the live agent. For an ungoverned demo each session is built to trigger one of Prefront's out-of-band checks; a governed demo shows the Prefront runtime beside the agent." },
   oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: sessions, the app agent's turns, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
 };
 
@@ -181,9 +169,6 @@ function ReviewerDot({ name, color, focused }: { name: string; color: string; fo
 export default function App() {
   const { demo, demoId, openChooser } = useDemo();
   const [tab, setTab] = useState("dashboard");
-  // "open in Observability" from the Runtime tab: the session id to show.
-  const [oobSession, setOobSession] = useState<string | null>(null);
-  const [oobTrace, setOobTrace] = useState<string | null>(null);
   const [graphMounted, setGraphMounted] = useState(false);
   const [bizGraphMounted, setBizGraphMounted] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
@@ -402,11 +387,8 @@ export default function App() {
               setIntents={setIntents}
             />
           </div>
-          <div className={tab === "runtime" ? "" : "tab-hidden"}>
-            <RuntimeDiff demo={demo} onOpenSession={(id) => { setOobSession(id); setTab("oob"); }} onOpenTrace={(id) => { setOobTrace(id); setTab("oob"); }} />
-          </div>
           <div className={tab === "oob" ? "" : "tab-hidden"}>
-            <Observability active={tab === "oob"} openSession={oobSession} openTraceId={oobTrace} />
+            <Observability active={tab === "oob"} />
           </div>
         </div>
       </div>

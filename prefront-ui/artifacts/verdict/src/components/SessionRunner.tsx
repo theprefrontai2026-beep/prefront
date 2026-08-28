@@ -1,19 +1,24 @@
 /*
- * SessionRunner — the Runtime tab for a SESSION-shaped, ungoverned demo
- * (LoanPro). Each scenario is one session against the app agent: a caller, a
- * channel, and a list of user turns (or a scripted tool sequence the agent
- * replays). There is no governed side and no verdict; the row shows the
- * transcript the agent produced and the checks Prefront's out-of-band engine
- * SHOULD raise for it (`expected_findings`), grouped by check family.
+ * SessionRunner — Verdict's one screen. Each scenario is one session against
+ * the app agent: a caller, a channel, and a list of user turns (or a scripted
+ * tool sequence the agent replays). There is no governed side and no verdict
+ * rendered by the app itself; the row shows the transcript the agent produced
+ * and the checks Prefront's out-of-band engine SHOULD raise for it
+ * (`expected_findings`), grouped by check family.
  *
  * The orchestrator is the source of truth for the catalogue (`/api/scenarios`)
  * and runs a session per call (`/api/run?only=ID&repeat=N&variant=V`). Every
- * session lands in ClickHouse with its `session.id`; "open in Observability"
- * hands the id to the Sessions view.
+ * session lands in ClickHouse with its `session.id`; "Inspect session" below
+ * pulls it back via oob-ingest without leaving this page.
+ *
+ * Copied from the main Prefront app's Runtime tab (same component name, same
+ * behavior) with one difference: no `onOpenSession`/`onOpenTrace` callbacks —
+ * those exist there to jump to a separate Observability tab, which Verdict
+ * doesn't have. The inline session flyout below is self-sufficient.
  */
 import { useEffect, useMemo, useState } from "react";
-import type { DemoConfig } from "../demos";
-import { SessionDetail } from "./Observability";
+import type { DemoConfig } from "../demo";
+import { SessionDetail } from "./SessionDetail";
 
 type Finding = { check: string; evidence: string; policy?: string };
 type Scenario = {
@@ -104,7 +109,7 @@ function Findings({ s }: { s: Scenario }) {
       {s.expected_findings.map((f, i) => (
         <div key={i} className="pf-sess-finding">
           <span className={`pf-sess-check ${FAMILY_TONE[s.family] || ""}`}>{f.check}</span>
-          {f.policy && <span className="pf-sess-policy" title="credit_policy.md section">§{f.policy}</span>}
+          {f.policy && <span className="pf-sess-policy" title="loan_underwriting_policy.md section">§{f.policy}</span>}
           <span className="pf-sess-evidence">{f.evidence}</span>
         </div>
       ))}
@@ -113,11 +118,10 @@ function Findings({ s }: { s: Scenario }) {
 }
 
 /** Slide-out panel showing the OOB view of one session without leaving the
- *  tab. Polls while open: the OTLP tap batches spans for a few seconds after a
- *  run, so the first fetch right after "Run" is usually a 404. */
-function SessionFlyout({ sessionId, scenario, onClose, onOpenSession, onOpenTrace }: {
+ *  page. Polls while open: the OTLP tap batches spans for a few seconds after
+ *  a run, so the first fetch right after "Run" is usually a 404. */
+function SessionFlyout({ sessionId, scenario, onClose }: {
   sessionId: string; scenario: Scenario; onClose: () => void;
-  onOpenSession?: (id: string) => void; onOpenTrace?: (id: string) => void;
 }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -139,12 +143,11 @@ function SessionFlyout({ sessionId, scenario, onClose, onOpenSession, onOpenTrac
             <div className="pf-oob-subtle">as ingested out of band · refreshes every 3s</div>
           </div>
           <div className="pf-oob-actions">
-            {onOpenSession && <button className="pf-btn sm" onClick={() => onOpenSession(sessionId)}>Full view</button>}
             <button className="pf-btn sm" onClick={onClose}>Close ✕</button>
           </div>
         </div>
         <div className="pf-flyout-body">
-          <SessionDetail sessionId={sessionId} refreshKey={tick} onClose={onClose} onOpenTrace={(id) => onOpenTrace?.(id)} />
+          <SessionDetail sessionId={sessionId} refreshKey={tick} onClose={onClose} />
           {scenario.expected_findings.length > 0 && (
             <div className="pf-flyout-findings"><Findings s={scenario} /></div>
           )}
@@ -154,7 +157,7 @@ function SessionFlyout({ sessionId, scenario, onClose, onOpenSession, onOpenTrac
   );
 }
 
-export default function SessionRunner({ demo, onOpenSession, onOpenTrace }: { demo: DemoConfig; onOpenSession?: (sessionId: string) => void; onOpenTrace?: (traceId: string) => void }) {
+export default function SessionRunner({ demo }: { demo: DemoConfig }) {
   const [flyout, setFlyout] = useState<{ sessionId: string; scenario: Scenario } | null>(null);
   const [server, setServer] = useState(demo.orchestratorUrl);
   const [families, setFamilies] = useState<Family[] | null>(null);
@@ -212,7 +215,7 @@ export default function SessionRunner({ demo, onOpenSession, onOpenTrace }: { de
 
   return (
     <main>
-      {flyout && <SessionFlyout sessionId={flyout.sessionId} scenario={flyout.scenario} onClose={() => setFlyout(null)} onOpenSession={onOpenSession} onOpenTrace={onOpenTrace} />}
+      {flyout && <SessionFlyout sessionId={flyout.sessionId} scenario={flyout.scenario} onClose={() => setFlyout(null)} />}
       <div className="pf-panel">
         <h2><span className="pf-step-badge">1</span>Run the sessions</h2>
         <p className="pf-hint">
@@ -222,7 +225,7 @@ export default function SessionRunner({ demo, onOpenSession, onOpenTrace }: { de
           failure modes Prefront's out-of-band checks detect. <em>LLM</em> sessions let the model pick
           the tools; <em>scripted</em> sessions replay an exact tool sequence through the same MCP path
           so the finding is guaranteed. Nothing here is enforced or judged: the verdicts belong to the
-          evaluator, and the traces land in <strong>Observability → Sessions</strong>.
+          evaluator — click <strong>Inspect session ▸</strong> on any run to see the ingested trace.
         </p>
         <div className="pf-fields">
           <label style={{ gridColumn: "1 / -1" }}>Demo server URL

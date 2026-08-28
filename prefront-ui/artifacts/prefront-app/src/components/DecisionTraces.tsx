@@ -196,7 +196,7 @@ export default function DecisionTraces({ active = true, demo }: { active?: boole
         )}
         {status !== "error" && filtered.length === 0 && (
           <div className="pf-dash-feed-status">
-            {traces.length === 0 ? "No decisions recorded yet — run scenarios in the Runtime tab." : "No decisions match these filters."}
+            {traces.length === 0 ? "No decisions recorded yet — populate from the demo on the Overview tab." : "No decisions match these filters."}
           </div>
         )}
         {filtered.length > 0 && (

@@ -95,7 +95,7 @@ seed is never mutated — the agent still sees its mutation succeed.
 
 ## Where to look
 
-* Runtime tab → session transcript + "what Prefront should report".
+* Verdict (`localhost:5180`, standalone app — see the root `CLAUDE.md`) → session transcript + "what Prefront should report".
 * Observability → **Sessions**: one row per `session.id`, the ordered step
   stream, the population table (distinct action shapes per scenario × variant).
 * `curl localhost:8110/oob/sessions/<id>` for the raw spans; or ClickHouse:

@@ -5,6 +5,7 @@
 #   semantic-mcp-server  templates -> live MCP query tools (HTTP/SSE) :8090
 #   api-server           UI companion: audit log + review websocket (Express) :8080
 #   ui                   Prefront front-end (React/Vite -> nginx) :5173
+#   verdict              Standalone LoanPro scenario runner (React/Vite -> nginx) :5180
 #   phoenix              Arize Phoenix trace collector + UI          :6006
 #   clickhouse           OOB trace store (ClickHouse)                :8123
 #   oob-ingest           Phoenix/OTLP -> ClickHouse + /oob query API :8110
@@ -307,6 +308,22 @@ services:
       - semantic-layer-api
       - api-server
       - pii-analyzer
+      - oob-ingest
+
+  # ---- Verdict: standalone LoanPro scenario runner (nginx, static) ---------
+  # The main UI's Runtime tab (SessionRunner), pulled out into its own small
+  # app so it can be run/shared independently of the design-time Prefront UI.
+  # Orchestrator calls are cross-origin fetches at an absolute URL (it already
+  # sends permissive CORS); the one relative path (oob-ingest session lookups)
+  # is proxied by its own nginx conf (verdict-nginx.conf), same pattern as the
+  # main ui service's /oob/ block.
+  verdict:
+    build:
+      context: ./prefront-ui
+      dockerfile: Dockerfile.verdict
+    ports: ["5180:80"]
+    depends_on:
+      - loanpro-orchestrator
       - oob-ingest
 
   # ==========================================================================
