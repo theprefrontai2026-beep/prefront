@@ -261,8 +261,16 @@ session. `grading_harness.py` drives this for POP-01/02/03 (`POP_VARIANT` /
 `POP_DRIFT` / `POP_RULE_TREND` maps in that file - demo-specific knowledge
 that belongs in the fixture-side harness, never in eval-engine).
 
-Still open: a Findings UI (step 16), Phase D inline reuse (step 18), and the
-Preflight generator (step 19).
+Still open: a Findings UI (step 16) and Phase D inline reuse (step 18, see
+below). Step 19 (Preflight)'s schema + structural validator + prompt +
+LLM-call plumbing are DONE in `semantic-layer/semanticlayer/preflight.py`
+(`CandidateScenario`, `validate_candidate_scenario`, `render_prompt`,
+`generate_candidate_scenarios` - the LLM client is dependency-injected, so
+this was smoke-tested with a stub completion function, never a real API
+call) - not yet wired to an HTTP endpoint, and never run against a real LLM
+in this repo. `KNOWN_CHECKS` there is the one place outside eval-engine that
+has to know the check-families vocabulary by name; keep it in sync by hand
+if a check id ever changes.
 
 ## Phase D / step 18 (inline reuse): a real blocker, not yet attempted
 
