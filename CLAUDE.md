@@ -444,6 +444,18 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   and `verdict-nginx.conf` carry the same addition (its own hand-curated CSS
   copy already had the `.pf-oob-chip.red/green/amber` tone classes). Vite
   dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
+- **"Clear ClickHouse" (Ingestion view) clears ALL FIVE ClickHouse tables, not
+  just oob-ingest's.** `DELETE /oob/spans` (`ch.truncate()`, oob-ingest) only
+  ever cleared `spans`/`ingest_state` — it left eval-engine's `eval_verdicts`/
+  `eval_conformance_tags`/`eval_evaluated_sessions` untouched, so Findings kept
+  showing stale rows after a "clear". The button now also fires
+  `DELETE /eval/verdicts` (eval-engine's own truncate-all, already existed for
+  its own dev use) in parallel. `FindingsView` didn't self-refresh on this
+  action either (no `refreshKey` wired) - it now takes the same `tick`
+  `refreshKey` prop `TracesView`/`SessionsView` already used. Both gaps found
+  and fixed together; Phoenix is untouched by design (oob-ingest re-pulls from
+  it), so `spans` repopulates on the next poll — that's a re-pull, not
+  retention, and is what the confirm dialog now says explicitly.
 - Quick checks: `curl :8110/oob/status` (both sources + counts),
   `curl -X POST :8110/oob/sync` (pull now), `docker exec prefront-clickhouse-1
   clickhouse-client -q "SELECT service, count() FROM prefront.spans FINAL GROUP BY service"`.

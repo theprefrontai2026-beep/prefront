@@ -46,6 +46,18 @@ becomes an `ApprovedRule` after human approval, and only approved rules publish.
   (`api.py`) re-implements the orchestration itself**, one stage per endpoint
   (and `run-full-extraction` chains them). Logging/grounding changes usually
   need to be made in *both* paths.
+- **Extraction has two entry points sharing one implementation.**
+  `POST .../extract-rules` (the original, still used by the CLI/scripts) blocks
+  until every clause is done. `POST .../extract-rules/start` +
+  `GET .../extract-rules/progress` run the SAME work
+  (`api.py:_do_extract_rules`) in a background thread instead, so a caller can
+  poll per-clause progress (`RuleExtractor.extract_clauses`'s `on_progress`
+  callback, `llm.py`) while it runs — what the UI's Policy Studio "Extract
+  rules" progress bar polls. Job state (`_extraction_jobs`, `api.py`) is an
+  in-memory dict, same posture as `identity.py`'s `_cache`/
+  `session_state.py`'s `_sessions` in `semantic-mcp-server` — fine because
+  skill-builder runs as one uvicorn process with no `--workers`; a restart
+  loses in-flight job state (a caller just calls `/start` again).
 - **A rule fires by the template supplying its fact, not by listing it.**
   `validation/engine.py:run_all` evaluates each validator; a rule whose symbol
   is missing from facts goes *indeterminate*, which fail-safes (never silently

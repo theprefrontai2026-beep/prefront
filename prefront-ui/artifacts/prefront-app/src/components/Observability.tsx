@@ -941,7 +941,7 @@ function StatusChip({ status }: { status: string }) {
   return <span className={`pf-oob-chip ${STATUS_TONE[status] || ""}`}>{status}</span>;
 }
 
-function FindingsView({ onOpenSession }: { onOpenSession: (id: string | null) => void }) {
+function FindingsView({ refreshKey, onOpenSession }: { refreshKey: number; onOpenSession: (id: string | null) => void }) {
   const [family, setFamily] = useState("");
   const [checkId, setCheckId] = useState("");
   const [rows, setRows] = useState<EvalVerdict[]>([]);
@@ -957,7 +957,7 @@ function FindingsView({ onOpenSession }: { onOpenSession: (id: string | null) =>
       .then((d) => { if (alive) { setRows(d.findings); setTotal(d.total); setErr(""); } })
       .catch((e) => { if (alive) setErr(String(e?.message || e)); });
     return () => { alive = false; };
-  }, [family, checkId, offset]);
+  }, [family, checkId, offset, refreshKey]);
 
   const checkIds = useMemo(() => Array.from(new Set(rows.map((r) => r.check_id))).sort(), [rows]);
   const sel = (label: string, value: string, set: (v: string) => void, opts: string[]) => (
@@ -1057,9 +1057,21 @@ export default function Observability({ active = true }: { active?: boolean }) {
     try { await fetch("/oob/sync", { method: "POST" }); refresh(); } finally { setBusy(false); }
   };
   const clear = async () => {
-    if (!window.confirm("Delete every ingested span from ClickHouse? Phoenix keeps its copy and will be re-pulled from scratch.")) return;
+    if (!window.confirm("Delete every ClickHouse table — spans, ingest state, AND eval-engine's verdicts/conformance tags/evaluated-sessions? Phoenix keeps its own copy and will be re-pulled from scratch; eval-engine will re-evaluate every session from zero.")) return;
     setBusy(true);
-    try { await fetch("/oob/spans", { method: "DELETE" }); setOpenTrace(null); refresh(); } finally { setBusy(false); }
+    try {
+      // /oob/spans truncates spans + ingest_state (oob-ingest's tables);
+      // /eval/verdicts truncates eval_verdicts + eval_conformance_tags +
+      // eval_evaluated_sessions (eval-engine's) - together, every ClickHouse
+      // table in the stack. Both in parallel; both are dev-only truncates,
+      // idempotent either order.
+      await Promise.all([
+        fetch("/oob/spans", { method: "DELETE" }),
+        fetch("/eval/verdicts", { method: "DELETE" }),
+      ]);
+      setOpenTrace(null);
+      refresh();
+    } finally { setBusy(false); }
   };
 
   const ok = status?.clickhouse.ok ?? false;
@@ -1093,7 +1105,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
       {view === "traces" && <TracesView since={since} project={project} facets={facets} refreshKey={tick} initialTrace={openTrace} onOpenTrace={goTrace} />}
       {view === "llm" && <LlmView data={llm} onOpenTrace={goTrace} />}
       {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}
-      {view === "findings" && <FindingsView onOpenSession={goSession} />}
+      {view === "findings" && <FindingsView refreshKey={tick} onOpenSession={goSession} />}
     </div>
   );
 }

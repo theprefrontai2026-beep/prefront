@@ -18,9 +18,9 @@ import json
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from pydantic import ValidationError
 
@@ -298,7 +298,8 @@ class RuleExtractor:
         return result
 
     def extract_clauses(
-        self, clauses: Iterable[Clause], ctx: ExtractionContext
+        self, clauses: Iterable[Clause], ctx: ExtractionContext,
+        on_progress: Optional[Callable[[int, int], None]] = None,
     ) -> list[ClauseExtraction]:
         """Extract all clauses concurrently (I/O-bound), preserving input order.
 
@@ -308,18 +309,39 @@ class RuleExtractor:
         Tracing context is thread-local, so it is snapshotted here and
         re-attached in each worker — otherwise every clause's LLM span would be
         orphaned instead of hanging under the extraction run.
+
+        ``on_progress(completed, total)``, when given, is called once per
+        clause as it finishes — in COMPLETION order, not input order (the
+        returned list is still input-ordered). It always runs on the calling
+        thread (the sequential path calls it directly; the threaded path
+        drives it from the `as_completed` loop, never from a worker thread),
+        so a caller never needs its own lock.
         """
         clauses = list(clauses)
+        total = len(clauses)
         if self.max_workers <= 1 or len(clauses) <= 1:
-            return [self.extract_clause(c, ctx) for c in clauses]
+            results = []
+            for c in clauses:
+                results.append(self.extract_clause(c, ctx))
+                if on_progress:
+                    on_progress(len(results), total)
+            return results
         parent = tracing.current_context()
 
         def _work(c: Clause) -> ClauseExtraction:
             with tracing.use_context(parent):
                 return self.extract_clause(c, ctx)
 
+        results: list[Optional[ClauseExtraction]] = [None] * total
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-            return list(pool.map(_work, clauses))
+            future_to_idx = {pool.submit(_work, c): i for i, c in enumerate(clauses)}
+            completed = 0
+            for fut in as_completed(future_to_idx):
+                results[future_to_idx[fut]] = fut.result()
+                completed += 1
+                if on_progress:
+                    on_progress(completed, total)
+        return results  # type: ignore[return-value]
 
     # -- internals ------------------------------------------------------------
 

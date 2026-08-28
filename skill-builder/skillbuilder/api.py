@@ -6,6 +6,8 @@ Exposes the design.md endpoints over the same pipeline the CLI uses:
     POST /design/skills/documents/{document_id}/extract
     POST /design/skills/documents/{document_id}/segment
     POST /design/skills/documents/{document_id}/extract-rules
+    POST /design/skills/documents/{document_id}/extract-rules/start     (background job)
+    GET  /design/skills/documents/{document_id}/extract-rules/progress  (poll it)
     GET  /design/skills/candidate-rules?document_id=...
     POST /design/skills/candidate-rules/{candidate_rule_id}/approve
     POST /design/skills/candidate-rules/{candidate_rule_id}/reject
@@ -23,8 +25,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
@@ -337,8 +340,13 @@ def segment_clauses(document_id: str):
     return {"document_id": document_id, "clauses_created": n}
 
 
-@app.post("/design/skills/documents/{document_id}/extract-rules")
-def extract_rules(document_id: str, body: ExtractRulesBody = Body(default=ExtractRulesBody())):
+def _do_extract_rules(
+    document_id: str, body: ExtractRulesBody,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> dict:
+    """The actual extraction work, shared by the synchronous endpoint below
+    and the background job the progress-polling endpoints drive — one
+    implementation, two ways to call it, so they can never drift apart."""
     doc = _doc_or_404(document_id)
     normalized, clauses = _derive(doc)
     # Fall back to the resolved pack (named overlaid on the schema-derived
@@ -368,7 +376,7 @@ def extract_rules(document_id: str, body: ExtractRulesBody = Body(default=Extrac
             "skillbuilder.model": extractor.model,
             "skillbuilder.provider": extractor.provider,
         })
-        for res in extractor.extract_clauses(clauses, ctx):
+        for res in extractor.extract_clauses(clauses, ctx, on_progress=on_progress):
             candidates.extend(res.candidates)
             errors.extend(f"{res.clause.clause_id}: {e}" for e in res.errors)
         tracing.set_attributes(span, {
@@ -387,6 +395,70 @@ def extract_rules(document_id: str, body: ExtractRulesBody = Body(default=Extrac
         "errors": errors,
         "requires_review": True,
     }
+
+
+@app.post("/design/skills/documents/{document_id}/extract-rules")
+def extract_rules(document_id: str, body: ExtractRulesBody = Body(default=ExtractRulesBody())):
+    return _do_extract_rules(document_id, body)
+
+
+# -- progress-tracked extraction (background job + polling) -------------------
+#
+# The endpoint above is a single blocking request — fine for the CLI/scripts,
+# but it gives a UI nothing to show a progress bar against until the whole
+# batch finishes. These two endpoints run the SAME `_do_extract_rules` work
+# in a background thread instead, so the frontend can poll clause-by-clause
+# progress while it runs. In-memory only (one dict, a lock), same posture as
+# every other per-process cache in this codebase (identity.py's `_cache`,
+# session_state.py's `_sessions`) — skill-builder runs as a single uvicorn
+# process with no --workers (see the Dockerfile), so this is safe; a restart
+# loses in-flight job state, same as a restart already loses anything else
+# not yet persisted to the store.
+_extraction_jobs: dict[str, dict] = {}
+_extraction_jobs_lock = threading.Lock()
+
+
+@app.post("/design/skills/documents/{document_id}/extract-rules/start")
+def extract_rules_start(document_id: str, body: ExtractRulesBody = Body(default=ExtractRulesBody())):
+    doc = _doc_or_404(document_id)
+    _, clauses = _derive(doc)
+    total = len(clauses)
+    with _extraction_jobs_lock:
+        _extraction_jobs[document_id] = {"completed": 0, "total": total, "status": "running",
+                                         "result": None, "error": None}
+
+    def _on_progress(completed: int, total: int) -> None:
+        with _extraction_jobs_lock:
+            job = _extraction_jobs.get(document_id)
+            if job is not None:
+                job["completed"] = completed
+
+    def _run() -> None:
+        try:
+            result = _do_extract_rules(document_id, body, on_progress=_on_progress)
+        except HTTPException as e:
+            with _extraction_jobs_lock:
+                _extraction_jobs[document_id].update(status="error", error=str(e.detail))
+        except Exception as e:  # noqa: BLE001 - surface to the poller, never crash the thread silently
+            log.exception("extract-rules/start background job failed for %s", document_id)
+            with _extraction_jobs_lock:
+                _extraction_jobs[document_id].update(status="error", error=f"{type(e).__name__}: {e}")
+        else:
+            with _extraction_jobs_lock:
+                _extraction_jobs[document_id].update(status="done", result=result)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"document_id": document_id, "total": total, "status": "running"}
+
+
+@app.get("/design/skills/documents/{document_id}/extract-rules/progress")
+def extract_rules_progress(document_id: str):
+    with _extraction_jobs_lock:
+        job = _extraction_jobs.get(document_id)
+    if job is None:
+        raise HTTPException(404, f"no extraction job for document {document_id!r} "
+                                 "(call extract-rules/start first)")
+    return {"document_id": document_id, **job}
 
 
 def _client(provider: Optional[str] = None, model: Optional[str] = None):

@@ -53,6 +53,28 @@ export function extractRules(documentId: string, { provider, domain, knownIntent
   }).then(jsonOrThrow);
 }
 
+// Same body as extractRules, but returns immediately once the background job
+// starts ({document_id, total, status}) - poll getExtractRulesProgress for a
+// per-clause progress bar instead of waiting on one big request.
+export function startExtractRules(documentId: string, { provider, domain, knownIntents, knownFields, knownRoles }: any = {}) {
+  return fetch(`/design/skills/documents/${documentId}/extract-rules/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      provider: provider || null,
+      domain: domain || null,
+      known_intents: knownIntents || [],
+      known_fields: knownFields || [],
+      known_roles: knownRoles || [],
+    }),
+  }).then(jsonOrThrow);
+}
+
+// {document_id, completed, total, status: "running"|"done"|"error", result, error}
+export function getExtractRulesProgress(documentId: string) {
+  return fetch(`/design/skills/documents/${documentId}/extract-rules/progress`).then(jsonOrThrow);
+}
+
 export function listAllRules() {
   return fetch("/design/skills/candidate-rules").then(jsonOrThrow);
 }

@@ -50,6 +50,7 @@ export default function PolicyStudio({
   const [extractStatus, setExtractStatus] = useState("");
   const [extractError, setExtractError] = useState("");
   const [extractErrors, setExtractErrors] = useState<any[]>([]);
+  const [extractProgress, setExtractProgress] = useState<{ completed: number; total: number } | null>(null);
 
   /* Rule action state */
   const [actionBusy, setActionBusy] = useState(false);
@@ -171,14 +172,33 @@ export default function PolicyStudio({
 
   async function handleExtract() {
     if (!activeDocId) return;
-    setExtractError(""); setExtractStatus(""); setExtractErrors([]); setExtractBusy(true);
+    setExtractError(""); setExtractStatus(""); setExtractErrors([]); setExtractProgress(null); setExtractBusy(true);
     try {
-      setExtractStatus("Extracting rules…");
       const knownIntents = intents.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
       const knownFields = schema?.catalog
         ? (schema.catalog.tables || []).flatMap((t: any) => (t.columns || []).map((c: any) => c.name))
         : [];
-      const res = await api.extractRules(activeDocId, { provider, domain, knownIntents, knownFields });
+      const started = await api.startExtractRules(activeDocId, { provider, domain, knownIntents, knownFields });
+      setExtractProgress({ completed: 0, total: started.total || 0 });
+
+      // Poll until the background job (skill-builder/skillbuilder/api.py's
+      // extract-rules/start + /progress) reports done or error. The progress
+      // bar below is driven by extractProgress; extractStatus is reserved
+      // for the final "N rules extracted" message so it never shows a "✓"
+      // while still running.
+      let res: any;
+      for (;;) {
+        await new Promise(r => setTimeout(r, 400));
+        const progress = await api.getExtractRulesProgress(activeDocId);
+        setExtractProgress({ completed: progress.completed, total: progress.total });
+        if (progress.status === "running") continue;
+        if (progress.status === "error") {
+          throw new Error(progress.error || "extraction failed");
+        }
+        res = progress.result;
+        break;
+      }
+
       const errs = res.errors || [];
       // extract-rules returns only a count; the rules themselves come from the
       // candidate-rules list endpoint (keyed `candidate_rules`).
@@ -194,6 +214,7 @@ export default function PolicyStudio({
       setExtractError(String(e.message || e));
     } finally {
       setExtractBusy(false);
+      setExtractProgress(null);
     }
   }
 
@@ -530,6 +551,20 @@ export default function PolicyStudio({
                   <span className="pf-hint">From schema: {schema?.suggestedIntents?.join(", ") || "—"}</span>
                 </label>
               </div>
+
+              {extractBusy && extractProgress && extractProgress.total > 0 && (
+                <div className="pf-progress" role="progressbar"
+                     aria-valuenow={extractProgress.completed} aria-valuemin={0} aria-valuemax={extractProgress.total}>
+                  <div className="pf-progressbar">
+                    <div className="pf-progressbar-fill"
+                         style={{ width: `${Math.min(100, (extractProgress.completed / extractProgress.total) * 100)}%` }} />
+                  </div>
+                  <div className="pf-progress-step active">
+                    <span className="pf-progress-icon"><span className="pf-spin" /></span>
+                    <span>Extracting clause {extractProgress.completed} of {extractProgress.total}…</span>
+                  </div>
+                </div>
+              )}
 
               {extractErrors.length > 0 && (
                 <details className="pf-extract-errors">
