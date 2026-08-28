@@ -32,6 +32,12 @@ EVAL_QUIET_SECONDS = float(_env("EVAL_QUIET_SECONDS", "30"))
 TRACE_BINDING_PATH = _env("EVAL_TRACE_BINDING_PATH", "")
 VISIBILITY_PROFILE_PATH = _env("EVAL_VISIBILITY_PROFILE_PATH", "")
 
+# Family 1 (customer rule pack) and Family 3 (intent catalog): empty path =
+# not configured, Family 1/3 evaluate to zero verdicts (Hard Rule 9), never
+# an error. Published by skill-builder / semantic-layer respectively.
+RULE_PACK_PATH = _env("EVAL_RULE_PACK_PATH", "")
+INTENT_CATALOG_PATH = _env("EVAL_INTENT_CATALOG_PATH", "")
+
 # Deployment mode for the standalone worker/API. Phase A only ever runs OOB;
 # "inline" mode of the *combinator* is exercised by semantic-mcp-server
 # importing evalengine directly (Phase D), not by this service.

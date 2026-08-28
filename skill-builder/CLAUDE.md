@@ -82,6 +82,20 @@ compose build-job wiring a specific skill — point the build at whichever
 exits 1 with `FileNotFoundError: …/extracted_rules.yaml`, the skill inputs
 weren't published (or the path/version is wrong).
 
+Publish ALSO writes `skills/<skill_id>/v<version>/rule_pack.yaml` — the eval
+engine's Family 1 artifact (`../eval-engine/`, `EVAL_RULE_PACK_PATH`),
+compiled by `skillbuilder/rulepack.py` from the same approved-rule set as
+`extracted_rules.yaml`, in the SAME `write_skill_artifacts` call
+(`artifacts.py:render_rule_pack`). It lowers `rule_type` into eval-engine's
+three check engines (temporal/predicate/content — see
+`../eval-engine/CLAUDE.md` for which rule_types lower to which, and which two
+are rejected outright) and carries each rule's materialized source citation
+through verbatim. A rule with no source citation is a **hard publish
+failure** (`422 rule pack compile error`, `RulePackCompileError` in
+`api.py:publish_skill`) — the whole publish aborts, not just that one rule;
+this is a genuine "this should never happen" case (every approved rule's
+`source_clause_id` should resolve), so treat it as a real bug if it fires.
+
 ## Commands
 
 Per-package dev uses **uv**, not pip (see `../prefront/CLAUDE.md`):

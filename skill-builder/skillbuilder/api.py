@@ -38,6 +38,7 @@ from .domain_packs import list_pack_names, load_pack
 from .domain_packs.loader import Pack
 from .extract import SUPPORTED_SUFFIXES, ExtractionError, extract_text
 from .ledger import build_ledger
+from .rulepack import CompileError as RulePackCompileError
 from .llm import ExtractionContext, RuleExtractor
 from .logconfig import setup_logging
 from .normalize import normalize
@@ -838,18 +839,21 @@ def publish_skill(skill_id: str, body: PublishBody):
         file_hash=file_hash,
         owner=body.owner or doc.get("owner"),
     )
-    written = write_skill_artifacts(
-        _REGISTRY,
-        meta,
-        selected,
-        clauses,
-        normalized.canonical_markdown,
-        generated_by="published",
-        known_roles=pack.known_roles() if pack else None,
-        known_fields=pack.known_fields() if pack else None,
-        validation_report=report,
-        unresolved_items=report.unresolved_items,
-    )
+    try:
+        written = write_skill_artifacts(
+            _REGISTRY,
+            meta,
+            selected,
+            clauses,
+            normalized.canonical_markdown,
+            generated_by="published",
+            known_roles=pack.known_roles() if pack else None,
+            known_fields=pack.known_fields() if pack else None,
+            validation_report=report,
+            unresolved_items=report.unresolved_items,
+        )
+    except RulePackCompileError as e:
+        raise HTTPException(422, f"rule pack compile error: {e}")
     artifact = {"meta": meta.__dict__, "rules": [json.loads(r.model_dump_json()) for r in selected]}
     store().add_skill_version(
         skill_id=skill_id,

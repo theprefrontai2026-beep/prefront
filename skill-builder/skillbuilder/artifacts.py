@@ -8,6 +8,7 @@ Renders the registry layout from design.md:
       extracted_rules.yaml    # candidate rules (status: draft) + provenance
       test_cases.yaml         # generated policy tests
       review_report.yaml      # confidence / ambiguities / conflicts (review aid)
+      rule_pack.yaml           # approved rules compiled for eval-engine Family 1
 
 Nothing here promotes a rule to runtime. Rules are emitted as drafts; the
 published runtime rule (with approved_by/approved_at) is only produced when a
@@ -26,6 +27,7 @@ from typing import Any, Iterable, Optional
 import yaml
 
 from .conflicts import detect_conflicts
+from .rulepack import compile_rule_pack
 from .schema import (
     CandidateRule,
     Clause,
@@ -200,6 +202,19 @@ def render_source_policy(meta: SkillMeta, canonical_markdown: str) -> str:
     return canonical_markdown
 
 
+def render_rule_pack(meta: SkillMeta, rules: list[CandidateRule], clauses: Iterable[Clause]) -> str:
+    """eval-engine's rule_pack.yaml (autonomous_build.md §3.3) - compiled from
+    the same approved rules + clauses extracted_rules.yaml renders from."""
+    clause_by_id = {c.clause_id: c for c in clauses}
+    doc = compile_rule_pack(meta.skill_id, meta.version, rules, clause_by_id)
+    header = (
+        f"# Compiled rule pack for {meta.skill_id} (v{meta.version}) - eval-engine Family 1.\n"
+        "# MACHINE-COMPILED from extracted_rules.yaml's approved rules. Do not hand-edit;\n"
+        "# republish the skill and let the compiler regenerate this file instead.\n\n"
+    )
+    return header + _dump(doc)
+
+
 def render_review_report(
     meta: SkillMeta,
     rules: list[CandidateRule],
@@ -364,6 +379,7 @@ def write_skill_artifacts(
         ),
         "test_cases.yaml": render_test_cases(meta, rules),
         "review_report.yaml": render_review_report(meta, rules, conflicts),
+        "rule_pack.yaml": render_rule_pack(meta, rules, clauses),
     }
     if validation_report is not None:
         files["validation_report.yaml"] = render_validation_report(

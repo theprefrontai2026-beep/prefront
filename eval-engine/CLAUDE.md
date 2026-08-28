@@ -6,10 +6,14 @@ eval-engine is one service of the Prefront engine. The parent `../CLAUDE.md`
 covers the whole platform; this file is **eval-engine-specific**. The design
 doc is `../autonomous_build.md` (the HOW, phased build order) and
 `../prefront-check-families.md` (the WHAT, the three check families). This
-service implements **Phase A only** (autonomous_build.md steps 1-8): Family 2
-(built-in integrity invariants), the combinator, and the verdict/finding
-store. Family 1 (`family1/`) and Family 3 (`family3/`) are stub packages
-pending Phase B.
+service implements **Phase A** (steps 1-8: Family 2 + combinator + store) and
+**Phase B step 10** (Family 1 - `family1/temporal.py`, `predicate.py`,
+`content.py`, loaded from a published `rule_pack.yaml` via
+`EVAL_RULE_PACK_PATH`; not configured = zero verdicts, never an error, Hard
+Rule 9). The rule-pack COMPILER (step 9, `skill-builder/skillbuilder/rulepack.py`
+- `CandidateRule` + `Clause` → `rule_pack.yaml`, written as a sixth artifact
+alongside `extracted_rules.yaml` at publish time) lives in `skill-builder/`,
+not here. Family 3 (`family3/`) is still a stub pending steps 11-14.
 
 ## Hard rule: the engine names no demo
 
@@ -26,7 +30,8 @@ Phase A: a comment in `visibility_profile.default.yaml` referencing
 ch.session_spans(session_id)          read-only, from the shared `spans` table
   -> reconstruct.reconstruct()        raw span rows -> canonical Session (turns, Step[])
   -> provenance.build()                per-arg Origin: exact|normalized|transform|mutated|none, trust class
-  -> family2.evaluate_all()            10 pure checks -> list[Verdict]
+  -> family2.evaluate_all()            10 built-in checks -> list[Verdict]
+  -> family1.evaluate_all()            temporal/predicate/content over rule_pack.yaml (empty if unconfigured)
   -> combinator.combine_oob()          version-stamp + resolve indeterminate reason
   -> store.persist()                    eval_verdicts (all) + eval_conformance_tags (satisfied)
 ```
@@ -94,13 +99,44 @@ own `policy_document`/`clause_id`/`section`/`page`/`clause_text` columns per
 citation Family 2 never has (`source` stays empty for every Family 2 tag -
 Hard Rule 17).
 
+## Family 1 rule shapes: what the current compiler can and can't lower
+
+skill-builder's flat `CandidateRule` IR (`rule_type` enum:
+`approval_threshold | data_access | regional_access | restriction |
+mandatory_filter | exception | audit_requirement`) has **no ordering
+construct at all** - every rule_type is a fact/condition check or a field
+scan. `skillbuilder/rulepack.py`'s lowering table therefore only ever emits
+`engine: predicate` (approval_threshold/regional_access/restriction/
+mandatory_filter) or `engine: content` (data_access); `exception` and
+`audit_requirement` are REJECTED at compile time (recorded in the pack's
+`rejected` list, not silently dropped - Hard Rule 10). `family1/temporal.py`
+is real, working machinery (verified against synthetic sessions in
+`tests/test_family1.py`), just with no current producer - it's there for a
+future rule source that expresses genuine ordering, not dead code.
+
+A `predicate` rule with `approver_roles` set is approval-gate shaped: when
+its conditions fire, it looks for an approval-shaped tool call the same way
+`family2.approval_evidence` does, and emits `indeterminate` +
+`missing_capture="approval_events"` rather than guessing `violated` when none
+is found - same combinator-resolves-the-reason contract as Family 2. A
+`predicate` rule with no `approver_roles` is prohibition shaped: firing
+conditions ARE the violation, `status="violated"` directly.
+
+Verified live (Phase B smoke test): a hand-written `rule_pack.yaml` with one
+`content` rule (`field_names: [ssn, tax_id, credit_score, ...]`) run against
+the real ClickHouse volume from prior LoanPro runs correctly found SSN/
+tax_id/credit_score surfacing on `get_applicant_profile` - the exact
+leakage class `loanpro-demo/CLAUDE.md` documents that app as containing.
+
 ## Idempotent replay
 
 `eval_evaluated_sessions` (session_id, version_key) is the dedup gate:
-`version_key = f"{engine_version}:{binding.version}:{visibility.version}"`
-(rule_pack/catalog versions join this once Phase B lands). The worker skips
-any `(session_id, version_key)` pair it's already recorded; `POST
-/eval/run?force=true` bypasses the gate for a manual re-check. Bumping
+`version_key = f"{engine_version}:{binding.version}:{visibility.version}:{rule_pack.source_skill}@{rule_pack.source_skill_version}"`
+(catalog version joins this once Family 3 lands). Republishing a skill (a new
+`source_skill_version`) makes every already-evaluated session eligible for
+re-evaluation under the new rule pack automatically - no manual cache bust.
+The worker skips any `(session_id, version_key)` pair it's already recorded;
+`POST /eval/run?force=true` bypasses the gate for a manual re-check. Bumping
 `config.ENGINE_VERSION` (or either bundled profile's `version:` field) is
 what makes a prior run re-evaluate - the version key is the only thing that
 distinguishes "already checked" from "artifacts changed since."
@@ -138,12 +174,13 @@ curl ':8120/eval/sessions/<id>/conformance'
 
 ## What's still missing (see `../autonomous_build.md`)
 
-Phase B adds `family1/` (temporal/predicate/content engines over a published
-`rule_pack.yaml`) and `family3/` (call/scope/session checks over an
-`intent_catalog.yaml`), plus the skill-builder rule-pack compiler. Phase C is
-the LoanPro grading harness (diff findings + conformance tags against
+Phase B's `family1/` (temporal/predicate/content) and the skill-builder
+rule-pack compiler (step 9) are DONE. Still open: `family3/` (call/scope/
+session/population checks over an `intent_catalog.yaml`, steps 11-14 + 17)
+and the `intent_catalog.yaml` schema itself (semantic-layer, step 11). Phase C
+is the LoanPro grading harness (diff findings + conformance tags against
 `expected_findings`) and a Findings UI. Phase D reuses `family1` +
 `family2`(parameter-side) + `family3`(call/scope) + `combinator.combine_inline`
 inside semantic-mcp-server's govern pipeline, and adds the Preflight
-generator. None of that exists yet - `combine_inline` is implemented and
-unit-tested but has no caller yet.
+generator. `combine_inline` is implemented and unit-tested but has no caller
+yet.

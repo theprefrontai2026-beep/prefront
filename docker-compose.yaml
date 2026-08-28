@@ -199,6 +199,11 @@ services:
       EVAL_QUIET_SECONDS: ${EVAL_QUIET_SECONDS:-30}
       EVAL_TRACE_BINDING_PATH: ${EVAL_TRACE_BINDING_PATH:-}
       EVAL_VISIBILITY_PROFILE_PATH: ${EVAL_VISIBILITY_PROFILE_PATH:-}
+      # Family 1/3: empty = not configured, zero verdicts, never an error
+      # (Hard Rule 9). Point at a published skills/<id>/v<version>/rule_pack.yaml
+      # (skill-builder) / intent_catalog.yaml (semantic-layer) once available.
+      EVAL_RULE_PACK_PATH: ${EVAL_RULE_PACK_PATH:-}
+      EVAL_INTENT_CATALOG_PATH: ${EVAL_INTENT_CATALOG_PATH:-}
     ports: ["8120:8120"]
     depends_on:
       clickhouse:
