@@ -1,0 +1,59 @@
+"""Domain-level persistence: Finding/ConformanceTag objects in, ClickHouse
+rows out. api.py and worker.py talk to this module, never to ch.py directly,
+so the on-disk shape stays swappable without touching either caller.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from . import ch
+from .combinator import conformance_tags as _derive_tags
+from .combinator import violations as _derive_violations
+from .contract import Finding
+
+
+def ensure_schema() -> None:
+    ch.ensure_schema()
+
+
+def persist(findings: list[Finding]) -> dict[str, int]:
+    n_verdicts = ch.insert_verdicts(findings)
+    n_tags = ch.insert_conformance_tags(_derive_tags(findings))
+    return {"verdicts": n_verdicts, "violations": len(_derive_violations(findings)), "conformance_tags": n_tags}
+
+
+def is_evaluated(session_id: str, version_key: str) -> bool:
+    return ch.is_evaluated(session_id, version_key)
+
+
+def mark_evaluated(session_id: str, version_key: str) -> None:
+    ch.mark_evaluated(session_id, version_key)
+
+
+def session_spans(session_id: str) -> list[dict[str, Any]]:
+    return ch.session_spans(session_id)
+
+
+def candidate_sessions(quiet_seconds: float, limit: int = 200) -> list[dict[str, Any]]:
+    return ch.candidate_sessions(quiet_seconds, limit)
+
+
+def list_verdicts(**kwargs) -> dict[str, Any]:
+    return ch.list_verdicts(**kwargs)
+
+
+def list_findings(**kwargs) -> dict[str, Any]:
+    return ch.list_findings(**kwargs)
+
+
+def session_conformance(session_id: str) -> list[dict[str, Any]]:
+    return ch.session_conformance(session_id)
+
+
+def totals() -> dict[str, Any]:
+    return ch.totals()
+
+
+def truncate() -> None:
+    ch.truncate()

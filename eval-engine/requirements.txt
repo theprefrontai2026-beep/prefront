@@ -1,0 +1,6 @@
+# Prefront eval-engine: session reconstruction, provenance, Family 2 checks,
+# combinator, verdict/finding store, /eval query API.
+fastapi>=0.110
+uvicorn>=0.29
+clickhouse-connect>=0.7
+pyyaml>=6.0

@@ -1,0 +1,20 @@
+# Default trace binding profile. Covers any subject app whose tracer follows
+# the conventions vendored in tracing/prefront_tracing.py: session.id/user.id
+# stamped on every span, app.* attributes on tool spans. A deployment with a
+# differently-shaped tracer ships its own trace_binding.yaml and points
+# EVAL_TRACE_BINDING_PATH at it - the engine never assumes a specific app's
+# attribute names beyond what this file declares.
+trace_binding:
+  version: 1
+  tool_span: { name_prefix: "tool ", kind: TOOL }
+  turn_span: { name_prefix: "turn " }
+  session_root: { name_prefix: "session " }
+  fields:
+    intent:      { column: intent_name }
+    caller_role: { column: user_role }
+    channel:     { column: channel }
+    row_count:   { attr: "app.row_count" }
+    columns:     { attr: "app.columns" }
+    side_effect: { attr: "app.side_effect" }
+    trust_class: { attr: "app.trust" }
+  final_answer: { span: turn_span, field: output_value, last: true }

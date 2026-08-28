@@ -1,0 +1,13 @@
+# Default visibility profile: assumes a trace that captures tool args/results
+# and LLM messages but no explicit approval events and no raw SQL - a common
+# shape for a harness that logs application-level spans without an approval
+# workflow of its own. A deployment whose harness captures more (or less)
+# ships its own and points EVAL_VISIBILITY_PROFILE_PATH at it.
+visibility_profile:
+  version: 1
+  captures:
+    tool_args: true
+    tool_results: true
+    llm_messages: true
+    approval_events: false
+    sql: false

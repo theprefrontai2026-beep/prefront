@@ -9,6 +9,7 @@
 #   phoenix              Arize Phoenix trace collector + UI          :6006
 #   clickhouse           OOB trace store (ClickHouse)                :8123
 #   oob-ingest           Phoenix/OTLP -> ClickHouse + /oob query API :8110
+#   eval-engine          spans -> checks -> verdicts/findings; /eval query API :8120
 #
 # The bundled example datasource is SecureBank (see ./securebank-demo), wired in
 # below; the engine itself is domain-independent.
@@ -179,6 +180,30 @@ services:
       clickhouse:
         condition: service_healthy
       phoenix:
+        condition: service_started
+
+  # ---- evaluation engine: spans -> checks -> verdicts/findings --------------
+  # Reads the same ClickHouse `spans` table oob-ingest fills (read-only - the
+  # engine never mutates a span); writes its own eval_verdicts /
+  # eval_conformance_tags tables. Family 2 (built-in integrity checks) runs
+  # with zero policy artifacts configured - findings from the first ingested
+  # session, no onboarding required. See eval-engine/CLAUDE.md.
+  eval-engine:
+    build: ./eval-engine
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DB: prefront
+      EVAL_POLL_SECONDS: ${EVAL_POLL_SECONDS:-10}
+      EVAL_QUIET_SECONDS: ${EVAL_QUIET_SECONDS:-30}
+      EVAL_TRACE_BINDING_PATH: ${EVAL_TRACE_BINDING_PATH:-}
+      EVAL_VISIBILITY_PROFILE_PATH: ${EVAL_VISIBILITY_PROFILE_PATH:-}
+    ports: ["8120:8120"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      oob-ingest:
         condition: service_started
 
   # ---- service 1: skill builder (docs -> rules) ----------------------------

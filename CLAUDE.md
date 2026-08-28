@@ -36,6 +36,7 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
+| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. **Phase A only** (see `autonomous_build.md`): Family 2 (built-in integrity invariants — `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (customer rule packs) and Family 3 (intent catalog) are stubbed in `evalengine/family1/` and `evalengine/family3/` pending Phase B. See `eval-engine/CLAUDE.md`. |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
