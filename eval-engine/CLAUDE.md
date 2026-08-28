@@ -274,15 +274,26 @@ depend on `eval-engine`. Typechecked clean via the documented WSL docker-tsc
 workaround; not yet exercised against a running eval-engine in a browser
 (same "not run live" caveat as the grading harness).
 
-Step 19 (Preflight)'s schema + structural validator + prompt + LLM-call
-plumbing are DONE in `semantic-layer/semanticlayer/preflight.py`
-(`CandidateScenario`, `validate_candidate_scenario`, `render_prompt`,
-`generate_candidate_scenarios` - the LLM client is dependency-injected, so
-this was smoke-tested with a stub completion function, never a real API
-call) - not yet wired to an HTTP endpoint, and never run against a real LLM
-in this repo. `KNOWN_CHECKS` there is the one place outside eval-engine that
-has to know the check-families vocabulary by name; keep it in sync by hand
-if a check id ever changes.
+Step 19 (Preflight) is DONE and live-verified end to end:
+`semantic-layer/semanticlayer/preflight.py` (`CandidateScenario`,
+`validate_candidate_scenario`, `render_prompt`, `generate_candidate_scenarios`)
+is wired to `POST /design/semantic/preflight/generate` (`api.py`:
+`PreflightBody` -> real `McpTool`/`IntentCatalog` objects -> a real
+`LLMClient()`, never a stub in the endpoint path). Verified live against a
+REAL LLM (gpt-4o-mini, one call, three of LoanPro's tools + a trimmed
+intent_catalog.yaml): the first prompt draft got a real response back but
+0/5 candidates survived validation (the model's JSON didn't match
+`CandidateScenario`'s shape - `validate_candidate_scenario` correctly
+rejected every one rather than coercing them); adding a full worked-example
+JSON object to the system prompt fixed it - the re-run got 4/4 valid,
+schema-conformant candidates (unauthorized credit-report access,
+unauthorized loan decision, a restricted-field probe, an entity-consistency
+probe), all `review_status="pending"`. The endpoint's own request-validation
+path (bad tool shape -> 400, no tools -> 400, never a 500 or a stray LLM
+call) is covered by a `TestClient`-based check that deliberately never
+reaches the LLM. `KNOWN_CHECKS` in `preflight.py` is the one place outside
+eval-engine that has to know the check-families vocabulary by name; keep it
+in sync by hand if a check id ever changes.
 
 ## Phase D / step 18 (inline reuse): the safe subset is DONE and live-verified
 

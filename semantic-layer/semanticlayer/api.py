@@ -154,6 +154,18 @@ class McpIntrospectBody(BaseModel):
     datasource_id: Optional[str] = None
 
 
+class PreflightBody(BaseModel):
+    """autonomous_build.md step 19. `tools` is a list of McpTool-shaped dicts
+    (only tool_name/allowed_roles/input_schema matter for the prompt;
+    source_intent/semantic_model_id default to tool_name/"adhoc" when
+    omitted); `catalog` is an intent_catalog.yaml document's inner body
+    (the `{version, intents: [...]}` under the top-level `intent_catalog`
+    key, or that whole document - either is accepted)."""
+
+    tools: list[dict]
+    catalog: dict
+
+
 def _catalog_payload(catalog) -> dict:
     """Catalog as JSON, a flat relationships list the ERD can draw edges from,
     and a default set of suggested intents the UI pre-fills (then a human curates).
@@ -833,3 +845,48 @@ def reset(body: Optional[ResetBody] = None):
     log.info("reset: cleared store=%s removed artifact dirs=%s kept=%s",
              cleared, removed_dirs, sorted(keep_segs))
     return {"cleared": cleared, "removed_artifact_dirs": removed_dirs, "kept": sorted(keep_segs)}
+
+
+@app.post("/design/semantic/preflight/generate")
+def preflight_generate(body: PreflightBody):
+    """autonomous_build.md step 19: an LLM proposes candidate adversarial
+    test scenarios (loanpro-demo/scenarios.py's shape) from a tool list +
+    intent catalog. Always review_status="pending" - never auto-approved,
+    same posture as skill-builder's candidate rules. A malformed candidate
+    (invented tool name, unknown check id, bad JSON) is dropped with a
+    reason in `rejected`, never coerced into something the LLM didn't say."""
+    from .intent_catalog import IntentCatalog, IntentCatalogEntry
+    from .llm import LLMClient
+    from .preflight import generate_candidate_scenarios
+    from .schema import McpTool
+
+    if not body.tools:
+        raise HTTPException(400, "provide at least one tool")
+
+    try:
+        tools = [
+            McpTool.model_validate({
+                "source_intent": t.get("tool_name", ""),
+                "semantic_model_id": "adhoc",
+                **t,
+            })
+            for t in body.tools
+        ]
+    except Exception as e:
+        raise HTTPException(400, f"invalid tool: {type(e).__name__}: {e}")
+
+    catalog_body = body.catalog.get("intent_catalog", body.catalog)
+    try:
+        entries = [IntentCatalogEntry.model_validate(e) for e in catalog_body.get("intents", [])]
+    except Exception as e:
+        raise HTTPException(400, f"invalid catalog: {type(e).__name__}: {e}")
+    catalog = IntentCatalog(version=catalog_body.get("version", 1), intents=entries)
+
+    try:
+        candidates, rejected = generate_candidate_scenarios(tools, catalog, LLMClient())
+    except Exception as e:
+        raise HTTPException(502, f"preflight generation failed: {type(e).__name__}: {e}")
+    return {
+        "candidates": [c.model_dump() for c in candidates],
+        "rejected": rejected,
+    }
