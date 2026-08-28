@@ -157,8 +157,8 @@ _TOOLS = [
 #   approval_over       amount above which a request_manager_approval must precede it
 #   closing_obligation  tool that must follow it in the session
 #   toxic_with          intents that may not be combined with it in one session
-#   policy              sections of docs/credit_policy.md that govern the intent — the
-#                       ids a finding attributes to ("violates §8.1"); the doc is the
+#   policy              sections of docs/loan_underwriting_policy.md that govern the intent —
+#                       the ids a finding attributes to ("violates §13.2"); the doc is the
 #                       source of truth, this is the reviewer's cross-reference
 INTENTS: dict[str, dict | None] = {
     "get_my_applications": {
@@ -246,29 +246,31 @@ INTENTS: dict[str, dict | None] = {
     "get_internal_metrics": None,
 }
 
-# Policy cross-reference: which sections of docs/credit_policy.md govern each tool.
-# Section numbers are the citable ids (a rule cites the smallest numbered section
-# containing its sentence). Kept beside INTENTS rather than inside it so the
-# reviewer can read the intent envelope and its policy basis as two columns.
+# Policy cross-reference: which sections of docs/loan_underwriting_policy.md
+# govern each tool. Section numbers are the citable ids (a finding cites the
+# smallest numbered section containing its sentence). Kept beside INTENTS
+# rather than inside it so the reviewer can read the intent envelope and its
+# policy basis as two columns.
 _POLICY: dict[str, list[str]] = {
-    "get_my_applications":     ["3.3", "7.5"],
-    "list_applications":       ["3.2", "3.3", "7.5", "7.8"],
-    "get_application":         ["3.1", "3.3", "8.4", "8.7", "7.8"],
-    "find_applicant":          ["3.2", "7.1"],
-    "get_applicant_profile":   ["3.3", "7.1", "7.2", "7.3", "7.5", "7.6", "7.8", "8.7"],
-    "get_credit_report":       ["3.3", "7.2", "7.6", "7.8", "8.3", "8.7"],
-    "get_income_verification": ["3.3", "8.3", "8.7"],
-    "verify_kyc":              ["8.1", "8.7"],
-    "get_risk_profile":        ["3.3", "7.4", "8.2", "8.7"],
-    "quote_terms":             ["4.1.3", "8.1", "8.2", "8.4", "8.6", "8.7"],
-    "update_application":      ["6.3", "8.4", "8.6", "8.7"],
-    "apply_discount":          ["6.3", "8.2", "8.7"],
-    "request_manager_approval": ["6.2", "8.7"],
-    "decide_loan":             ["4.1.1", "4.1.2", "4.1.3", "4.1.4", "4.2.1", "4.2.2", "4.3", "4.4",
-                                "6.1", "6.2", "6.3", "8.3", "8.4", "8.5", "8.6", "8.7"],
-    "send_decision_notice":    ["8.5", "8.7"],
-    "fetch_document":          ["7.7", "7.8", "8.7"],
-    "export_applicants":       ["3.2", "3.3", "7.1", "7.2", "7.3", "7.5", "7.6"],
+    "get_my_applications":     ["11.4", "12.6"],
+    "list_applications":       ["11.3", "11.4", "12.6", "12.9"],
+    "get_application":         ["11.2", "11.4", "13.4", "13.8", "12.9"],
+    "find_applicant":          ["11.3", "12.1"],
+    "get_applicant_profile":   ["11.4", "12.1", "12.2", "12.3", "12.4", "12.6", "12.7", "12.9", "13.8"],
+    "get_credit_report":       ["11.4", "12.2", "12.7", "12.9", "3.2", "13.8"],
+    "get_income_verification": ["11.4", "7.1", "13.8"],
+    "verify_kyc":              ["5.3", "13.2", "13.8"],
+    "get_risk_profile":        ["11.4", "12.5", "13.3", "13.8"],
+    "quote_terms":             ["7.3", "13.2", "13.3", "13.4", "13.7", "13.8"],
+    "update_application":      ["10.1", "10.6", "13.4", "13.7", "13.8"],
+    "apply_discount":          ["8.5", "10.1", "10.6", "13.3", "13.8"],
+    "request_manager_approval": ["10.3", "10.4", "13.8"],
+    "decide_loan":             ["9.2.1", "9.2.2", "9.2.3", "9.2.5", "9.3.1", "9.3.2", "9.3.3", "9.3.8",
+                                "9.4", "9.5", "10.1", "10.2", "10.3", "10.4", "3.2", "7.1",
+                                "13.4", "13.5", "13.6", "13.7", "13.8"],
+    "send_decision_notice":    ["13.6", "13.8", "15.1", "15.5"],
+    "fetch_document":          ["12.8", "12.9", "13.8"],
+    "export_applicants":       ["11.3", "11.4", "12.1", "12.2", "12.3", "12.4", "12.6", "12.7"],
 }
 for _name, _refs in _POLICY.items():
     INTENTS[_name]["policy"] = _refs  # type: ignore[index]

@@ -18,15 +18,31 @@ sys.path.insert(0, str(HERE.parent))
 import app_tools  # noqa: E402
 from scenarios import CALLERS, FAMILIES, SCENARIOS  # noqa: E402
 
-POLICY_DOC = HERE / "credit_policy.md"
-_HEADING = re.compile(r"^#{2,4}\s+(\d+(?:\.\d+)*)\s+(.+?)\s*$", re.M)
+POLICY_DOC = HERE / "loan_underwriting_policy.md"
+# The document mixes two heading styles: markdown headers (`## 4. Title`,
+# `### 9.4 Title`) for top-level and some second-level sections, and a bold
+# paragraph spanning the whole line (`**9.2.1 Title**`) for third-level
+# clauses and the rest of the second-level ones. Both must be matched.
+_HEADING = re.compile(
+    r"^#{2,3}\s+(\d+(?:\.\d+)*)\.?\s+(.+?)(?:\s*\*\(descriptive\)\*)?\s*$"
+    r"|^\*\*(\d+(?:\.\d+){1,2})\s+([^*]+?)\*\*\s*$",
+    re.M,
+)
 
 
 def policy_sections() -> dict[str, str]:
-    """{section number: title} for every numbered heading in credit_policy.md —
-    the ids a finding may cite. The document is the source of truth: a cited
-    section that is not a heading is an error, not a warning."""
-    return {m.group(1): m.group(2) for m in _HEADING.finditer(POLICY_DOC.read_text(encoding="utf-8"))}
+    """{section number: title} for every numbered heading in
+    loan_underwriting_policy.md — the ids a finding may cite. The document is
+    the source of truth: a cited section that is not a heading is an error,
+    not a warning."""
+    text = POLICY_DOC.read_text(encoding="utf-8")
+    sections: dict[str, str] = {}
+    for m in _HEADING.finditer(text):
+        if m.group(1):
+            sections[m.group(1)] = m.group(2).strip()
+        else:
+            sections[m.group(3)] = m.group(4).strip()
+    return sections
 
 
 def _refs(v) -> list[str]:
@@ -48,7 +64,7 @@ def check_policy_refs(sections: dict[str, str]) -> None:
     for name, m in app_tools.INTENTS.items():
         bad += [f"INTENTS[{name}] -> §{r}" for r in _refs((m or {}).get("policy")) if r not in sections]
     if bad:
-        sys.exit("policy references with no heading in credit_policy.md:\n  " + "\n  ".join(bad))
+        sys.exit("policy references with no heading in loan_underwriting_policy.md:\n  " + "\n  ".join(bad))
 
 CHECKS = [  # (family, check, engine/meaning) — the order of prefront-check-families.md
     ("F1", "precondition", "fact F must be established before tool T"),
@@ -173,7 +189,7 @@ def main() -> None:
     uncovered = [c for _, c, _ in CHECKS if c not in idx]
     p(f"Uncovered checks: {', '.join(uncovered) if uncovered else 'none'}.")
     p()
-    p("## Policy → check → session (`docs/credit_policy.md`)")
+    p("## Policy → check → session (`docs/loan_underwriting_policy.md`)")
     p()
     p("Every numbered section of the policy, with the checks and sessions that attribute to "
       "it and the intents whose approved envelope cites it (`app_tools.INTENTS[*].policy`). "

@@ -108,9 +108,15 @@ evaluator SHOULD report — which the Runtime tab shows beside the transcript.
   attribute breaks both the OOB Sessions view (`ch.list_sessions`,
   `model.lift`) and the coverage contract — update `docs/gen_coverage.py` and
   the ingest columns together.
-- **`docs/credit_policy.md` is the citable policy.** One numbered heading per
-  enforceable clause (`#### 4.1.1 Credit floor`, `### 8.1 Verify before quoting`);
-  a finding attributes to the smallest numbered section containing the sentence.
+- **`docs/loan_underwriting_policy.md` is the citable policy** (supersedes the
+  retired `docs/credit_policy.md`, tagged `loanpro-pre-credit-policy-rewrite`
+  before the cutover). One numbered heading per enforceable clause — the
+  document mixes markdown headers (`## 4. Applicant Eligibility Requirements`,
+  `### 9.4 Auto-Approval Conditions`) for top-level/some second-level sections
+  with a bold full-line paragraph (`**9.2.1 Credit Score Below Minimum
+  Threshold**`) for third-level and the rest of the second-level ones —
+  `docs/gen_coverage.py`'s heading regex matches both styles. A finding
+  attributes to the smallest numbered section containing the sentence.
   Numbering is append-only. Ids are wired demo-side only: `app_tools._POLICY` →
   `INTENTS[*]["policy"]`, `scenarios.expected_findings[].policy`, the
   `scenario.policy` attribute on the `session` root span, and the Policy column +
@@ -119,7 +125,7 @@ evaluator SHOULD report — which the Runtime tab shows beside the transcript.
   Tool spans/results never carry policy ids (the app is policy-blind).
 - `loanpro-mcp` (Prefront's governed MCP) is still declared behind the `mcp`
   profile and unused; `policy/*.yaml` are its legacy artifacts and are NOT derived
-  from the current `credit_policy.md`.
+  from the current `loan_underwriting_policy.md`.
 
 - **An MCP SSE endpoint MUST return a Response.** Starlette >=1.0 does
   `await (await endpoint(request))(scope, receive, send)`, so an SSE handler that
