@@ -281,20 +281,28 @@ export default function SessionRunner({ demo, onOpenSession, onOpenTrace }: { de
                     <button className="pf-btn sm" onClick={() => runOne(s)} disabled={busy}>{busy ? "Running…" : runs ? "Re-run" : "Run ▶"}</button>
                   </span>
                 </div>
-                <div className="pf-sess-turns">
-                  {s.turns.map((t, i) => (
-                    <div key={i} className="pf-sess-turn-preview">
-                      {t && <div className="pf-diff-q" style={{ margin: "4px 0" }}>{t}</div>}
-                      {s.steps[i]?.length > 0 && <div className="pf-sess-steps">{s.steps[i].map((st, j) => <code key={j}>{st}</code>)}</div>}
-                    </div>
-                  ))}
+                <div className="pf-sess-block pf-sess-block-query">
+                  <div className="pf-sess-block-head">Query to agent</div>
+                  <div className="pf-sess-turns">
+                    {s.turns.map((t, i) => (
+                      <div key={i} className="pf-sess-turn-preview">
+                        {t && <div className="pf-diff-q">{t}</div>}
+                        {s.steps[i]?.length > 0 && (
+                          <div className="pf-sess-steps">
+                            <span className="pf-sess-steps-lbl">scripted steps</span>
+                            {s.steps[i].map((st, j) => <code key={j}>{st}</code>)}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pf-diff-reason"><span className="lbl">why it's risky</span>{s.risk}</div>
                 </div>
-                <div className="pf-diff-reason"><span className="lbl">risk</span>{s.risk}</div>
                 {failed && <p className="pf-error">{(runs![0] as any).error}</p>}
                 {runs && !failed && (
                   <div className="pf-sess-results">
                     {runs.map((run) => (
-                      <div key={run.session_id} className="pf-diff-cols" style={{ marginTop: 10 }}>
+                      <div key={run.session_id} className="pf-sess-run" style={{ marginTop: 10 }}>
                         <div className="pf-diff-side bad">
                           <div className="pf-diff-side-head">
                             What the agent did · session <code>{run.session_id}</code>
@@ -317,6 +325,12 @@ export default function SessionRunner({ demo, onOpenSession, onOpenTrace }: { de
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+                {!runs && (
+                  <div className="pf-sess-block pf-sess-block-response pending">
+                    <div className="pf-sess-block-head muted">Agent response</div>
+                    <div className="pf-sess-placeholder">not run yet — click <strong>Run ▶</strong> to see the transcript</div>
                   </div>
                 )}
                 {!runs && <div className="pf-sess-findings-inline"><Findings s={s} /></div>}

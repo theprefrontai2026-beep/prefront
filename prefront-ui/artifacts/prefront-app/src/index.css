@@ -1095,6 +1095,10 @@ select { cursor: pointer; }
 .pf-diff-q { margin: 5px 0 12px; font-size: 15px; color: var(--ink); font-weight: 500; }
 .pf-diff-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 820px) { .pf-diff-cols { grid-template-columns: 1fr; } }
+/* SessionRunner (LoanPro): agent response then Prefront's finding, stacked in
+   reading order — unlike pf-diff-cols' side-by-side governed/ungoverned
+   comparison, there is only one system here, so top-to-bottom is the story. */
+.pf-sess-run { display: flex; flex-direction: column; gap: 14px; }
 .pf-grounded-note {
   margin: 10px 0 0; padding: 8px 12px; font-size: 12px; line-height: 1.5;
   color: var(--ink-soft); background: var(--blue-light, var(--surface-alt));
@@ -1776,6 +1780,26 @@ select { cursor: pointer; }
 .pf-sess-finding { display: flex; gap: 8px; align-items: flex-start; margin: 5px 0; font-size: 12px; color: var(--ink-soft); line-height: 1.45; }
 .pf-sess-finding .pf-sess-check { flex: none; margin-top: 2px; }
 .pf-sess-findings-inline { margin-top: 8px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius); }
+
+/* Three-part flow on an unrun scenario card: query → agent response → finding.
+   Each gets its own labeled, bordered block so the three are never confused. */
+.pf-sess-block {
+  margin: 8px 0; padding: 8px 12px; border-radius: var(--radius);
+  border: 1px solid var(--line); border-left: 3px solid var(--line);
+}
+.pf-sess-block-head {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+  color: var(--ink-soft); margin-bottom: 6px;
+}
+.pf-sess-block-head.muted { color: var(--muted); }
+.pf-sess-block-query { border-left-color: var(--blue); background: var(--blue-light, var(--surface-alt)); }
+.pf-sess-block-response { border-left-color: var(--line); background: var(--surface); }
+.pf-sess-block-response.pending { border-style: dashed; }
+.pf-sess-placeholder { font-size: 12px; color: var(--muted); font-style: italic; }
+.pf-sess-steps-lbl {
+  flex-basis: 100%; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted); font-family: var(--app-font-mono); margin-bottom: 2px;
+}
 .pf-link { border: 0; background: none; color: var(--blue); cursor: pointer; font-size: 12px; padding: 0; }
 .pf-link:hover { text-decoration: underline; }
 
