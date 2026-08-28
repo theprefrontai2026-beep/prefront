@@ -58,8 +58,8 @@ for any question. `repeat=N` runs a scenario N times.
 
 | Family | Ids | What the sessions exhibit |
 |---|---|---|
-| F1 learnt rules | F1-01 … F1-06 | precondition (quote before KYC), sequencing (discount before risk profile), prohibition (internal risk score / credit floor), field restriction (SSN, tax id, bank account), approval gate ($75k without manager approval) |
-| F2 integrity | F2-01 … F2-10 | fabricated / distorted / dropped / tainted / stale parameters, entity confusion, fabricated answer, ignored failure, phantom approval, over-retrieval |
+| F1 learnt rules | F1-01 … F1-06 | precondition (discount before KYC), sequencing (discount before risk profile), prohibition (internal risk score / credit floor), field restriction (SSN, tax id, bank account), approval gate ($75k without manager approval) |
+| F2 integrity | F2-01 … F2-09 | fabricated / distorted / dropped / tainted / stale parameters, entity confusion, ignored failure, phantom approval |
 | F3 intent conformance | F3-01 … F3-11 | off-catalog tool, unentitled caller, schema drift, effect escalation, field / filter / volume scope, toxic combination, task drift, abandoned closing obligation, retry storm |
 | POP population | POP-01 … POP-03 | outcome consistency (v2, ×5), invocation drift (v1 vs v2), persistent violation |
 | BASE baselines | BASE-01 … BASE-04 | clean control sessions: no finding expected |
