@@ -399,6 +399,56 @@ reaches the LLM. `KNOWN_CHECKS` in `preflight.py` is the one place outside
 eval-engine that has to know the check-families vocabulary by name; keep it
 in sync by hand if a check id ever changes.
 
+**The missing half - "schema-validate -> human approve -> run through the
+SAME orchestrator + grading harness in UAT" - is now built and live-verified
+too.** `preflight.py` only builds and validates candidates; nothing
+previously turned an approved one into something `demo_server.py`/
+`grading_harness.py` could actually run. `loanpro-demo/preflight_import.py`
+closes that gap:
+
+- `generate` calls the real endpoint (LoanPro's own `intent_catalog.yaml`
+  entries turned into `McpTool`-shaped dicts - a tool already IS the
+  operation, same "1 table = 1 entity" framing the MCP connector uses, see
+  root CLAUDE.md's "Generic MCP data-source connector" section) and prints/
+  saves the raw candidates.
+- `approve <candidates.json> <id...>` is the human gate: converts ONLY the
+  named candidates (`to_scenario_dict` - a pure function, tested without
+  network) into `scenarios.py`'s own dict shape and appends them to
+  `policy/preflight_approved.json`, never all-or-nothing.
+- `scenarios.py`'s `get_scenarios()` now merges `_preflight_scenarios()` (that
+  file, empty/absent by default -> zero behavior change for the hand-authored
+  catalogue) alongside the static `SCENARIOS` list; `grading_harness.py` was
+  switched from importing `SCENARIOS` directly to calling `get_scenarios()`,
+  so an approved Preflight scenario grades exactly like a hand-authored one.
+
+**Live-verified for real, including the human-judgment part, not just the
+plumbing**: one real LLM call against the real stack (`semantic-layer-api` +
+LoanPro's real `intent_catalog.yaml`) produced 4 candidates, all
+`mode: replay` (so running them costs zero further LLM calls -
+`generate_candidate_scenarios` was the only paid call in this whole loop).
+Reviewing the 4 against the actual catalog (the human-approval step, not
+rubber-stamped): **`PF-02`** ("Loan Officer calls `export_applicants`, which
+`intent_catalog.yaml` restricts to Branch Manager") matches the real catalog
+exactly - approved, converted, `docker cp`'d into the running orchestrator
+(the same "hot-patch a running container" pattern as everywhere else in this
+repo - `policy/preflight_approved.json` isn't bind-mounted), and run through
+`grading_harness.py --only PF-02`: **PASS** (`entitlement` matched). **`PF-04`**
+("Loan Officer calls `update_application`, claimed unauthorized") was
+APPROVED, RUN, and GRADED THE SAME WAY, specifically to test whether the loop
+would catch a bad candidate rather than only demonstrating a good one - the
+catalog's real `amend_application` entry actually lists `Loan Officer` among
+`allowed_callers.roles`, so the LLM's claim was simply wrong; the grading
+harness correctly returned **FAIL** (`entitlement` never fired - `missing`).
+PF-04 was then removed from `preflight_approved.json` (a real curator would
+reject it, not ship it) - this is exactly the UAT step 19 asks for doing its
+job: a structurally-valid candidate (passed schema validation, real tool
+names, a known check id) can still be behaviorally wrong, and running it
+live is what catches that, not the schema check. `PF-02` remains committed
+in `policy/preflight_approved.json` as the one live example of the full
+loop's output. `preflight_import.py`'s conversion logic
+(`_caller_key`/`to_scenario_dict`) is covered by
+`loanpro-demo/test_preflight_import.py` (pure, no network).
+
 ## Phase D / step 18 (inline reuse): family3 + family1.content + Family 2's parameter-side checks, all DONE and live-verified
 
 `semantic-mcp-server/semanticmcp/server.py`'s `_call_governed` was originally a

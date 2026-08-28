@@ -32,7 +32,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from scenarios import SCENARIOS
+from scenarios import get_scenarios
 
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8098").rstrip("/")
 OOB_URL = os.environ.get("OOB_URL", "http://localhost:8110").rstrip("/")
@@ -60,7 +60,7 @@ def _post(url: str, timeout: int = 60) -> Any:
 
 
 def run_catalogue(only: Optional[list[str]], variant: str = "") -> list[dict]:
-    ids = only or [s["id"] for s in SCENARIOS]
+    ids = only or [s["id"] for s in get_scenarios(include_hidden=True)]
     url = f"{ORCHESTRATOR_URL}/api/run?only={','.join(ids)}"
     if variant:
         url += f"&variant={variant}"
@@ -232,7 +232,7 @@ def main() -> int:
     runs = run_catalogue(only)
     print(f"-> {len(runs)} session(s) generated", file=sys.stderr)
 
-    by_id = {s["id"]: s for s in SCENARIOS}
+    by_id = {s["id"]: s for s in get_scenarios(include_hidden=True)}
     results = []
     for run in runs:
         sid = run["id"]

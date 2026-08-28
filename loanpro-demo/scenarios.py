@@ -18,6 +18,10 @@ also repeat. ``docs/check-coverage.md`` is generated from this file.
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 # Callers the harness can act as. `user_id` is the owned-data key; `role` drives
 # role policy; `channel` is the default surface they come in through.
 CALLERS = {
@@ -585,12 +589,32 @@ SCENARIOS: list[dict] = [
 ]
 
 
+def _preflight_scenarios() -> list[dict]:
+    """Human-approved Preflight candidates (autonomous_build.md step 19),
+    converted to this file's own dict shape by preflight_import.py and
+    written to PREFLIGHT_SCENARIOS_PATH (default policy/preflight_approved.json).
+    Off by default (absent file -> []), same posture as any other
+    artifact-path input in this repo: nothing changes for the hand-authored
+    catalogue above unless a human has actually approved something."""
+    path = os.environ.get("PREFLIGHT_SCENARIOS_PATH",
+                          str(Path(__file__).parent / "policy" / "preflight_approved.json"))
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
 def get_scenarios(only: list[str] | None = None, include_hidden: bool = False) -> list[dict]:
-    """The catalogue, minus hidden ones unless asked for by id."""
+    """The hand-authored catalogue plus any approved Preflight candidates,
+    minus hidden ones unless asked for by id."""
+    all_scenarios = SCENARIOS + _preflight_scenarios()
     if only:
         wanted = {o.strip().upper() for o in only if o.strip()}
-        return [s for s in SCENARIOS if s["id"].upper() in wanted]
-    return [s for s in SCENARIOS if include_hidden or not s.get("hidden")]
+        return [s for s in all_scenarios if s["id"].upper() in wanted]
+    return [s for s in all_scenarios if include_hidden or not s.get("hidden")]
 
 
 def turns_of(s: dict) -> list[dict]:
