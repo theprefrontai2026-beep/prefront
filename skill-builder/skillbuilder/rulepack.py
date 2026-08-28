@@ -28,22 +28,22 @@ from typing import Any, Optional
 
 from .schema import CandidateRule, Clause, Condition
 
-# skill-builder rule_type -> engine. The check-families vocabulary
-# (precondition | sequencing | prohibition | field_restriction | approval_gate)
-# is documentation only here - what matters at runtime is which of the three
-# engines evaluates the rule.
+# skill-builder rule_type -> (engine, check-families id). The engine is what
+# actually evaluates the rule; the check id is the prefront-check-families.md
+# vocabulary (precondition | sequencing | prohibition | field_restriction |
+# approval_gate) stamped onto every verdict/finding this rule produces.
 #
 # Note: no rule_type maps to "temporal". skill-builder's flat IR (schema.py)
 # has no ordering/sequencing construct - every rule_type is a fact/condition
 # check (predicate) or a field scan (content). eval-engine's family1/temporal.py
 # is real, generic machinery (ready for a future rule source that DOES express
 # ordering), but today's compiler never emits an `engine: temporal` rule.
-_LOWERING: dict[str, str] = {
-    "approval_threshold": "predicate",
-    "data_access": "content",
-    "regional_access": "predicate",
-    "restriction": "predicate",
-    "mandatory_filter": "predicate",
+_LOWERING: dict[str, tuple[str, str]] = {
+    "approval_threshold": ("predicate", "approval_gate"),
+    "data_access": ("content", "field_restriction"),
+    "regional_access": ("predicate", "prohibition"),
+    "restriction": ("predicate", "prohibition"),
+    "mandatory_filter": ("predicate", "prohibition"),
 }
 
 _UNLOWERABLE: dict[str, str] = {
@@ -88,6 +88,7 @@ class RejectedRule:
 class CompiledRule:
     rule_id: str
     engine: str
+    check: str
     effect: str
     source: dict[str, Any]
     conditions: list[dict[str, Any]] = field(default_factory=list)
@@ -115,13 +116,15 @@ def compile_rule(rule: CandidateRule, clause: Optional[Clause]) -> CompiledRule 
         raise CompileError(f"rule {rule.rule_key!r} has no materialized source citation block")
     if rule.rule_type in _UNLOWERABLE:
         return RejectedRule(rule.rule_key, rule.rule_type, _UNLOWERABLE[rule.rule_type])
-    engine = _LOWERING.get(rule.rule_type)
-    if engine is None:
+    lowering = _LOWERING.get(rule.rule_type)
+    if lowering is None:
         return RejectedRule(rule.rule_key, rule.rule_type, f"unknown rule_type {rule.rule_type!r}")
+    engine, check = lowering
 
     compiled = CompiledRule(
         rule_id=rule.rule_key,
         engine=engine,
+        check=check,
         effect=_EFFECT_MAP.get(rule.effect.decision, "flag"),
         source=_source_block(rule, clause),
         conditions=[{"field": c.field, "operator": c.operator, "value": c.value} for c in rule.conditions],
@@ -154,7 +157,7 @@ def compile_rule_pack(
         (rejected if isinstance(out, RejectedRule) else compiled).append(out)  # type: ignore[arg-type]
 
     def _rule_doc(c: CompiledRule) -> dict[str, Any]:
-        doc: dict[str, Any] = {"rule_id": c.rule_id, "engine": c.engine, "effect": c.effect}
+        doc: dict[str, Any] = {"rule_id": c.rule_id, "engine": c.engine, "check": c.check, "effect": c.effect}
         if c.conditions:
             doc["conditions"] = c.conditions
         if c.expr:

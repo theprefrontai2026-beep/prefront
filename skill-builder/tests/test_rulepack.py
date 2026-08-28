@@ -34,6 +34,7 @@ def test_approval_threshold_lowers_to_predicate():
     pack = compile_rule_pack("skill1", "1.0", [_rule()], {"c1": _clause()})
     r = _compiled(pack, "r_approval")
     assert r["engine"] == "predicate"
+    assert r["check"] == "approval_gate"
     assert r["effect"] == "approval_required"
     assert r["approver_roles"] == ["Branch Manager"]
     assert r["conditions"] == [{"field": "amount", "operator": ">", "value": 50000}]
@@ -49,6 +50,7 @@ def test_data_access_lowers_to_content():
     pack = compile_rule_pack("skill1", "1.0", [rule], {"c1": _clause()})
     r = _compiled(pack, "r_mask")
     assert r["engine"] == "content"
+    assert r["check"] == "field_restriction"
     assert r["effect"] == "block"  # mask -> block (no runtime masking in OOB shadow eval)
     assert r["detectors"] == [{"field_names": ["risk_score", "tax_id"], "scopes": ["result", "final_answer"]}]
 
@@ -60,6 +62,7 @@ def test_restriction_lowers_to_predicate_prohibition():
     pack = compile_rule_pack("skill1", "1.0", [rule], {"c1": _clause()})
     r = _compiled(pack, "r_restrict")
     assert r["engine"] == "predicate"
+    assert r["check"] == "prohibition"
     assert r["effect"] == "block"
     assert "approver_roles" not in r
 

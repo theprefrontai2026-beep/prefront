@@ -14,6 +14,7 @@
 # catalog_membership: off-catalog action, not something to list and exempt.
 intent_catalog:
   version: 1
+  policy_document: loan_underwriting_policy.md
   intents:
     - intent: view_my_pipeline
       tool_name: get_my_applications
@@ -37,6 +38,7 @@ intent_catalog:
       fields: [loan_id, applicant_id, product, requested_amount, term_months, status, assigned_officer]
       mandatory_filters: ["officer_id = caller OR applicant_id = <subject>"]
       expected_volume: {rows_p99: 5}
+      trigger_descriptors: ["list of applications", "branch pipeline", "all applications", "pending applications in the branch"]
       policy: ["11.3", "11.4", "12.6", "12.9"]
 
     - intent: view_application
@@ -200,6 +202,7 @@ intent_catalog:
       fields: [doc_id, applicant_id, kind, filename, content]
       expected_volume: {rows_p99: 1}
       trust: untrusted
+      trigger_descriptors: ["read this document", "review the attached file", "what does the document say", "read document"]
       policy: ["12.8", "12.9", "13.8"]
 
     - intent: export_directory

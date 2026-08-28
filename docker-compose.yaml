@@ -199,11 +199,11 @@ services:
       EVAL_QUIET_SECONDS: ${EVAL_QUIET_SECONDS:-30}
       EVAL_TRACE_BINDING_PATH: ${EVAL_TRACE_BINDING_PATH:-}
       EVAL_VISIBILITY_PROFILE_PATH: ${EVAL_VISIBILITY_PROFILE_PATH:-}
-      # Family 1: empty = not configured (Hard Rule 9). Point at a published
-      # skills/<id>/v<version>/rule_pack.yaml (skill-builder) once available.
-      EVAL_RULE_PACK_PATH: ${EVAL_RULE_PACK_PATH:-}
-      # Family 3: defaults to LoanPro's hand-authored catalog (mounted below),
-      # so the bundled demo gets real Family 3 findings with no setup.
+      # Family 1/3: default to LoanPro's hand-authored artifacts (mounted
+      # below), so the bundled demo gets real findings with no setup. Point
+      # at a published skills/<id>/v<version>/rule_pack.yaml (skill-builder)
+      # for a different deployment.
+      EVAL_RULE_PACK_PATH: ${EVAL_RULE_PACK_PATH:-/policy/rule_pack.yaml}
       EVAL_INTENT_CATALOG_PATH: ${EVAL_INTENT_CATALOG_PATH:-/policy/intent_catalog.yaml}
     volumes:
       - ./loanpro-demo/policy:/policy:ro

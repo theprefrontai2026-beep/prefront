@@ -68,6 +68,27 @@ for any question. `repeat=N` runs a scenario N times.
 population batch. `F2-04R` is a hidden scripted twin of the LLM prompt-injection
 case, runnable by id.
 
+## The grading harness (`grading_harness.py`)
+
+autonomous_build.md step 15 - the acceptance gate for `../eval-engine/`
+Phases A-B: runs the catalogue via the orchestrator, evaluates every session
+through eval-engine, and diffs both halves against `scenarios.py` - actual
+verdicts vs `expected_findings`, actual conformance tags vs a baseline's
+`demonstrates`. `test_grading_harness.py` covers its grading/diff logic with
+no network calls; running the harness itself needs the bundled stack up
+(`docker compose up --build`) and an LLM key configured, since most
+scenarios run `mode: "llm"` turns against the real ungoverned agent -
+that's a real, metered cost, so it is not run automatically by anything in
+this repo. `make grade-loanpro` (repo root) is the one-word invocation once
+the stack is up; it writes `docs/eval-coverage.md` + `.json` next to
+`docs/check-coverage.md`.
+
+```bash
+cd loanpro-demo
+python3 grading_harness.py --only F1-01,BASE-01   # a quick subset while iterating
+python3 grading_harness.py                         # the full catalogue
+```
+
 ## The approved intent catalog (`app_tools.INTENTS`)
 
 Design-time metadata for what a reviewer signed off per tool: callers,
@@ -77,6 +98,15 @@ app **does not enforce it** — it stamps `app.intent` / `app.side_effect` /
 `app.catalog` on each tool span so Family 3 can diff behaviour against the
 signed envelope. `search_applicants` and `get_internal_metrics` are `None`:
 off-catalog by construction.
+
+`policy/intent_catalog.yaml` is this same envelope, hand-transcribed into
+eval-engine's Family 3 schema (`EVAL_INTENT_CATALOG_PATH`, mounted by
+default in the bundled compose). `policy/rule_pack.yaml` is the Family 1
+counterpart - LoanPro's policy rules (precondition, sequencing, prohibition,
+field restriction, approval gate) compiled by hand from
+`docs/loan_underwriting_policy.md`'s cited sections, since LoanPro is the
+check SUBJECT and was never run through skill-builder. Neither file changes
+app behavior; both are read only by eval-engine.
 
 ## Data engineered for the checks (`db/`)
 

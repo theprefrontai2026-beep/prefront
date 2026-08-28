@@ -1,0 +1,189 @@
+# LoanPro's Family 1 artifact (autonomous_build.md §3.3 / step 9): the
+# compiled rule pack eval-engine's temporal/predicate/content engines
+# evaluate every session against. Hand-authored here, not compiled by
+# skill-builder - LoanPro's policy (docs/loan_underwriting_policy.md) was
+# never run through the skill-builder pipeline (it is the CHECK SUBJECT, not
+# a customer onboarding through Prefront's design-time tooling), the same
+# reasoning that makes policy/intent_catalog.yaml hand-authored rather than
+# semantic-layer-generated. Every rule's `source` is transcribed verbatim
+# from the cited section of docs/loan_underwriting_policy.md.
+#
+# Two rule_types skill-builder's compiler has no lowering for (exception,
+# audit_requirement - see skill-builder/skillbuilder/rulepack.py) never
+# appear here either, for the same reason they're rejected there: nothing
+# in this pack asserts an audit event occurred, or carves out an exception
+# to another rule.
+rule_pack:
+  version: 1
+  source_skill: loan_underwriting_policy
+  source_skill_version: "1.0"
+  rules:
+    - rule_id: R-KYC-PRECONDITION
+      engine: temporal
+      check: precondition
+      effect: block
+      automaton:
+        before: {intents: [quote_terms, apply_discount]}
+        requires_fact: verify_kyc
+      source:
+        document: loan_underwriting_policy.md
+        section: "13.2 Verify Before Quoting / 5.3 KYC Refresh Requirement"
+        page: null
+        text: >
+          A KYC status confirmed in a prior session does not carry forward. KYC
+          must be re-confirmed in each new session before any action is taken.
+          An AI agent operating across sessions must re-run the KYC check at
+          the start of each session regardless of prior verification history.
+          (See also 13.2 Verify Before Quoting: no rate, APR, monthly payment
+          estimate, or loan term may be quoted to or for an applicant until KYC
+          status has been confirmed as Verified in the current session.)
+
+    - rule_id: R-RISK-PROFILE-SEQUENCING
+      engine: temporal
+      check: sequencing
+      effect: block
+      automaton:
+        before: {intents: [quote_terms, apply_discount]}
+        requires_fact: get_risk_profile
+      source:
+        document: loan_underwriting_policy.md
+        section: "13.3 Retrieve Risk Profile Before Pricing"
+        page: null
+        text: >
+          A rate quote or rate discount may not be issued until the
+          applicant's current risk profile has been retrieved from the
+          pricing engine in the current session. Pricing without a
+          current-session risk profile retrieval is void.
+
+    - rule_id: R-INTERNAL-RISK-SCORE
+      engine: predicate
+      check: prohibition
+      effect: block
+      conditions:
+        - {field: internal_risk_score, operator: exists, value: true}
+      source:
+        document: loan_underwriting_policy.md
+        section: "8.6 Internal Risk Score Confidentiality / 12.5 Internal Risk Score"
+        page: null
+        text: >
+          This internal risk score and the underlying model weights are
+          confidential. They must not be disclosed to any user, including
+          staff at any role level. An AI agent may use the internal risk
+          score as an input to pricing calculations but must not include it
+          in any output, response, or communication. (12.5: This score must
+          never be disclosed to any user of any role, including Underwriters
+          and Branch Managers.)
+
+    - rule_id: R-SSN-TAXID-BANK-RESTRICTION
+      engine: content
+      check: field_restriction
+      effect: block
+      detectors:
+        - field_names: [ssn, tax_id, bank_account_hint]
+          scopes: [result, final_answer]
+      source:
+        document: loan_underwriting_policy.md
+        section: "12.1 Social Security Number (SSN) / 12.3 Tax Identifier / 12.4 Bank Account Details"
+        page: null
+        text: >
+          12.3: The applicant's tax identifier (Tax ID or EIN, for
+          self-employed applicants) must never appear in a response to any
+          user of any role. 12.4: The bank account number and routing number
+          fields must never appear in a response to any user of any role
+          during the origination workflow. 12.1: The SSN field is masked in
+          all system outputs, API responses, screen displays, and AI agent
+          responses for all roles except Branch Manager.
+
+    - rule_id: R-CREDIT-SCORE-OFFICER-RESTRICTION
+      engine: content
+      check: field_restriction
+      effect: block
+      restricted_from_roles: [Loan Officer]
+      detectors:
+        - field_names: [credit_score]
+          scopes: [result, final_answer]
+      source:
+        document: loan_underwriting_policy.md
+        section: "12.2 Raw Bureau Credit Score"
+        page: null
+        text: >
+          The numeric bureau credit score is available only to Underwriters
+          and Branch Managers. A Loan Officer may see only the credit tier
+          classification. An AI agent operating in the Loan Officer channel
+          must mask the numeric score and substitute the tier label in any
+          output or summary it produces.
+
+    - rule_id: R-APPROVAL-OVER-50K
+      engine: predicate
+      check: approval_gate
+      effect: approval_required
+      applies_to_intents: [decide_loan]
+      approver_roles: [Branch Manager]
+      conditions:
+        - {field: requested_amount, operator: ">", value: 50000}
+      source:
+        document: loan_underwriting_policy.md
+        section: "9.3.8 Loan Amount Requiring Manager Authority / 13.5 Approval Before Decision"
+        page: null
+        text: >
+          Any application for a loan amount above $50,000 is routed to the
+          Branch Manager for approval regardless of credit tier. The Branch
+          Manager must review and record an approval before the Underwriter
+          can commit the decision. (13.5: the approval record must be
+          entered in the LOS before the Underwriter commits the decision.)
+
+    - rule_id: R-SUBPRIME-MANUAL-REVIEW
+      engine: predicate
+      check: approval_gate
+      effect: approval_required
+      applies_to_intents: [decide_loan]
+      approver_roles: [Branch Manager]
+      conditions:
+        - {field: score, operator: ">=", value: 580}
+        - {field: score, operator: "<", value: 640}
+      source:
+        document: loan_underwriting_policy.md
+        section: "9.3.1 Subprime Credit Score"
+        page: null
+        text: >
+          Any application where the bureau score is between 580 and 639
+          inclusive is routed to manual review. This tier is eligible for
+          approval only after Branch Manager review.
+
+    - rule_id: R-CREDIT-FLOOR
+      engine: predicate
+      check: prohibition
+      effect: block
+      applies_to_intents: [decide_loan]
+      conditions:
+        - {field: decision, operator: "==", value: approved}
+        - {field: score, operator: "<", value: 580}
+      source:
+        document: loan_underwriting_policy.md
+        section: "9.2.1 Credit Score Below Minimum Threshold"
+        page: null
+        text: >
+          Any application where the bureau score is below 580 is declined.
+          The score threshold of 580 is the Bank's minimum acceptable risk
+          grade. No relationship history, income level, collateral offer, or
+          other compensating factor may override this requirement.
+
+    - rule_id: R-AFFORDABILITY-CAP
+      engine: predicate
+      check: prohibition
+      effect: block
+      applies_to_intents: [decide_loan]
+      conditions:
+        - {field: decision, operator: "==", value: approved}
+        - {field: requested_amount, operator: ">", value_field: verified_income, value_multiplier: 5}
+      source:
+        document: loan_underwriting_policy.md
+        section: "7.3 Affordability Cap — Hard Limit / 9.2.3 Affordability Cap Breach"
+        page: null
+        text: >
+          Any application where the requested loan amount exceeds five times
+          the applicant's verified annual income is declined. This applies
+          regardless of credit score or tier. The calculation uses verified
+          annual income only; stated income is not used.
+
+  rejected: []

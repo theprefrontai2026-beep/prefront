@@ -7,6 +7,7 @@ module's - Hard Rule 16).
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 from ..contract import CheckContext, Evidence, Session, Verdict
@@ -117,11 +118,12 @@ def evaluate(session: Session, catalog: IntentCatalog, ctx: CheckContext) -> lis
         if entry is None:
             continue
         evidence = Evidence(span_ids=(step.span_id,), excerpt=step.tool_name)
+        source = catalog.source_for(entry)
         for verdict in (
             _field_scope(step, entry, evidence, session),
             _filter_scope(step, entry, evidence, session),
             _volume_scope(step, entry, evidence, session),
         ):
             if verdict is not None:
-                out.append(verdict)
+                out.append(dataclasses.replace(verdict, source=source))
     return out

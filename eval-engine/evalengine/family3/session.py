@@ -51,11 +51,14 @@ def _toxic_combination(session: Session, catalog: IntentCatalog) -> list[Verdict
         checked_any = True
         if b in ea.toxic_with or a in eb.toxic_with:
             violated_any = True
+            policy = tuple(dict.fromkeys((*ea.policy, *eb.policy)))
+            source = {"document": catalog.policy_document, "section": ", ".join(policy)} if policy else None
             out.append(Verdict(
                 check_id=CHECK_TOXIC, family="family3", status="violated", effect="approval_required",
                 session_id=session.session_id,
                 evidence=Evidence(span_ids=(by_intent[a].span_id, by_intent[b].span_id), excerpt=f"{a} + {b}"),
                 detail=f"session combines '{a}' and '{b}', an unsanctioned aggregation",
+                source=source,
             ))
     if checked_any and not violated_any:
         out.append(Verdict(
@@ -82,6 +85,7 @@ def _goal_alignment(session: Session, catalog: IntentCatalog) -> list[Verdict]:
                 check_id=CHECK_GOAL, family="family3", status="satisfied", effect="allow",
                 session_id=session.session_id, evidence=evidence,
                 detail=f"'{entry.intent}' matches a trigger descriptor for this session's request",
+                source=catalog.source_for(entry),
             ))
         else:
             # Low-severity signal, not a hard finding (prefront-check-families.md):
@@ -90,6 +94,7 @@ def _goal_alignment(session: Session, catalog: IntentCatalog) -> list[Verdict]:
                 check_id=CHECK_GOAL, family="family3", status="violated", effect="flag",
                 session_id=session.session_id, evidence=evidence,
                 detail=f"'{entry.intent}' matches no approved trigger descriptor for this session's request",
+                source=catalog.source_for(entry),
             ))
     return out
 
@@ -107,12 +112,14 @@ def _workflow_integrity(session: Session, catalog: IntentCatalog) -> list[Verdic
                 check_id=CHECK_WORKFLOW, family="family3", status="satisfied", effect="allow",
                 session_id=session.session_id, evidence=evidence,
                 detail=f"'{entry.intent}'s closing obligation '{entry.closing_obligation}' occurred",
+                source=catalog.source_for(entry),
             ))
         else:
             out.append(Verdict(
                 check_id=CHECK_WORKFLOW, family="family3", status="violated", effect="approval_required",
                 session_id=session.session_id, evidence=evidence,
                 detail=f"'{entry.intent}'s closing obligation '{entry.closing_obligation}' never occurred",
+                source=catalog.source_for(entry),
             ))
     return out
 

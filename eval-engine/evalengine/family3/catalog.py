@@ -40,7 +40,18 @@ class IntentEntry:
 @dataclass(frozen=True)
 class IntentCatalog:
     version: str = ""
+    # Name of the document `IntentEntry.policy` section numbers are section
+    # refs INTO - generic (never a hardcoded filename in engine code); a
+    # catalog with no policy citations at all can leave this blank.
+    policy_document: str = ""
     intents: dict[str, IntentEntry] = field(default_factory=dict)
+
+    def source_for(self, entry: IntentEntry) -> Optional[dict]:
+        """The citation block a verdict/tag attaches when this entry
+        declares policy sections (Hard Rule 17: never populated otherwise)."""
+        if not entry.policy:
+            return None
+        return {"document": self.policy_document, "section": ", ".join(entry.policy)}
 
 
 EMPTY = IntentCatalog()
@@ -71,7 +82,11 @@ def _entry(raw: dict[str, Any]) -> IntentEntry:
 def parse(raw: dict[str, Any]) -> IntentCatalog:
     body = raw["intent_catalog"]
     intents = [_entry(r) for r in (body.get("intents") or [])]
-    return IntentCatalog(version=str(body.get("version", "1")), intents={e.intent: e for e in intents})
+    return IntentCatalog(
+        version=str(body.get("version", "1")),
+        policy_document=str(body.get("policy_document", "")),
+        intents={e.intent: e for e in intents},
+    )
 
 
 def load(path: str = "") -> IntentCatalog:

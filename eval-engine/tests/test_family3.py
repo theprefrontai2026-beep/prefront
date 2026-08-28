@@ -49,6 +49,16 @@ def test_entitlement_wrong_role_is_violated():
     assert {v.check_id: v.status for v in verdicts}["entitlement"] == "violated"
 
 
+def test_entitlement_cites_catalog_policy_when_declared():
+    entry = IntentEntry(intent="view_account", allowed_roles=("Teller",), policy=("4.1",))
+    catalog = IntentCatalog(version="1", policy_document="bank_policy.md", intents={"view_account": entry})
+    step = _step_with_intent(0, "get_account", "view_account", args={})
+    session = make_session(steps=[step], caller_role="Applicant")
+    verdicts = call.evaluate(session, catalog, make_ctx(session))
+    v = {v.check_id: v for v in verdicts}["entitlement"]
+    assert v.source == {"document": "bank_policy.md", "section": "4.1"}
+
+
 def test_version_conformance_undeclared_param_is_violated():
     step = _step_with_intent(0, "get_account", "view_account", args={"account_id": "a1", "include_ssn": True})
     session = make_session(steps=[step], caller_role="Teller", channel="branch")

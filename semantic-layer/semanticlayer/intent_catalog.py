@@ -62,6 +62,9 @@ class IntentCatalogEntry(BaseModel):
 
 class IntentCatalog(BaseModel):
     version: int = 1
+    # Name of the document IntentCatalogEntry.policy section numbers refer
+    # into. Blank when no entry declares a policy citation.
+    policy_document: str = ""
     intents: list[IntentCatalogEntry] = Field(default_factory=list)
 
     def by_intent(self) -> dict[str, IntentCatalogEntry]:

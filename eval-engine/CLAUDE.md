@@ -230,10 +230,22 @@ curl ':8120/eval/sessions/<id>/conformance'
 
 Phase B (steps 9-14) is DONE: `family1/` (temporal/predicate/content), the
 skill-builder rule-pack compiler, `family3/` (call/scope/session checks),
-and the `intent_catalog.yaml` schema/generator (semantic-layer). Still open:
-Family 3's population-level checks (`outcome_consistency`, `invocation_drift`,
-`verdict_trend`, step 17) and Phase C's LoanPro grading harness (diff findings
-+ conformance tags against `expected_findings`) and Findings UI (steps 15-16).
+LoanPro's hand-authored `policy/rule_pack.yaml` + `policy/intent_catalog.yaml`,
+and the `intent_catalog.yaml` schema/generator (semantic-layer). Step 15's
+grading harness (`loanpro-demo/grading_harness.py`) is BUILT and its own
+diff/grading logic is unit-tested (`loanpro-demo/test_grading_harness.py`,
+no network) - but it has **not yet been run live end-to-end** against the
+real stack (needs `docker compose up --build` + a metered LLM key for the
+`mode: "llm"` scenarios, so it wasn't run unprompted). Running it is the next
+concrete step: `make grade-loanpro` from the repo root, or see
+`loanpro-demo/README.md`'s "The grading harness" section. Expect the first
+live run to surface real gaps to fix (engine bugs, citation mismatches,
+scenarios needing a rule/catalog tweak) - that IS what an acceptance gate is
+for; do not assume Phase B is fully validated until it has actually run
+clean, or with documented, understood deltas.
+
+Still open: Family 3's population-level checks (`outcome_consistency`,
+`invocation_drift`, `verdict_trend`, step 17) and a Findings UI (step 16).
 Phase D reuses `family1` + `family2`(parameter-side) + `family3`(call/scope) +
 `combinator.combine_inline` inside semantic-mcp-server's govern pipeline, and
 adds the Preflight generator (steps 18-19). `combine_inline` is implemented

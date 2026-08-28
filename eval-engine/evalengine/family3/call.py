@@ -42,6 +42,7 @@ def evaluate(session: Session, catalog: IntentCatalog, ctx: CheckContext) -> lis
                 check_id=CHECK_ENTITLEMENT, family="family3", status="satisfied", effect="allow",
                 session_id=session.session_id, evidence=evidence,
                 detail=f"caller {session.caller_role}/{session.channel} entitled to {entry.intent}",
+                source=catalog.source_for(entry),
             ))
         else:
             out.append(Verdict(
@@ -49,7 +50,7 @@ def evaluate(session: Session, catalog: IntentCatalog, ctx: CheckContext) -> lis
                 session_id=session.session_id, evidence=evidence,
                 detail=(f"caller {session.caller_role}/{session.channel} not entitled to {entry.intent} "
                        f"(allowed roles={list(entry.allowed_roles)}, channels={list(entry.allowed_channels)})"),
-                source={"policy": list(entry.policy)} if entry.policy else None,
+                source=catalog.source_for(entry),
             ))
 
         unknown = sorted(set(step.args.keys()) - set(entry.params))
@@ -72,11 +73,13 @@ def evaluate(session: Session, catalog: IntentCatalog, ctx: CheckContext) -> lis
                     check_id=CHECK_SIDE_EFFECT, family="family3", status="violated", effect="block",
                     session_id=session.session_id, evidence=evidence,
                     detail=f"{entry.intent} is approved read-only; call performed a write",
+                    source=catalog.source_for(entry),
                 ))
             else:
                 out.append(Verdict(
                     check_id=CHECK_SIDE_EFFECT, family="family3", status="satisfied", effect="allow",
                     session_id=session.session_id, evidence=evidence,
                     detail=f"{entry.intent} side effect ({step.side_effect}) matches approval ({entry.side_effect})",
+                    source=catalog.source_for(entry),
                 ))
     return out

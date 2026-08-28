@@ -15,8 +15,6 @@ from ..contract import CheckContext, Evidence, Session, Verdict
 from ..provenance import flatten
 from .compilepack import Rule, RulePack
 
-CHECK_ID = "content"
-
 
 def _normalize(name: str) -> str:
     return re.sub(r"[\s_-]+", "", name.strip().lower())
@@ -38,8 +36,12 @@ def _field_in_text(text: str, field_name: str) -> bool:
     return re.search(pattern, text, re.IGNORECASE) is not None
 
 
-def _applies(rule: Rule, step) -> bool:
-    return not rule.applies_to_intents or step.intent in rule.applies_to_intents
+def _applies(rule: Rule, step, session: Session) -> bool:
+    if rule.applies_to_intents and step.intent not in rule.applies_to_intents:
+        return False
+    if rule.restricted_from_roles and session.caller_role not in rule.restricted_from_roles:
+        return False
+    return True
 
 
 def evaluate(session: Session, rule_pack: RulePack, ctx: CheckContext) -> list[Verdict]:
@@ -47,7 +49,7 @@ def evaluate(session: Session, rule_pack: RulePack, ctx: CheckContext) -> list[V
     out: list[Verdict] = []
     for rule in rule_pack.by_engine("content"):
         for step in session.steps:
-            if not _applies(rule, step):
+            if not _applies(rule, step, session):
                 continue
             hits: list[str] = []
             for det in rule.detectors:
@@ -62,14 +64,14 @@ def evaluate(session: Session, rule_pack: RulePack, ctx: CheckContext) -> list[V
             evidence = Evidence(span_ids=(step.span_id,), excerpt=f"{step.tool_name}: {rule.rule_id}")
             if hits:
                 out.append(Verdict(
-                    check_id=CHECK_ID, family="family1", status="violated", effect=rule.effect,
+                    check_id=rule.check_id(), family="family1", status="violated", effect=rule.effect,
                     session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
                     detail=f"rule {rule.rule_id}: restricted field(s) {sorted(set(hits))} surfaced on {step.tool_name}",
                     source=rule.source or None,
                 ))
             else:
                 out.append(Verdict(
-                    check_id=CHECK_ID, family="family1", status="satisfied", effect="allow",
+                    check_id=rule.check_id(), family="family1", status="satisfied", effect="allow",
                     session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
                     detail=f"rule {rule.rule_id}: no restricted field surfaced on {step.tool_name}",
                     source=rule.source or None,

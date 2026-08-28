@@ -16,6 +16,9 @@ import yaml
 VALID_ENGINES = ("temporal", "predicate", "content")
 
 
+_DEFAULT_CHECK = {"temporal": "precondition", "predicate": "prohibition", "content": "field_restriction"}
+
+
 @dataclass(frozen=True)
 class Rule:
     rule_id: str
@@ -27,6 +30,26 @@ class Rule:
     detectors: tuple[dict[str, Any], ...] = ()
     applies_to_intents: tuple[str, ...] = ()
     automaton: dict[str, Any] = field(default_factory=dict)
+    # content engine only: restrict the detector to these caller roles (empty =
+    # every role) - a field can be restricted from SOME roles but approved for
+    # others (a raw credit score hidden from a Loan Officer, visible to an
+    # Underwriter), which applies_to_intents alone can't express.
+    restricted_from_roles: tuple[str, ...] = ()
+    # The check-families vocabulary this rule reports as (prefront-check-families.md:
+    # precondition | sequencing | prohibition | field_restriction | approval_gate).
+    # Defaults to the engine's most common shape (see _DEFAULT_CHECK) - a rule pack
+    # author overrides with an explicit `check:` key when a rule needs the OTHER
+    # id its engine can produce (a temporal rule reporting "sequencing" instead of
+    # "precondition"; a predicate rule reporting "approval_gate" - though that's
+    # already implied by approver_roles being set, see family1/predicate.py).
+    check: str = ""
+
+    def check_id(self) -> str:
+        if self.check:
+            return self.check
+        if self.engine == "predicate" and self.approver_roles:
+            return "approval_gate"
+        return _DEFAULT_CHECK.get(self.engine, self.engine)
 
 
 @dataclass(frozen=True)
@@ -57,6 +80,8 @@ def _rule(raw: dict[str, Any]) -> Rule:
         detectors=tuple(raw.get("detectors") or ()),
         applies_to_intents=tuple(raw.get("applies_to_intents") or ()),
         automaton=raw.get("automaton") or {},
+        check=str(raw.get("check", "")),
+        restricted_from_roles=tuple(raw.get("restricted_from_roles") or ()),
     )
 
 
