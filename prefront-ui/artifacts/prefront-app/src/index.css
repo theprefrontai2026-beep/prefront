@@ -1600,3 +1600,21 @@ select { cursor: pointer; }
 .pf-oob-step-text { color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; }
 .pf-oob-step-text.mono { font-family: var(--app-font-mono); font-size: 11px; }
 .pf-oob-turn-sep { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 0; }
+
+/* ── Findings: session fly-out panel ────────────────────────────────────── */
+/* Same pattern as Verdict's SessionFlyout (artifacts/verdict/src/index.css) -
+   no shared stylesheet between the two apps, so this is a deliberate copy,
+   not an import; keep both in sync by hand if either changes. */
+.pf-flyout-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.35); z-index: 60; }
+.pf-flyout {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); z-index: 61;
+  background: var(--surface); border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column; animation: pf-flyout-in 160ms ease-out;
+}
+@keyframes pf-flyout-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.pf-flyout-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.pf-flyout-title { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
+.pf-flyout-body { overflow: auto; padding: 12px 18px 24px; display: flex; flex-direction: column; gap: 12px; }
+.pf-flyout-body .pf-oob-detail { padding: 0; border: 0; box-shadow: none; }
+.pf-flyout-body .pf-oob-detail-body { grid-template-columns: 1fr; }
+.pf-flyout .pf-oob-detail > .pf-oob-panel-head .pf-oob-actions > button:last-child { display: none; } /* the fly-out has its own Close */

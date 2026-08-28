@@ -444,6 +444,16 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   and `verdict-nginx.conf` carry the same addition (its own hand-curated CSS
   copy already had the `.pf-oob-chip.red/green/amber` tone classes). Vite
   dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
+- **Clicking a Findings row opens a `SessionFlyout`**, a slide-in side panel
+  (`.pf-flyout*` CSS, ported into `prefront-app/src/index.css` from Verdict's
+  `SessionRunner.tsx`/`index.css` — no shared code between the two apps, so
+  keep both copies in sync by hand) wrapping the SAME `SessionDetail` used by
+  the Sessions view, rather than navigating away to the Sessions tab. It
+  pre-selects the finding's own offending span (`SessionDetail`'s new
+  `initialSpanId` prop, from `evidence_span_ids[0]`) so the SpanInspector's
+  raw input/output is visible immediately, no extra click. Escape and a
+  backdrop click both close it; "jump to trace" closes the flyout and
+  switches to the Traces tab. Live-verified in a real browser.
 - **"Clear ClickHouse" (Ingestion view) clears ALL FIVE ClickHouse tables, not
   just oob-ingest's.** `DELETE /oob/spans` (`ch.truncate()`, oob-ingest) only
   ever cleared `spans`/`ingest_state` — it left eval-engine's `eval_verdicts`/

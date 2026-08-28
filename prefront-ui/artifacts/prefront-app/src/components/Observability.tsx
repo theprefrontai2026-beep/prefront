@@ -724,14 +724,14 @@ function stepsOf(spans: Span[]): Step[] {
   return out;
 }
 
-export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: { sessionId: string; refreshKey: number; onClose: () => void; onOpenTrace: (id: string) => void }) {
+export function SessionDetail({ sessionId, refreshKey, initialSpanId, onClose, onOpenTrace }: { sessionId: string; refreshKey: number; initialSpanId?: string | null; onClose: () => void; onOpenTrace: (id: string) => void }) {
   const [spans, setSpans] = useState<Span[]>([]);
   const [err, setErr] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialSpanId ?? null);
   const [verdicts, setVerdicts] = useState<EvalVerdict[]>([]);
   const [tags, setTags] = useState<ConformanceTag[]>([]);
 
-  useEffect(() => { setSpans([]); setSelected(null); setErr(""); setVerdicts([]); setTags([]); }, [sessionId]);
+  useEffect(() => { setSpans([]); setSelected(initialSpanId ?? null); setErr(""); setVerdicts([]); setTags([]); }, [sessionId, initialSpanId]);
   // A session just run (e.g. via Verdict) may not be ingested yet (the OTLP
   // tap batches for a few seconds; the orchestrator's root arrives via the
   // Phoenix poll). Re-fetch on every refresh tick until it lands.
@@ -807,6 +807,41 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
         {sel && <SpanInspector span={sel} />}
       </div>
     </section>
+  );
+}
+
+/** Slide-out panel showing one session's full trace detail without leaving
+ *  the current view - what a Findings row opens (autonomous_build.md step
+ *  16's Findings view: click a finding, see the trace it came from). Same
+ *  pattern as Verdict's SessionFlyout (artifacts/verdict/src/components/
+ *  SessionRunner.tsx) - no shared code between the two apps, so this is a
+ *  deliberate port, not an import. Reuses the parent's own refresh tick
+ *  rather than a second poll timer. */
+function SessionFlyout({ sessionId, initialSpanId, refreshKey, onClose, onOpenTrace }: {
+  sessionId: string; initialSpanId?: string | null; refreshKey: number;
+  onClose: () => void; onOpenTrace: (id: string) => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <>
+      <div className="pf-flyout-backdrop" onClick={onClose} />
+      <aside className="pf-flyout" role="dialog" aria-label={`Session ${sessionId}`}>
+        <div className="pf-flyout-head">
+          <div className="pf-flyout-title">Trace detail</div>
+          <div className="pf-oob-actions">
+            <button className="pf-btn sm" onClick={onClose}>Close ✕</button>
+          </div>
+        </div>
+        <div className="pf-flyout-body">
+          <SessionDetail sessionId={sessionId} refreshKey={refreshKey} initialSpanId={initialSpanId}
+                        onClose={onClose} onOpenTrace={(id) => { onOpenTrace(id); onClose(); }} />
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -941,7 +976,7 @@ function StatusChip({ status }: { status: string }) {
   return <span className={`pf-oob-chip ${STATUS_TONE[status] || ""}`}>{status}</span>;
 }
 
-function FindingsView({ refreshKey, onOpenSession }: { refreshKey: number; onOpenSession: (id: string | null) => void }) {
+function FindingsView({ refreshKey, onOpenFinding }: { refreshKey: number; onOpenFinding: (sessionId: string, spanId: string | null) => void }) {
   const [family, setFamily] = useState("");
   const [checkId, setCheckId] = useState("");
   const [rows, setRows] = useState<EvalVerdict[]>([]);
@@ -984,7 +1019,8 @@ function FindingsView({ refreshKey, onOpenSession }: { refreshKey: number; onOpe
             <thead><tr><th>When</th><th>Session</th><th>Family</th><th>Check</th><th>Effect</th><th>Rule</th><th>Detail</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable" onClick={() => onOpenSession(r.session_id)}>
+                <tr key={r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
+                    onClick={() => onOpenFinding(r.session_id, r.evidence_span_ids?.[0] ?? null)}>
                   <td className="nowrap">{when(r.evaluated_at)}</td>
                   <td className="mono">{r.session_id}</td>
                   <td className="mono">{r.family}</td>
@@ -1012,6 +1048,7 @@ function FindingsView({ refreshKey, onOpenSession }: { refreshKey: number; onOpe
 export default function Observability({ active = true }: { active?: boolean }) {
   const [view, setView] = useState<View>("overview");
   const [openSess, setOpenSess] = useState<string | null>(null);
+  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null } | null>(null);
   const [since, setSince] = useState<number>(86400);
   const [project, setProject] = useState("");
   const [auto, setAuto] = useState(true);
@@ -1051,6 +1088,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
 
   const goTrace = (id: string | null) => { setOpenTrace(id); if (id) setView("traces"); };
   const goSession = (id: string | null) => { setOpenSess(id); if (id) setView("sessions"); };
+  const openFinding = (sessionId: string, spanId: string | null) => setFlyout({ sessionId, spanId });
 
   const sync = async () => {
     setBusy(true);
@@ -1105,7 +1143,11 @@ export default function Observability({ active = true }: { active?: boolean }) {
       {view === "traces" && <TracesView since={since} project={project} facets={facets} refreshKey={tick} initialTrace={openTrace} onOpenTrace={goTrace} />}
       {view === "llm" && <LlmView data={llm} onOpenTrace={goTrace} />}
       {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}
-      {view === "findings" && <FindingsView refreshKey={tick} onOpenSession={goSession} />}
+      {view === "findings" && <FindingsView refreshKey={tick} onOpenFinding={openFinding} />}
+      {flyout && (
+        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} refreshKey={tick}
+                       onClose={() => setFlyout(null)} onOpenTrace={goTrace} />
+      )}
     </div>
   );
 }
