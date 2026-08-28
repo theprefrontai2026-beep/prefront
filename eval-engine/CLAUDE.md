@@ -357,36 +357,88 @@ reaches the LLM. `KNOWN_CHECKS` in `preflight.py` is the one place outside
 eval-engine that has to know the check-families vocabulary by name; keep it
 in sync by hand if a check id ever changes.
 
-## Phase D / step 18 (inline reuse): the safe subset is DONE and live-verified
+## Phase D / step 18 (inline reuse): family3 + family1.content + Family 2's parameter-side checks, all DONE and live-verified
 
-`semantic-mcp-server/semanticmcp/server.py`'s `_call_governed` is a
-**stateless per-call gateway** - it has `args` + a precheck row + caller
-facts for ONE call, never a session history. Most of Family 2's
-"parameter-side" checks (`param_provenance`, `param_mutation`, `param_taint`,
-`param_staleness`, `param_discard`, `entity_consistency`) are inherently
-cross-step: `provenance.build()` only finds an origin by looking at EARLIER
-steps in `Session.steps`. Wiring THOSE in against a synthetic one-`Step`
-`Session` would make every single governed call fail `param_provenance` -
-there is never an earlier step to trace an origin to. That is not a wiring
-bug to fix, it is a missing prerequisite (session-state accumulation across
-calls) this pass does NOT build - **Family 2 stays un-wired here** for that
-reason; do not add it without that prerequisite.
+`semantic-mcp-server/semanticmcp/server.py`'s `_call_governed` was originally a
+**stateless per-call gateway** - `args` + a precheck row + caller facts for ONE
+call, never a session history. Most of Family 2's "parameter-side" checks
+(`param_provenance`, `param_mutation`, `param_taint`, `param_staleness`,
+`param_discard`, `entity_consistency`) are inherently cross-step:
+`provenance.build()` only finds an origin by looking at EARLIER steps in
+`Session.steps`. The first pass of this work left Family 2 entirely un-wired
+for exactly that reason - a missing prerequisite, not a design objection.
 
-What WAS wired in, because it's genuinely single-call-safe (needs no session
-history): `semantic-mcp-server/semanticmcp/governance/inline_checks.py` runs
+**That prerequisite now exists.** `governance/identity.py`'s `act_as_var` - a
+per-CONNECTION `contextvars.ContextVar` set once when an SSE connection opens
+(`handle_sse`) and read on every call over that connection - already proves a
+"session" boundary exists at the connection level. `governance/session_state.py`
+mirrors that exact pattern: a bounded (`MAX_SESSIONS=500`,
+`MAX_STEPS_PER_SESSION=200`), per-connection, in-memory history of completed
+`Step`s, keyed by a new `session_id_var` contextvar. `server.py`'s `handle_sse`
+calls `session_state.start_session()` / sets `session_id_var` at connect and
+`session_state.end_session(gsid)` in the `finally` block at disconnect - same
+lifetime as `act_as_var`, deliberately a *different* variable (two connections
+authenticating as the same caller must never share tool-call history).
+
+With that history available, `inline_checks.evaluate_family2_parameter_side`
+runs FIVE of Family 2's six parameter-side checks PRE-execution -
+`param_mutation`, `param_discard`, `param_taint`, `param_staleness`,
+`entity_consistency` - by building a real multi-`Step` `Session` from
+`(*prior_steps, current_step)` and a real `ProvenanceGraph` via
+`provenance.build()`, running each check, and filtering to only the verdicts
+whose `evidence.span_ids` contain the current step's own span id (`_step()`
+now assigns a unique `span_id=f"inline-{seq}"` per step - it used to hardcode
+`"inline"` for every step, which only worked when exactly one step ever
+existed). `server.py`'s `_call_governed` folds the result into `decision`
+exactly like the family3 block (block/approval_required only ever escalates,
+never downgrades a decision the native rules already made), then - only on a
+branch that actually executed - calls a `record_step()` closure that appends
+the completed `Step` (real, post-mask result: what the agent actually saw) to
+`session_state`, so the NEXT call over the same connection sees it.
+
+**`param_provenance` is deliberately excluded from the five**, and this is a
+different, harder finding than the "categorical decision" false-positive
+documented in the step 15 section below - it isn't occasional, it's
+unconditional. This gateway has no "turn"/user-message concept at all - only
+tool-call args and results ever exist here - and `param_provenance` treats "no
+candidate origin found at all" (`match == "none"`) as `status=violated,
+effect=block`, not as inapplicable. eval-engine's OOB path reconstructs real
+turns from the LLM conversation, so a first call's args usually DO trace to
+the user's message there; inline, that corpus structurally does not exist, so
+EVERY first call's bare, user-supplied argument (an id typed into a form, with
+no prior tool result to match) would be flagged as fabricated and BLOCKED,
+forever. This was caught for real, not hypothesized: wiring `param_provenance`
+in broke the PRE-EXISTING `test_inline_checks_wiring.py::test_entitled_caller_executes`
+(a first call with a bare `account_id` and no history, expected to be
+allowed) the moment it was added, which is exactly the failure mode described.
+The other five checks were individually verified NOT to share it:
+`param_mutation`/`param_taint` both skip (never flag) a value with no
+candidate at all (`if origin.candidate is None: continue`), `param_staleness`
+only ever compares tool-result-sourced candidates (never user-message ones -
+a turn-less context yields fewer candidates, not wrong ones), and
+`param_discard`/`entity_consistency` never touch `ctx.provenance` at all - they
+compare raw args across steps directly.
+
+Family 2's four RESULT-side checks (`result_fidelity`, `error_blindness`,
+`approval_evidence`, `minimization`) remain out of scope: they need a final
+answer, which a single governed MCP tool call never produces - there is no
+"turn" here, only tool calls.
+
 `family3.call` (`catalog_membership`, `entitlement`, `version_conformance`,
-`side_effect_class`) PRE-execution - folded into `decision.status` right
-after `decision = ctx.decision`, before the `if decision.status != "allowed"`
-gate, so a block/approval_required from either source wins (native rules are
-never downgraded) - and `family1.content` (`field_restriction`) POST-execution,
-in all three result-producing branches (guarded-read precheck, `mcp`, plain
-read), unioned into the existing `masked_fields` set rather than trying to
-retroactively block a read that already ran. Both artifacts default to
-unconfigured (`PREFRONT_RULE_PACK_PATH` / `PREFRONT_INTENT_CATALOG_PATH`
-empty -> every call is a no-op here, Hard Rule 9); LoanPro's `loanpro-mcp`
-compose service (unused by default, behind the `mcp` profile) points them at
-`loanpro-demo/policy/` via a direct bind mount - the same staleness-trap-free
-pattern eval-engine uses, not the artifacts named volume's seed-once copy.
+`side_effect_class`) still runs PRE-execution the same way it always did -
+folded into `decision.status` right after `decision = ctx.decision`, before
+the `if decision.status != "allowed"` gate - and `family1.content`
+(`field_restriction`) still runs POST-execution, in all three
+result-producing branches (guarded-read precheck, `mcp`, plain read), unioned
+into the existing `masked_fields` set rather than trying to retroactively
+block a read that already ran. All three artifact-backed inputs default to
+unconfigured (`PREFRONT_RULE_PACK_PATH` / `PREFRONT_INTENT_CATALOG_PATH` empty
+-> family3/family1.content are no-ops, Hard Rule 9); Family 2 is **built-in**
+and always runs regardless (also Hard Rule 9 - no artifact path gates it).
+LoanPro's `loanpro-mcp` compose service (unused by default, behind the `mcp`
+profile) points the two artifact paths at `loanpro-demo/policy/` via a direct
+bind mount - the same staleness-trap-free pattern eval-engine uses, not the
+artifacts named volume's seed-once copy.
 
 `family1/predicate.py`'s prohibition/approval_gate rules are deliberately
 **NOT** wired in here even though they're single-call-safe in principle:
@@ -409,15 +461,37 @@ from `result["governance"]["inline_checks"]`, following the exact same
 `prefront.rules.fired`/`.indeterminate` attributes.
 
 **Vendoring**: `contract.py`, `provenance.py`, `combinator.py`, `visibility.py`,
-`family1/`, `family3/` are copied into `semantic-mcp-server/semanticmcp/evalengine/`
-by `eval-engine/sync.sh` (same pattern as `tracing/sync.sh` - this service has
-its own Docker build context and cannot import eval-engine directly).
-`family2/`, `config.py`, `binding.py`, `reconstruct.py`, `ch.py`, `store.py`,
-`api.py`, `worker.py`, `evaluate.py`, `profiles/` are NOT vendored (either
-fastapi/clickhouse-connect-heavy, or Family 2, which isn't used here at all).
-Run `sh eval-engine/sync.sh` after editing any vendored file;
-`sh eval-engine/sync.sh --check` reports drift (not wired into CI - no CI
-exists in this repo yet).
+`family1/`, `family2/`, `family3/` are copied into
+`semantic-mcp-server/semanticmcp/evalengine/` by `eval-engine/sync.sh` (same
+pattern as `tracing/sync.sh` - this service has its own Docker build context
+and cannot import eval-engine directly). `family2/` was added to the vendored
+set alongside `governance/session_state.py` in this pass. `config.py`,
+`binding.py`, `reconstruct.py`, `ch.py`, `store.py`, `api.py`, `worker.py`,
+`evaluate.py`, `profiles/` are NOT vendored (fastapi/clickhouse-connect-heavy;
+`semantic-mcp-server` builds its `Session`/`Step`/`ProvenanceGraph` directly
+from `session_state`'s accumulated history instead of eval-engine's own
+reconstruction pipeline). Run `sh eval-engine/sync.sh` after editing any
+vendored file; `sh eval-engine/sync.sh --check` reports drift (not wired into
+CI - no CI exists in this repo yet).
+
+**Live-verified against the real LoanPro Postgres** (scoped bring-up:
+`docker compose --profile mcp --profile securebank up -d --build loanpro-db
+loanpro-seed loanpro-mcp` - the `securebank` profile is required alongside
+`mcp` only because `semantic-mcp-server`'s own compose entry, itself behind
+`mcp`, depends on `securebank-db`, which compose validates even when that
+service is never actually started here). Two `call_governed()` calls made in
+one Python process against the running `loanpro-mcp` container, with a single
+`session_state` session id and `identity.act_as_var` set once (Olivia Reed, a
+Loan Officer) to mimic one real SSE connection making two tool calls:
+`view_application(loan_id=7001)` then `view_application(loan_id=7003)` -
+`entity_consistency` correctly fired `violated`/`block` on the second call
+(`"session established 7001 at step 0"`), and the call was blocked before
+ever re-querying the DB with the second `loan_id`. A follow-up run with the
+SAME `loan_id` on both calls confirmed legitimate reuse is never flagged
+(`entity_consistency: satisfied`, `status: allowed`). A blocked call is never
+appended to `session_state` (`record_step` only runs from a branch that
+actually executed) - verified: history stayed at 1 step after the blocked
+second call in the first run.
 
 **A real bug this caught in review, before it ever ran live**: the first cut
 passed `govern_kind` (the NATIVE engine's own "read vs mcp_write" masking
@@ -440,6 +514,13 @@ alongside the native rule's `credit_score` mask.
 temp-file fixtures, no DB) and `test_inline_checks_wiring.py` (mocks
 `resolve_caller`/`govern`/`db.run_select` and calls the real `_call_governed`,
 so it's exercising server.py's actual control flow, not just the module -
-this is what caught the `govern_kind` bug once written).
+this is what caught the `govern_kind` bug, and later the `param_provenance`
+false-positive, once each was written/wired). The wiring test file's
+`connection` fixture drives `session_state.start_session()` /
+`session_id_var` the same way `handle_sse` does, to exercise Family 2 across
+two sequential `_call_governed` calls sharing one simulated connection:
+`test_family2_first_call_in_session_is_not_flagged`,
+`test_family2_entity_consistency_blocks_a_changed_id_within_session`,
+`test_family2_param_discard_flags_a_dropped_constraint`.
 `requirements-dev.txt` adds `pytest`/`pytest-asyncio`; `pytest.ini` sets
 `asyncio_mode = auto`.

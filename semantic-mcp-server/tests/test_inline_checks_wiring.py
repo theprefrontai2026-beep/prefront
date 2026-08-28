@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from semanticmcp import server
-from semanticmcp.governance import inline_checks
+from semanticmcp.governance import inline_checks, session_state
 from semanticmcp.governance.context import Caller, Decision, GovernanceContext
 
 CATALOG_YAML = textwrap.dedent("""
@@ -110,3 +110,52 @@ async def test_annotate_decision_reads_inline_checks(monkeypatch, catalog_path):
     result = await _run(monkeypatch, _read_tool(), {"account_id": 1}, "Applicant")
     inline = result["governance"]["inline_checks"]
     assert any(v["check_id"] == "entitlement" and v["status"] == "violated" for v in inline)
+
+
+@pytest.fixture
+def connection():
+    """Simulates one SSE connection's lifetime (server.py's handle_sse) so
+    Family 2's parameter-side checks see cross-call history, same as a real
+    connection making several governed calls in a row."""
+    sid = session_state.start_session()
+    token = session_state.session_id_var.set(sid)
+    yield sid
+    session_state.session_id_var.reset(token)
+    session_state.end_session(sid)
+
+
+async def test_family2_first_call_in_session_is_not_flagged(monkeypatch, catalog_path, connection):
+    # No prior history in this connection - Family 2's parameter-side checks
+    # must emit nothing that gates a bare first call (param_provenance is
+    # excluded precisely so this stays true - see inline_checks.py).
+    result = await _run(monkeypatch, _read_tool(), {"account_id": 1}, "Teller",
+                        rows=[{"account_id": 1, "balance": 500}])
+    assert result["status"] == "allowed"
+    assert session_state.steps_for(connection), "a successful call must be recorded into session_state"
+
+
+async def test_family2_entity_consistency_blocks_a_changed_id_within_session(monkeypatch, catalog_path, connection):
+    first = await _run(monkeypatch, _read_tool(), {"account_id": 1}, "Teller",
+                       rows=[{"account_id": 1, "balance": 500}])
+    assert first["status"] == "allowed"
+
+    second = await _run(monkeypatch, _read_tool(name="get_account_again"), {"account_id": 2}, "Teller",
+                        rows=[{"account_id": 2, "balance": 900}])
+    assert second["status"] == "blocked"
+    inline = second["governance"]["inline_checks"]
+    hit = next(v for v in inline if v["check_id"] == "entity_consistency")
+    assert hit["status"] == "violated"
+
+
+async def test_family2_param_discard_flags_a_dropped_constraint(monkeypatch, catalog_path, connection):
+    tool = _read_tool(sql="SELECT account_id, balance FROM accounts WHERE account_id = :account_id AND region = :region")
+    first = await _run(monkeypatch, tool, {"account_id": 1, "region": "west"}, "Teller",
+                       rows=[{"account_id": 1, "balance": 500}])
+    assert first["status"] == "allowed"
+
+    second = await _run(monkeypatch, tool, {"account_id": 1}, "Teller",
+                        rows=[{"account_id": 1, "balance": 500}])
+    assert second["status"] == "approval_required"
+    inline = second["governance"]["inline_checks"]
+    hit = next(v for v in inline if v["check_id"] == "param_discard")
+    assert hit["status"] == "violated"

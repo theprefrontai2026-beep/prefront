@@ -5,15 +5,14 @@
 # Each service has its own Docker build context, so they cannot import a
 # shared module - the files are vendored instead, same pattern as
 # tracing/sync.sh. Only the dependency-light modules are copied: contract.py
-# (the Verdict/Session/Step dataclasses), provenance.py (flatten()),
-# combinator.py, family1/ and family3/ (both import only stdlib + pyyaml +
-# these two - never fastapi/clickhouse-connect, which stay eval-engine-only).
-# config.py, binding.py, visibility.py, reconstruct.py, ch.py, store.py,
-# api.py, worker.py, evaluate.py, family2/, profiles/ are NOT vendored -
-# semantic-mcp-server's inline_checks.py builds its own single-Step Session
-# directly (see governance/inline_checks.py's docstring for why: most of
-# Family 2 needs session history this stateless per-call gateway doesn't
-# have - eval-engine/CLAUDE.md's "Phase D / step 18" section has the details).
+# (the Verdict/Session/Step dataclasses), provenance.py (build()/flatten()),
+# combinator.py, family1/, family2/, family3/ (all import only stdlib +
+# pyyaml + these - never fastapi/clickhouse-connect, which stay
+# eval-engine-only). config.py, binding.py, visibility.py, reconstruct.py,
+# ch.py, store.py, api.py, worker.py, evaluate.py, profiles/ are NOT
+# vendored - semantic-mcp-server's governance/session_state.py +
+# inline_checks.py build the Session directly from accumulated per-connection
+# history instead (see inline_checks.py's docstring).
 #
 # Edit eval-engine/evalengine/{contract,provenance,combinator}.py or
 # family1//family3/ and run this; drift check: `sh eval-engine/sync.sh --check`.
@@ -46,7 +45,7 @@ sync_file() {
 for top_file in __init__.py contract.py provenance.py combinator.py visibility.py; do
   sync_file "$top_file"
 done
-for sub_dir in family1 family3; do
+for sub_dir in family1 family2 family3; do
   for src_path in "$src_root/$sub_dir"/*.py; do
     sync_file "$sub_dir/$(basename "$src_path")"
   done

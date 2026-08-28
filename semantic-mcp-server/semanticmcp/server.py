@@ -29,6 +29,7 @@ from . import prefront_tracing as tracing
 from .governance import PolicyRegistry, govern, resolve_caller
 from .governance import identity as identity_mod
 from .governance import inline_checks
+from .governance import session_state
 from .governance import trace as trace_mod
 from .governance import writes as writes_mod
 
@@ -348,6 +349,35 @@ async def _call_governed(
         decision.status = "approval_required"
         decision.reasons = [*decision.reasons, "inline_check_approval_required: an intent_catalog.yaml check requires approval"]
 
+    # Family 2's six parameter-side checks (param_provenance, param_mutation,
+    # param_discard, param_taint, param_staleness, entity_consistency), reused
+    # against governance/session_state.py's per-connection call history — the
+    # prerequisite the first pass of step 18 found missing (see
+    # inline_checks.evaluate_family2_parameter_side's docstring). Built-in,
+    # always on (Hard Rule 9 — no artifact path to gate it), same
+    # never-downgrade fold as the family3 block above.
+    gsid = session_state.session_id_var.get()
+    prior_steps = session_state.steps_for(gsid)
+    inline_f2_effect, inline_f2_verdicts, inline_f2_step = inline_checks.evaluate_family2_parameter_side(
+        intent, tool["name"], args or {}, inline_side_effect, prior_steps,
+        caller.role or "", caller.attrs.get("channel", "") or "",
+    )
+    inline_checks_trace.extend(_dc.asdict(v) for v in inline_f2_verdicts)
+    if inline_f2_effect == "block" and decision.status != "blocked":
+        decision.status = "blocked"
+        decision.reasons = [*decision.reasons, "inline_check_blocked: a Family 2 parameter-side check failed"]
+    elif inline_f2_effect == "approval_required" and decision.status == "allowed":
+        decision.status = "approval_required"
+        decision.reasons = [*decision.reasons, "inline_check_approval_required: a Family 2 parameter-side check requires approval"]
+
+    def record_step(result_obj: Any) -> None:
+        """Append this call's completed Step — now with its real, post-mask
+        result, i.e. what the agent actually saw — to session_state, so a
+        later call over the same connection has it as provenance. Only
+        called from a branch that actually executed (a blocked/dry-run call
+        has no real result and establishes no provenance)."""
+        session_state.append_step(gsid, _dc.replace(inline_f2_step, result=result_obj, status="OK"))
+
     if decision.status != "allowed":
         return respond(decision, "not_executed")
 
@@ -376,6 +406,7 @@ async def _call_governed(
             if masked:
                 out_rows = [{k: ("***" if k in masked else v) for k, v in r.items()}
                             for r in rows]
+            record_step(out_rows)
             return respond(decision, "executed",
                            row_count=len(out_rows), rows=out_rows,
                            masked_fields=masked or None)
@@ -383,6 +414,8 @@ async def _call_governed(
         result = await anyio.to_thread.run_sync(writes_mod.perform, dsn, wa, write_params, caller)
         status = {"executed": "write_executed", "dry_run": "write_dry_run"}.get(
             result.get("mode"), "write_error")
+        if result.get("mode") == "executed":
+            record_step(result)
         return respond(decision, status, write=result)
 
     if kind == "mcp":
@@ -401,6 +434,7 @@ async def _call_governed(
         masked = sorted({m.split(".")[-1] for m in decision.mask_fields} | inline_post_masked(result))
         if masked:
             result = _mask_result(result, masked)
+        record_step(result)
         status = "write_executed" if tool.get("mcp_destructive") else "executed"
         return respond(decision, status, result=result, masked_fields=masked or None)
 
@@ -414,6 +448,7 @@ async def _call_governed(
     masked = sorted({m.split(".")[-1] for m in decision.mask_fields} | inline_post_masked(rows))
     if masked:
         rows = [{k: ("***" if k in masked else v) for k, v in r.items()} for r in rows]
+    record_step(rows)
     return respond(decision, "executed",
                    row_count=len(rows), rows=rows,
                    masked_fields=masked or None)
@@ -510,12 +545,19 @@ def serve_http(dsn: str, templates_path: str | Path, *, host: str = "0.0.0.0", p
         # In production this stands in for an authenticated session token.
         act_as = request.query_params.get("act_as") or request.headers.get("x-prefront-act-as")
         token = identity_mod.act_as_var.set(act_as) if act_as else None
+        # Family 2 inline reuse (autonomous_build.md step 18): one session id
+        # per CONNECTION, never reused across connections even for the same
+        # caller identity - see governance/session_state.py.
+        gsid = session_state.start_session()
+        gsid_token = session_state.session_id_var.set(gsid)
         try:
             async with sse.connect_sse(request.scope, request.receive, request._send) as (read, write):
                 await server.run(read, write, server.create_initialization_options())
         finally:
             if token is not None:
                 identity_mod.act_as_var.reset(token)
+            session_state.session_id_var.reset(gsid_token)
+            session_state.end_session(gsid)
         # Starlette >=1.0 does `await (await endpoint(request))(scope, receive, send)`,
         # so an endpoint returning None dies with
         #     TypeError: 'NoneType' object is not callable
