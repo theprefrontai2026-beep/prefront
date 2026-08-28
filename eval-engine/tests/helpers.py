@@ -14,7 +14,7 @@ DEFAULT_VISIBILITY = VisibilityProfile(version="1", captures={
 
 
 def make_step(seq, tool_name, args=None, result=None, status="OK", row_count=None,
-             columns=(), side_effect="read", trust_class="", turn_seq=0, span_id=None):
+             columns=(), side_effect="read", trust_class="", turn_seq=0, span_id=None, intent=None):
     return Step(
         span_id=span_id or f"step-{seq}",
         trace_id="trace-1",
@@ -22,7 +22,7 @@ def make_step(seq, tool_name, args=None, result=None, status="OK", row_count=Non
         start_time=f"2026-01-01T00:00:{seq:02d}Z",
         end_time=f"2026-01-01T00:00:{seq:02d}Z",
         tool_name=tool_name,
-        intent=tool_name,
+        intent=tool_name if intent is None else intent,
         args=args or {},
         result=result,
         status=status,

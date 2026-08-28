@@ -36,7 +36,7 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
-| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 (built-in integrity invariants, `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (`evalengine/family1/` — temporal/predicate/content engines over a `rule_pack.yaml` compiled by `skill-builder/skillbuilder/rulepack.py` at publish time, `EVAL_RULE_PACK_PATH`) is wired in; Family 3 (intent catalog) is still a stub pending `autonomous_build.md` steps 11-14. See `eval-engine/CLAUDE.md`. |
+| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 (built-in integrity invariants, `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (`evalengine/family1/` — temporal/predicate/content engines over a `rule_pack.yaml` compiled by `skill-builder/skillbuilder/rulepack.py` at publish time, `EVAL_RULE_PACK_PATH`) and Family 3 (`evalengine/family3/` — call/scope/session checks over an `intent_catalog.yaml`, schema+generator in `semantic-layer/semanticlayer/intent_catalog.py`, `EVAL_INTENT_CATALOG_PATH`; LoanPro's hand-authored one is `loanpro-demo/policy/intent_catalog.yaml`) are both wired in. Population-level Family 3 checks and the LoanPro grading harness are still pending (`autonomous_build.md` Phase C). See `eval-engine/CLAUDE.md`. |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
@@ -130,8 +130,12 @@ tab any more).
   cited § has no heading — run it after editing the doc, the catalogue or INTENTS.
   Tool spans/results never carry policy ids (the app is policy-blind).
 - `loanpro-mcp` (Prefront's governed MCP) is still declared behind the `mcp`
-  profile and unused; `policy/*.yaml` are its legacy artifacts and are NOT derived
-  from the current `loan_underwriting_policy.md`.
+  profile and unused; `policy.yaml`/`query_templates.yaml` are its legacy
+  artifacts and are NOT derived from the current `loan_underwriting_policy.md`.
+  `policy/intent_catalog.yaml` is a THIRD, unrelated file in the same
+  directory — eval-engine's Family 3 artifact (`EVAL_INTENT_CATALOG_PATH`),
+  hand-transcribed from `app_tools.py`'s `INTENTS` + `_POLICY`, read only by
+  eval-engine, never by `loanpro-mcp`.
 
 - **An MCP SSE endpoint MUST return a Response.** Starlette >=1.0 does
   `await (await endpoint(request))(scope, receive, send)`, so an SSE handler that

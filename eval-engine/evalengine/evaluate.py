@@ -16,18 +16,21 @@ from .contract import CheckContext, Finding, VersionStamp
 from .family1 import evaluate_all as evaluate_family1
 from .family1.compilepack import RulePack
 from .family2 import evaluate_all as evaluate_family2
+from .family3 import evaluate_all as evaluate_family3
+from .family3.catalog import IntentCatalog
 from .provenance import build as build_provenance
 from .reconstruct import reconstruct
 from .visibility import VisibilityProfile
 
 
-def version_key(binding: BindingProfile, visibility: VisibilityProfile, rule_pack: RulePack) -> str:
+def version_key(binding: BindingProfile, visibility: VisibilityProfile, rule_pack: RulePack,
+                catalog: IntentCatalog) -> str:
     return (f"{config.ENGINE_VERSION}:{binding.version}:{visibility.version}:"
-           f"{rule_pack.source_skill}@{rule_pack.source_skill_version}")
+           f"{rule_pack.source_skill}@{rule_pack.source_skill_version}:catalog@{catalog.version}")
 
 
 def evaluate_session(session_id: str, binding: BindingProfile, visibility: VisibilityProfile,
-                     rule_pack: RulePack) -> list[Finding]:
+                     rule_pack: RulePack, catalog: IntentCatalog) -> list[Finding]:
     spans = store.session_spans(session_id)
     if not spans:
         return []
@@ -46,22 +49,24 @@ def evaluate_session(session_id: str, binding: BindingProfile, visibility: Visib
     )
     verdicts = evaluate_family2(session, ctx)
     verdicts.extend(evaluate_family1(session, rule_pack, ctx))
+    verdicts.extend(evaluate_family3(session, catalog, ctx))
     versions = VersionStamp(
         engine_version=config.ENGINE_VERSION,
         binding_profile_version=binding.version,
         visibility_profile_version=visibility.version,
         rule_pack_version=f"{rule_pack.source_skill}@{rule_pack.source_skill_version}" if rule_pack.rules else "",
+        catalog_version=catalog.version if catalog.intents else "",
     )
     evaluated_at = datetime.now(timezone.utc).isoformat()
     return combine_oob(verdicts, visibility, versions, evaluated_at)
 
 
 def evaluate_and_persist(session_id: str, binding: BindingProfile, visibility: VisibilityProfile,
-                         rule_pack: RulePack, force: bool = False) -> dict:
-    vkey = version_key(binding, visibility, rule_pack)
+                         rule_pack: RulePack, catalog: IntentCatalog, force: bool = False) -> dict:
+    vkey = version_key(binding, visibility, rule_pack, catalog)
     if not force and store.is_evaluated(session_id, vkey):
         return {"session_id": session_id, "skipped": True, "reason": "already evaluated at this version"}
-    findings = evaluate_session(session_id, binding, visibility, rule_pack)
+    findings = evaluate_session(session_id, binding, visibility, rule_pack, catalog)
     counts = store.persist(findings)
     store.mark_evaluated(session_id, vkey)
     return {"session_id": session_id, "skipped": False, "version_key": vkey, **counts}

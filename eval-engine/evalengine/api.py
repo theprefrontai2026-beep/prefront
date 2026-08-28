@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import binding as binding_mod
 from . import config, evaluate, store, visibility as visibility_mod
 from .family1 import compilepack as rulepack_mod
+from .family3 import catalog as catalog_mod
 from .worker import Worker
 
 logging.basicConfig(level=config.EVAL_LOG_LEVEL.upper(),
@@ -24,7 +25,8 @@ log = logging.getLogger("evalengine")
 _binding = binding_mod.load(config.TRACE_BINDING_PATH)
 _visibility = visibility_mod.load(config.VISIBILITY_PROFILE_PATH)
 _rule_pack = rulepack_mod.load(config.RULE_PACK_PATH)
-worker = Worker(_binding, _visibility, _rule_pack)
+_catalog = catalog_mod.load(config.INTENT_CATALOG_PATH)
+worker = Worker(_binding, _visibility, _rule_pack, _catalog)
 _started_at = datetime.now(timezone.utc)
 
 
@@ -71,6 +73,8 @@ async def status():
             "trace_binding": {"path": config.TRACE_BINDING_PATH or "(bundled default)", "version": _binding.version},
             "visibility": {"path": config.VISIBILITY_PROFILE_PATH or "(bundled default)", "version": _visibility.version},
             "rule_pack": {"path": config.RULE_PACK_PATH or "(not configured)", "rule_count": len(_rule_pack.rules)},
+            "intent_catalog": {"path": config.INTENT_CATALOG_PATH or "(not configured)",
+                              "intent_count": len(_catalog.intents)},
         },
         "engine_version": config.ENGINE_VERSION,
         "mode": config.EVAL_MODE,
@@ -93,7 +97,7 @@ async def run(session_id: str, force: bool = False):
     if not spans:
         raise HTTPException(status_code=404, detail="session not found (no spans)")
     result = await asyncio.to_thread(
-        evaluate.evaluate_and_persist, session_id, _binding, _visibility, _rule_pack, force
+        evaluate.evaluate_and_persist, session_id, _binding, _visibility, _rule_pack, _catalog, force
     )
     return result
 

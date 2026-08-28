@@ -199,11 +199,14 @@ services:
       EVAL_QUIET_SECONDS: ${EVAL_QUIET_SECONDS:-30}
       EVAL_TRACE_BINDING_PATH: ${EVAL_TRACE_BINDING_PATH:-}
       EVAL_VISIBILITY_PROFILE_PATH: ${EVAL_VISIBILITY_PROFILE_PATH:-}
-      # Family 1/3: empty = not configured, zero verdicts, never an error
-      # (Hard Rule 9). Point at a published skills/<id>/v<version>/rule_pack.yaml
-      # (skill-builder) / intent_catalog.yaml (semantic-layer) once available.
+      # Family 1: empty = not configured (Hard Rule 9). Point at a published
+      # skills/<id>/v<version>/rule_pack.yaml (skill-builder) once available.
       EVAL_RULE_PACK_PATH: ${EVAL_RULE_PACK_PATH:-}
-      EVAL_INTENT_CATALOG_PATH: ${EVAL_INTENT_CATALOG_PATH:-}
+      # Family 3: defaults to LoanPro's hand-authored catalog (mounted below),
+      # so the bundled demo gets real Family 3 findings with no setup.
+      EVAL_INTENT_CATALOG_PATH: ${EVAL_INTENT_CATALOG_PATH:-/policy/intent_catalog.yaml}
+    volumes:
+      - ./loanpro-demo/policy:/policy:ro
     ports: ["8120:8120"]
     depends_on:
       clickhouse:

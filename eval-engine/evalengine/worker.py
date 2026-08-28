@@ -15,16 +15,19 @@ from typing import Optional
 from . import config, evaluate, store
 from .binding import BindingProfile
 from .family1.compilepack import RulePack
+from .family3.catalog import IntentCatalog
 from .visibility import VisibilityProfile
 
 log = logging.getLogger(__name__)
 
 
 class Worker:
-    def __init__(self, binding: BindingProfile, visibility: VisibilityProfile, rule_pack: RulePack) -> None:
+    def __init__(self, binding: BindingProfile, visibility: VisibilityProfile, rule_pack: RulePack,
+                catalog: IntentCatalog) -> None:
         self.binding = binding
         self.visibility = visibility
         self.rule_pack = rule_pack
+        self.catalog = catalog
         self._task: Optional[asyncio.Task] = None
         self._wake = asyncio.Event()
         self.polls = 0
@@ -64,7 +67,7 @@ class Worker:
 
     async def poll_once(self) -> dict:
         candidates = await asyncio.to_thread(store.candidate_sessions, config.EVAL_QUIET_SECONDS)
-        vkey = evaluate.version_key(self.binding, self.visibility, self.rule_pack)
+        vkey = evaluate.version_key(self.binding, self.visibility, self.rule_pack, self.catalog)
         results = []
         for row in candidates:
             session_id = row["session_id"]
@@ -72,7 +75,8 @@ class Worker:
                 self.skipped_total += 1
                 continue
             result = await asyncio.to_thread(
-                evaluate.evaluate_and_persist, session_id, self.binding, self.visibility, self.rule_pack
+                evaluate.evaluate_and_persist, session_id, self.binding, self.visibility,
+                self.rule_pack, self.catalog
             )
             results.append(result)
             self.evaluated_total += 1
@@ -97,5 +101,10 @@ class Worker:
                 "source_skill": self.rule_pack.source_skill,
                 "source_skill_version": self.rule_pack.source_skill_version,
                 "rule_count": len(self.rule_pack.rules),
+            },
+            "intent_catalog": {
+                "configured": bool(self.catalog.intents),
+                "version": self.catalog.version,
+                "intent_count": len(self.catalog.intents),
             },
         }

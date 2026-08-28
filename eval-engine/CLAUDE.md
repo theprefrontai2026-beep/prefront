@@ -7,13 +7,19 @@ covers the whole platform; this file is **eval-engine-specific**. The design
 doc is `../autonomous_build.md` (the HOW, phased build order) and
 `../prefront-check-families.md` (the WHAT, the three check families). This
 service implements **Phase A** (steps 1-8: Family 2 + combinator + store) and
-**Phase B step 10** (Family 1 - `family1/temporal.py`, `predicate.py`,
+**Phase B** (steps 9-14): Family 1 (`family1/temporal.py`, `predicate.py`,
 `content.py`, loaded from a published `rule_pack.yaml` via
-`EVAL_RULE_PACK_PATH`; not configured = zero verdicts, never an error, Hard
-Rule 9). The rule-pack COMPILER (step 9, `skill-builder/skillbuilder/rulepack.py`
-- `CandidateRule` + `Clause` → `rule_pack.yaml`, written as a sixth artifact
-alongside `extracted_rules.yaml` at publish time) lives in `skill-builder/`,
-not here. Family 3 (`family3/`) is still a stub pending steps 11-14.
+`EVAL_RULE_PACK_PATH`) and Family 3 (`family3/call.py`, `scope.py`,
+`session.py`, loaded from a published `intent_catalog.yaml` via
+`EVAL_INTENT_CATALOG_PATH`). Both degrade to zero verdicts when
+unconfigured, never an error (Hard Rule 9). The rule-pack COMPILER (step 9,
+`skill-builder/skillbuilder/rulepack.py` - `CandidateRule` + `Clause` →
+`rule_pack.yaml`, written as a sixth artifact alongside `extracted_rules.yaml`
+at publish time) and the intent-catalog SCHEMA/GENERATOR (step 11,
+`semantic-layer/semanticlayer/intent_catalog.py`) live in their own
+services, not here - eval-engine only ever reads the published YAML.
+Population-level Family 3 checks (`outcome_consistency`, `invocation_drift`,
+`verdict_trend`) are still Phase C (step 17).
 
 ## Hard rule: the engine names no demo
 
@@ -32,6 +38,7 @@ ch.session_spans(session_id)          read-only, from the shared `spans` table
   -> provenance.build()                per-arg Origin: exact|normalized|transform|mutated|none, trust class
   -> family2.evaluate_all()            10 built-in checks -> list[Verdict]
   -> family1.evaluate_all()            temporal/predicate/content over rule_pack.yaml (empty if unconfigured)
+  -> family3.evaluate_all()            call/scope/session checks over intent_catalog.yaml (empty if unconfigured)
   -> combinator.combine_oob()          version-stamp + resolve indeterminate reason
   -> store.persist()                    eval_verdicts (all) + eval_conformance_tags (satisfied)
 ```
@@ -128,14 +135,61 @@ the real ClickHouse volume from prior LoanPro runs correctly found SSN/
 tax_id/credit_score surfacing on `get_applicant_profile` - the exact
 leakage class `loanpro-demo/CLAUDE.md` documents that app as containing.
 
+## Family 3: catalog structure and what's actually checkable
+
+`intent_catalog.yaml` (`family3/catalog.py`) keys entries by `intent` - the
+canonical field the trace binding resolves (`intent_name` column, LoanPro's
+`app.intent`), NOT the tool name (`family3/catalog.py`'s `IntentEntry` carries
+both; `tool_name` is informational only, checks match on `intent`). An empty
+`intent` on a step (the binding found none) is exactly "off-catalog" -
+`catalog_membership` needs no special case for it, a catalog lookup miss
+already covers it.
+
+`version_conformance` needs `entry.params` (the declared arg-key schema) to
+mean something even when it's an empty list - a tool that genuinely takes no
+params still has ANY arg flag as drift. There is no separate "not declared"
+state (an absent `params:` key parses to the same empty tuple as a declared
+empty one) - every on-catalog call always gets a version_conformance verdict.
+Same reasoning for `entitlement`: `not entry.allowed_roles` means "no
+restriction declared", which is itself a legitimate (trivially satisfied)
+answer, not a reason to skip the check.
+
+`filter_scope` only ever recognizes ONE mandatory_filter shape:
+`"<field> = caller"` (exact regex match in `scope.py`). Anything richer
+("X = caller OR Y = <subject>", prose with a placeholder) is deliberately
+left unparsed rather than guessed at - never invent a partial match. In
+practice this means filter_scope stays silent on most hand-authored
+mandatory_filters; that's the intended, honest failure mode, not a bug.
+**Gotcha (caught live, Phase B smoke test):** a tool's `output_value` is
+usually `{"columns": [...], "rows": [...], "row_count": N}`, not a bare
+row dict or a bare list - `scope.py:_result_rows` unwraps that shape.
+`field_scope` never had this bug (it flattens `step.result` recursively via
+`provenance.flatten`, which walks through the `rows` list on its own), but
+any NEW family3 check that reads `step.result` directly must go through
+`_result_rows` (or `flatten`), never assume a shape.
+
+Verified live (Phase B smoke test): the real `loanpro-demo/policy/intent_catalog.yaml`
+run against the same ClickHouse volume found a genuine role-escalation case
+(a Loan Officer's session invoking `view_risk_profile`, an
+Underwriter/Branch-Manager-only intent - `entitlement`), an abandoned closing
+obligation (`decide_loan` with no following `send_notice` - `workflow_integrity`),
+an unsanctioned combination (`view_applicant` + `export_directory` in one
+session - `toxic_combination`), and catalog drift (`decide_loan`'s result
+carries `decided_by`/`version`, fields the hand-authored catalog didn't
+declare - `field_scope`; a real gap in the catalog transcription, left as-is
+since "the catalog under-declares" is exactly the kind of thing this check
+exists to surface for a human to reconcile, not for the engine to paper over).
+
 ## Idempotent replay
 
 `eval_evaluated_sessions` (session_id, version_key) is the dedup gate:
-`version_key = f"{engine_version}:{binding.version}:{visibility.version}:{rule_pack.source_skill}@{rule_pack.source_skill_version}"`
-(catalog version joins this once Family 3 lands). Republishing a skill (a new
-`source_skill_version`) makes every already-evaluated session eligible for
-re-evaluation under the new rule pack automatically - no manual cache bust.
-The worker skips any `(session_id, version_key)` pair it's already recorded;
+`version_key = f"{engine_version}:{binding.version}:{visibility.version}:{rule_pack.source_skill}@{rule_pack.source_skill_version}:catalog@{catalog.version}"`.
+Republishing a skill (a new `source_skill_version`) makes every
+already-evaluated session eligible for re-evaluation under the new rule pack
+automatically - no manual cache bust. The intent catalog has no such
+auto-bump: bump its `version:` field by hand when you edit it (same
+convention as the binding/visibility profiles - none of these are content
+hashes). The worker skips any `(session_id, version_key)` pair it's already recorded;
 `POST /eval/run?force=true` bypasses the gate for a manual re-check. Bumping
 `config.ENGINE_VERSION` (or either bundled profile's `version:` field) is
 what makes a prior run re-evaluate - the version key is the only thing that
@@ -174,13 +228,13 @@ curl ':8120/eval/sessions/<id>/conformance'
 
 ## What's still missing (see `../autonomous_build.md`)
 
-Phase B's `family1/` (temporal/predicate/content) and the skill-builder
-rule-pack compiler (step 9) are DONE. Still open: `family3/` (call/scope/
-session/population checks over an `intent_catalog.yaml`, steps 11-14 + 17)
-and the `intent_catalog.yaml` schema itself (semantic-layer, step 11). Phase C
-is the LoanPro grading harness (diff findings + conformance tags against
-`expected_findings`) and a Findings UI. Phase D reuses `family1` +
-`family2`(parameter-side) + `family3`(call/scope) + `combinator.combine_inline`
-inside semantic-mcp-server's govern pipeline, and adds the Preflight
-generator. `combine_inline` is implemented and unit-tested but has no caller
-yet.
+Phase B (steps 9-14) is DONE: `family1/` (temporal/predicate/content), the
+skill-builder rule-pack compiler, `family3/` (call/scope/session checks),
+and the `intent_catalog.yaml` schema/generator (semantic-layer). Still open:
+Family 3's population-level checks (`outcome_consistency`, `invocation_drift`,
+`verdict_trend`, step 17) and Phase C's LoanPro grading harness (diff findings
++ conformance tags against `expected_findings`) and Findings UI (steps 15-16).
+Phase D reuses `family1` + `family2`(parameter-side) + `family3`(call/scope) +
+`combinator.combine_inline` inside semantic-mcp-server's govern pipeline, and
+adds the Preflight generator (steps 18-19). `combine_inline` is implemented
+and unit-tested but has no caller yet.
