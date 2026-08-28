@@ -28,15 +28,15 @@ The bundled `docker-compose.yaml` wires **SecureBank as the example deployment**
 | Service | Dir / package | Port | Role |
 |---|---|---|---|
 | skill-builder | `skill-builder/skillbuilder` | 8000 | **policy compiler**: policy doc → clauses → LLM candidate rules → human review → published skill (FastAPI) |
-| semantic-layer-api | `semantic-layer/semanticlayer` | 8010 | design-time API: schema introspect/parse, build/publish templates, bind+publish policy. Also owns `intent_catalog.py` (the Family 3 schema/generator, see eval-engine's row) and `preflight.py` (autonomous_build.md step 19: an LLM proposes candidate adversarial test scenarios in `loanpro-demo/scenarios.py`'s shape from a tool list + intent catalog — always `review_status="pending"`, structurally validated against real tool/check names, never auto-approved; wired to `POST /design/semantic/preflight/generate`, live-verified against a real LLM — see eval-engine/CLAUDE.md's step 19 section for the worked example, including a first-draft prompt that got a real response validation correctly rejected in full before a schema-example fix got 4/4 valid candidates) |
-| semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call — native `governance/rules.py`/`decide.py` over `policy.yaml`, **plus** (autonomous_build.md step 18) eval-engine's single-call-safe checks inline (`governance/inline_checks.py`: `family3.call` pre-execution, `family1.content` post-execution, over `rule_pack.yaml`/`intent_catalog.yaml` — vendored from `eval-engine/` via `eval-engine/sync.sh`, unconfigured by default). Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`). **Behind compose profile `mcp` — `docker compose up` does NOT start it**; the demos run their own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101, the latter pointed at LoanPro's `rule_pack.yaml`/`intent_catalog.yaml`) |
+| semantic-layer-api | `semantic-layer/semanticlayer` | 8010 | design-time API: schema introspect/parse, build/publish templates, bind+publish policy. Also owns `intent_catalog.py` (the Family 3 schema/generator, see eval-engine's row) and `preflight.py` (autonomous_build.md step 19: an LLM proposes candidate adversarial test scenarios in `loanpro-demo/scenarios.py`'s shape from a tool list + intent catalog — always `review_status="pending"`, structurally validated against real tool/check names, never auto-approved; wired to `POST /design/semantic/preflight/generate`, live-verified against a real LLM — see eval-engine/CLAUDE.md's step 19 section for the worked example, including a first-draft prompt that got a real response validation correctly rejected in full before a schema-example fix got 4/4 valid candidates. `loanpro-demo/preflight_import.py` closes the loop this service's endpoint alone doesn't: `generate` calls it for real, `approve <id...>` is the human gate that converts approved candidates into `scenarios.py`'s own shape and runs them through the SAME orchestrator + grading harness — live-verified catching both a correct candidate (PASS) and a wrong one (FAIL, then rejected)) |
+| semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call — native `governance/rules.py`/`decide.py` over `policy.yaml`, **plus** (autonomous_build.md step 18) eval-engine's single-call-safe checks inline (`governance/inline_checks.py`: `family3.call` pre-execution, `family1.content` post-execution, and five of Family 2's six parameter-side checks pre-execution using a new per-connection `governance/session_state.py` history — `param_provenance` excluded, unconditional false positives with no turn/message corpus at this layer, see `eval-engine/CLAUDE.md`'s step 18 section — all over `rule_pack.yaml`/`intent_catalog.yaml`, vendored from `eval-engine/` via `eval-engine/sync.sh`, unconfigured by default). Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`). **Behind compose profile `mcp` — `docker compose up` does NOT start it**; the demos run their own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101, the latter pointed at LoanPro's `rule_pack.yaml`/`intent_catalog.yaml`) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/pii/` → :8020 |
 | verdict | `prefront-ui/artifacts/verdict` | 5180 | **Verdict** — standalone "business decision evaluator": what was the LoanPro Runtime tab (`SessionRunner`), extracted into its own small app so it can run/share independently of the design-time UI. Talks to `loanpro-orchestrator` by absolute URL (cross-origin, CORS already open); nginx proxies only `/oob/` → :8110 for session inspection. The main UI's Runtime tab (and SecureBank's governed-vs-ungoverned diff view, which lived in the same `RuntimeDiff.tsx`) has since been **removed** — Verdict is the only place to run LoanPro's scenario catalogue interactively now |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
-| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 (built-in integrity invariants, `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (`evalengine/family1/` — temporal/predicate/content engines over a `rule_pack.yaml` compiled by `skill-builder/skillbuilder/rulepack.py` at publish time, `EVAL_RULE_PACK_PATH`) and Family 3 (`evalengine/family3/` — call/scope/session **and population** checks over an `intent_catalog.yaml`, schema+generator in `semantic-layer/semanticlayer/intent_catalog.py`, `EVAL_INTENT_CATALOG_PATH`; LoanPro's hand-authored one is `loanpro-demo/policy/intent_catalog.yaml`) are both wired in. The LoanPro grading harness (`loanpro-demo/grading_harness.py`, `make grade-loanpro`) is built and unit-tested but not yet run live end-to-end (needs the stack up + a metered LLM key). See `eval-engine/CLAUDE.md`. |
+| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 (built-in integrity invariants, `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (`evalengine/family1/` — temporal/predicate/content engines over a `rule_pack.yaml` compiled by `skill-builder/skillbuilder/rulepack.py` at publish time, `EVAL_RULE_PACK_PATH`) and Family 3 (`evalengine/family3/` — call/scope/session **and population** checks over an `intent_catalog.yaml`, schema+generator in `semantic-layer/semanticlayer/intent_catalog.py`, `EVAL_INTENT_CATALOG_PATH`; LoanPro's hand-authored one is `loanpro-demo/policy/intent_catalog.yaml`) are both wired in, plus population checks (`family3/population.py`, `POST /eval/population`) and a Preflight-generated-and-approved scenario loop (`loanpro-demo/preflight_import.py`; see step 19 below). The LoanPro grading harness (`loanpro-demo/grading_harness.py`, `make grade-loanpro`) has been run live end-to-end against the real stack — `loanpro-demo/docs/eval-coverage.md` is 8/8 PASS. See `eval-engine/CLAUDE.md`. |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
@@ -458,18 +458,30 @@ small enough that `docker compose up -d --build <service>` is usually simpler.
 
 ### Tests
 
-**`skill-builder/tests/` is the only test suite in the repo.** `semantic-layer`,
-`semantic-mcp-server`, `oob-ingest`, and the demos have none — verify changes to
-those by running the service (see the per-service verification recipes below and
-in the OOB section), not by looking for a pytest run that does not exist.
-(`semantic-layer/tests` was deleted in 9cf773a; pytest is not even in its
-requirements.)
+Four Python test suites exist: `skill-builder/tests/`, `eval-engine/tests/`
+(includes a domain-independence guard and, for `family1/temporal.py`'s
+precondition automaton, a Hypothesis property-based suite against generated
+step streams — `test_family1_temporal_properties.py`), `semantic-mcp-server/
+tests/` (governance/inline_checks.py, both pure and wired against a real
+`_call_governed`), and two pure (no-network) files in `loanpro-demo/`
+(`test_grading_harness.py`, `test_preflight_import.py`). `semantic-layer`
+and `oob-ingest` still have none — verify changes to those by running the
+service (see the per-service verification recipes below and in the OOB
+section). (`semantic-layer/tests` was deleted in 9cf773a; pytest is not even
+in its requirements.) `make test` runs all four suites plus
+`eval-engine/sync.sh --check`, using each service's already-created venv;
+`.github/workflows/tests.yml` runs the same four suites in CI (fresh venvs
+via `actions/setup-python`, plus a `compose-config` job) on every push/PR —
+deliberately NOT `make grade-loanpro` (below), which needs the live stack +
+a metered LLM key that a plain CI runner doesn't have.
 
 ```bash
-# from skill-builder/
+# from skill-builder/ (same pattern for eval-engine/, semantic-mcp-server/)
 VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
 VIRTUAL_ENV=.venv .venv/bin/python -m pytest tests/test_validation.py -q   # one file
 VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q -k executability           # one pattern
+
+make test          # every offline suite, from the repo root
 ```
 
 ### UI dev

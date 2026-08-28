@@ -1,0 +1,75 @@
+name: tests
+
+# autonomous_build.md step 15/20: the offline, no-secrets subset of this
+# repo's tests, wired into CI so a pull request can't silently break
+# eval-engine's pure check logic, the domain-independence guard, or the
+# other Python services' unit tests. Deliberately does NOT run
+# `make grade-loanpro` (loanpro-demo/grading_harness.py) - that needs the
+# full docker-compose stack up AND a real LLM API key (see the Makefile's
+# own comment on the `grade-loanpro` target); wiring THAT in is a follow-up
+# once a runner with those two things is available, not something to fake
+# here with a stubbed LLM client (Hard Rule 2: no LLM anywhere at
+# evaluation time except a real, metered call - a stub would validate
+# nothing).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  eval-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r eval-engine/requirements-dev.txt
+      - run: python -m pytest -q eval-engine/tests
+      - run: sh eval-engine/sync.sh --check
+
+  skill-builder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r skill-builder/requirements.txt
+      - run: python -m pytest -q skill-builder/tests
+
+  semantic-mcp-server:
+    # semantic-mcp-server/tests/ has no __init__.py, so pytest's default
+    # import-mode inserts only the tests/ dir onto sys.path when invoked
+    # from elsewhere - `from semanticmcp import server` then fails
+    # (reproduced locally). Run from inside the service dir instead, same
+    # as the Makefile's `test` target and every manual invocation in
+    # eval-engine/CLAUDE.md's step 18 section.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: semantic-mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q tests
+
+  loanpro-demo-pure:
+    # Only the pure, no-network test files - grading_harness.py's actual
+    # scenario run needs the live stack + LLM key (see the job doc-comment
+    # above), and isn't run here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pytest pyyaml
+      - run: python -m pytest -q loanpro-demo/test_grading_harness.py loanpro-demo/test_preflight_import.py
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose config --quiet

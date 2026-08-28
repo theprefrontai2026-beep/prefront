@@ -200,6 +200,48 @@ hashes). The worker skips any `(session_id, version_key)` pair it's already reco
 what makes a prior run re-evaluate - the version key is the only thing that
 distinguishes "already checked" from "artifacts changed since."
 
+## Two staleness traps in the new ClickHouse tables (step 20)
+
+Root `CLAUDE.md`'s "Engine mechanics that bite" section already documents the
+artifacts-volume seed-once trap for the PRE-EXISTING tables; these two are
+specific to eval-engine's OWN new tables (`eval_verdicts`,
+`eval_conformance_tags`, `eval_evaluated_sessions`) and were both found live,
+not by inspection:
+
+1. **A ReplacingMergeTree only dedupes within its OWN sort key - changing a
+   `check_id` orphans the old rows instead of replacing them.**
+   `eval_verdicts`/`eval_conformance_tags` are `ORDER BY (session_id, check_id,
+   rule_id, evidence_excerpt)` (`ch.py`); a rule's `check_id` is part of that
+   key by design (Family 1 rules pick their own via `Rule.check_id()`'s
+   override). Changing one - `R-INTERNAL-RISK-SCORE` went `prohibition` ->
+   `field_restriction` mid-session during step 15's live run (see that
+   section) - means the OLD `check_id`'s rows are never touched by a
+   re-evaluation under the new one; they linger forever as stale "violated"
+   findings unless something explicitly clears them. There is no
+   auto-detection for this (a check_id rename looks identical to a check_id
+   being added, from the table's point of view) - the convention is to bump
+   the rule pack's `source_skill_version` (forces every session back through
+   `POST /eval/run?force=true` per "Idempotent replay" above) AND use
+   `DELETE /eval/verdicts` (dev-only truncate) for a clean slate when a
+   check_id itself changes, not just when a rule's condition changes.
+2. **The version-key dedup gate cannot tell "evaluated to zero findings" from
+   "not evaluated yet" unless the write path guards for it explicitly.**
+   `eval_evaluated_sessions`'s whole purpose (idempotent replay, above) is to
+   make a `(session_id, version_key)` pair permanently skip re-evaluation -
+   which is exactly wrong for a session that was evaluated a moment too
+   early, against a still-partial span read, and legitimately found nothing
+   only because the data wasn't all there yet. Caught live in step 15's run:
+   `evaluate_and_persist` used to call `mark_evaluated` unconditionally,
+   which raced oob-ingest's own separate ClickHouse write and permanently
+   stranded a session at "0 findings, done" the moment that race lost. Fixed
+   by refusing to mark a session evaluated when `session_spans()` reads back
+   empty (`evaluate.py`) - a narrower version of the SAME trap resurfaced one
+   layer up, in the grading harness's OWN readiness check, later in this
+   document (`wait_for_ingestion`'s span-count debounce, under step 15) -
+   "spans exist" and "ALL of this session's spans have arrived" are two
+   different conditions, and conflating them is the recurring shape of this
+   whole trap.
+
 ## Testing
 
 `eval-engine/tests/` is pure-Python, no Docker required (Hard Rule 3 exists
@@ -563,8 +605,8 @@ set alongside `governance/session_state.py` in this pass. `config.py`,
 `semantic-mcp-server` builds its `Session`/`Step`/`ProvenanceGraph` directly
 from `session_state`'s accumulated history instead of eval-engine's own
 reconstruction pipeline). Run `sh eval-engine/sync.sh` after editing any
-vendored file; `sh eval-engine/sync.sh --check` reports drift (not wired into
-CI - no CI exists in this repo yet).
+vendored file; `sh eval-engine/sync.sh --check` reports drift - IS wired into
+CI (`.github/workflows/tests.yml`'s `eval-engine` job, added step 20).
 
 **Live-verified against the real LoanPro Postgres** (scoped bring-up:
 `docker compose --profile mcp --profile securebank up -d --build loanpro-db
