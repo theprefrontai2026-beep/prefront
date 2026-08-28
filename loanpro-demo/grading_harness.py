@@ -8,7 +8,7 @@ run means the engine reproduces what the fixture says it should.
 
     python grading_harness.py                        # full catalogue, incl. hidden
     python grading_harness.py --only F1-01,BASE-01    # a subset
-    python grading_harness.py --out ../docs/eval-coverage.md
+    python grading_harness.py --out docs/eval-coverage.md
     python grading_harness.py --lenient               # exit 0 regardless (for iterating)
 
 Env: ORCHESTRATOR_URL (default http://localhost:8098), OOB_URL
