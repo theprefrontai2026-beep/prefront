@@ -159,6 +159,45 @@ def session_spans(session_id: str) -> list[dict[str, Any]]:
                {"s": session_id})
 
 
+def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
+    """Population material (Hard Rule 13: aggregates only, never raw payloads
+    across sessions): one row per session sharing `scenario_id`, collapsed to
+    its action shape - never a tool arg or result value."""
+    return rows(
+        f"""
+        SELECT session_id,
+               anyIf(attributes['app.variant'], attributes['app.variant'] != '') AS variant,
+               arrayStringConcat(arraySort(groupArrayIf(tool_name, kind = 'TOOL')), ',') AS shape,
+               countIf(kind = 'TOOL') AS tool_calls,
+               countIf(kind = 'TOOL' AND attributes['app.side_effect'] = 'write') AS writes,
+               countIf(status = 'ERROR') AS errors,
+               min(start_time) AS t_start
+        FROM {SPANS_T} WHERE scenario_id = %(sid)s AND session_id != ''
+        GROUP BY session_id ORDER BY t_start
+        """,
+        {"sid": scenario_id},
+    )
+
+
+def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> list[dict[str, Any]]:
+    """Population material for verdict_trend: prior verdicts for one rule
+    (or check), newest first - status + evaluated_at only, never evidence."""
+    where = ["1 = 1"]
+    params: dict[str, Any] = {}
+    if rule_id:
+        where.append("rule_id = %(rule_id)s")
+        params["rule_id"] = rule_id
+    if check_id:
+        where.append("check_id = %(check_id)s")
+        params["check_id"] = check_id
+    params["limit"] = max(1, min(int(limit), 2000))
+    return rows(
+        f"SELECT session_id, status, evaluated_at FROM {VERDICTS_T} WHERE {' AND '.join(where)} "
+        f"ORDER BY evaluated_at DESC LIMIT %(limit)s",
+        params,
+    )
+
+
 def candidate_sessions(quiet_seconds: float, limit: int = 200) -> list[dict[str, Any]]:
     """session_ids with at least one span, whose most recent span is older
     than `quiet_seconds` ago - i.e. the session looks closed."""

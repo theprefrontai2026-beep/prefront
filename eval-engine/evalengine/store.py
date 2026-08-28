@@ -39,6 +39,14 @@ def candidate_sessions(quiet_seconds: float, limit: int = 200) -> list[dict[str,
     return ch.candidate_sessions(quiet_seconds, limit)
 
 
+def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
+    return ch.session_shapes(scenario_id)
+
+
+def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> list[dict[str, Any]]:
+    return ch.verdict_history(rule_id=rule_id, check_id=check_id, limit=limit)
+
+
 def list_verdicts(**kwargs) -> dict[str, Any]:
     return ch.list_verdicts(**kwargs)
 

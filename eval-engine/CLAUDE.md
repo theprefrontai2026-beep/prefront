@@ -43,6 +43,11 @@ ch.session_spans(session_id)          read-only, from the shared `spans` table
   -> store.persist()                    eval_verdicts (all) + eval_conformance_tags (satisfied)
 ```
 
+`family3/population.py` (outcome_consistency/invocation_drift/verdict_trend)
+is a separate, on-demand path - `evaluate.evaluate_population()`, called via
+`POST /eval/population`, not part of the per-session pipeline above (there
+is no single session these checks are "about").
+
 `evaluate.py` is the ONLY place that wires these together - both `worker.py`
 (the poll loop) and `api.py`'s `POST /eval/run` call `evaluate_and_persist`,
 never their own copy of the pipeline (Hard Rule 12 needs one code path).
@@ -244,9 +249,20 @@ scenarios needing a rule/catalog tweak) - that IS what an acceptance gate is
 for; do not assume Phase B is fully validated until it has actually run
 clean, or with documented, understood deltas.
 
-Still open: Family 3's population-level checks (`outcome_consistency`,
-`invocation_drift`, `verdict_trend`, step 17) and a Findings UI (step 16).
-Phase D reuses `family1` + `family2`(parameter-side) + `family3`(call/scope) +
-`combinator.combine_inline` inside semantic-mcp-server's govern pipeline, and
-adds the Preflight generator (steps 18-19). `combine_inline` is implemented
-and unit-tested but has no caller yet.
+Step 17 (population checks) is also DONE - `family3/population.py`
+(`outcome_consistency`, `invocation_drift`, `verdict_trend`), invoked
+on-demand via `POST /eval/population` (`scenario_id`/`variant` for the first
+two, `rule_id` for the third), not the per-session worker loop - there is no
+single session a population finding is "about", so its `Verdict.session_id`
+is a synthetic key (`population:<scenario_id>[:variant]`,
+`population:<scenario_id>:<a>-vs-<b>`, or `population:rule:<rule_id>`) that
+`GET /eval/sessions/<key>/verdicts` still works against, same as any real
+session. `grading_harness.py` drives this for POP-01/02/03 (`POP_VARIANT` /
+`POP_DRIFT` / `POP_RULE_TREND` maps in that file - demo-specific knowledge
+that belongs in the fixture-side harness, never in eval-engine).
+
+Still open: a Findings UI (step 16). Phase D reuses `family1` +
+`family2`(parameter-side) + `family3`(call/scope) + `combinator.combine_inline`
+inside semantic-mcp-server's govern pipeline, and adds the Preflight
+generator (steps 18-19). `combine_inline` is implemented and unit-tested but
+has no caller yet.

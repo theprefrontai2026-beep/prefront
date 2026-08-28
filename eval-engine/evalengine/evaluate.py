@@ -17,6 +17,7 @@ from .family1 import evaluate_all as evaluate_family1
 from .family1.compilepack import RulePack
 from .family2 import evaluate_all as evaluate_family2
 from .family3 import evaluate_all as evaluate_family3
+from .family3 import population as population_checks
 from .family3.catalog import IntentCatalog
 from .provenance import build as build_provenance
 from .reconstruct import reconstruct
@@ -70,3 +71,34 @@ def evaluate_and_persist(session_id: str, binding: BindingProfile, visibility: V
     counts = store.persist(findings)
     store.mark_evaluated(session_id, vkey)
     return {"session_id": session_id, "skipped": False, "version_key": vkey, **counts}
+
+
+def evaluate_population(
+    scenario_id: str = "", variant: str = "",
+    baseline_variant: str = "", compare_variant: str = "",
+    rule_id: str = "", visibility: VisibilityProfile = None,
+) -> dict:
+    """Population checks (autonomous_build.md step 17): on-demand aggregate
+    computation, not tied to any single session's evaluation. Persists
+    through the same store.persist path as per-session findings."""
+    verdicts = []
+    if scenario_id:
+        rows = store.session_shapes(scenario_id)
+        v = population_checks.outcome_consistency(scenario_id, rows, variant)
+        if v is not None:
+            verdicts.append(v)
+        if baseline_variant and compare_variant:
+            v = population_checks.invocation_drift(scenario_id, rows, baseline_variant, compare_variant)
+            if v is not None:
+                verdicts.append(v)
+    if rule_id:
+        history = store.verdict_history(rule_id=rule_id)
+        v = population_checks.verdict_trend(rule_id, history)
+        if v is not None:
+            verdicts.append(v)
+
+    versions = VersionStamp(engine_version=config.ENGINE_VERSION)
+    evaluated_at = datetime.now(timezone.utc).isoformat()
+    findings = combine_oob(verdicts, visibility or VisibilityProfile(version="", captures={}), versions, evaluated_at)
+    counts = store.persist(findings)
+    return {"scenario_id": scenario_id, "rule_id": rule_id, "verdicts": len(findings), **counts}

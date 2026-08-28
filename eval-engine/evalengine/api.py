@@ -102,6 +102,17 @@ async def run(session_id: str, force: bool = False):
     return result
 
 
+@app.post("/eval/population")
+async def population(scenario_id: str = "", variant: str = "", baseline_variant: str = "",
+                     compare_variant: str = "", rule_id: str = ""):
+    if not scenario_id and not rule_id:
+        raise HTTPException(400, "supply scenario_id and/or rule_id")
+    result = await asyncio.to_thread(
+        evaluate.evaluate_population, scenario_id, variant, baseline_variant, compare_variant, rule_id, _visibility
+    )
+    return result
+
+
 @app.get("/eval/findings")
 async def findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0):
     return await asyncio.to_thread(store.list_findings, check_id=check_id, family=family, limit=limit, offset=offset)

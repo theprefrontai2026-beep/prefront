@@ -10,7 +10,7 @@ invocation_drift, verdict_trend) are Phase C (step 17) - not here yet.
 from __future__ import annotations
 
 from ..contract import CheckContext, Session, Verdict
-from . import call, catalog, scope, session as session_checks
+from . import call, catalog, population, scope, session as session_checks
 from .catalog import IntentCatalog
 
 IntentCatalog = IntentCatalog  # re-export
