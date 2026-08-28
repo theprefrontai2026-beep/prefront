@@ -42,6 +42,13 @@ def test_catalog_membership_on_catalog_is_satisfied_and_checks_others():
     assert by_check["side_effect_class"] == "satisfied"
 
 
+def test_entitlement_missing_caller_data_fails_open():
+    step = _step_with_intent(0, "get_account", "view_account", args={"account_id": "a1"})
+    session = make_session(steps=[step], caller_role="", channel="")
+    verdicts = call.evaluate(session, _catalog(VIEW_ACCOUNT), make_ctx(session))
+    assert {v.check_id: v.status for v in verdicts}["entitlement"] == "satisfied"
+
+
 def test_entitlement_wrong_role_is_violated():
     step = _step_with_intent(0, "get_account", "view_account", args={"account_id": "a1"})
     session = make_session(steps=[step], caller_role="Applicant", channel="branch")

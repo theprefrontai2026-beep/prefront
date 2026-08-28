@@ -274,9 +274,8 @@ depend on `eval-engine`. Typechecked clean via the documented WSL docker-tsc
 workaround; not yet exercised against a running eval-engine in a browser
 (same "not run live" caveat as the grading harness).
 
-Still open: Phase D inline reuse (step 18, see below). Step 19 (Preflight)'s
-schema + structural validator + prompt +
-LLM-call plumbing are DONE in `semantic-layer/semanticlayer/preflight.py`
+Step 19 (Preflight)'s schema + structural validator + prompt + LLM-call
+plumbing are DONE in `semantic-layer/semanticlayer/preflight.py`
 (`CandidateScenario`, `validate_candidate_scenario`, `render_prompt`,
 `generate_candidate_scenarios` - the LLM client is dependency-injected, so
 this was smoke-tested with a stub completion function, never a real API
@@ -285,46 +284,89 @@ in this repo. `KNOWN_CHECKS` there is the one place outside eval-engine that
 has to know the check-families vocabulary by name; keep it in sync by hand
 if a check id ever changes.
 
-## Phase D / step 18 (inline reuse): a real blocker, not yet attempted
+## Phase D / step 18 (inline reuse): the safe subset is DONE and live-verified
 
-Investigated (not wired in): `semantic-mcp-server/semanticmcp/server.py`'s
-`_call_governed` is a **stateless per-call gateway** - it has `args` + a
-precheck row + caller facts for ONE call, never a session history.
-Most of Family 2's "parameter-side" checks (`param_provenance`,
-`param_mutation`, `param_taint`, `param_staleness`, `param_discard`,
-`entity_consistency`) are inherently cross-step: `provenance.build()` only
-finds an origin by looking at EARLIER steps in `Session.steps`. Wire these
-in against a synthetic one-`Step` `Session` and every single governed call
-fails `param_provenance` - there is never an earlier step to trace an origin
-to. That is not a wiring bug to fix, it is a missing prerequisite: the
-runtime has no session-state accumulation across calls at all. Building that
-(a session-scoped store in semantic-mcp-server that grows a `Session` object
-call by call, keyed by the caller's session id) is real, scoped work, not
-part of this pass - **do not** wire Family 2 in against a single-call
-`Session` without it; that would turn every governed call into a false
-positive, in a live authorization path.
+`semantic-mcp-server/semanticmcp/server.py`'s `_call_governed` is a
+**stateless per-call gateway** - it has `args` + a precheck row + caller
+facts for ONE call, never a session history. Most of Family 2's
+"parameter-side" checks (`param_provenance`, `param_mutation`, `param_taint`,
+`param_staleness`, `param_discard`, `entity_consistency`) are inherently
+cross-step: `provenance.build()` only finds an origin by looking at EARLIER
+steps in `Session.steps`. Wiring THOSE in against a synthetic one-`Step`
+`Session` would make every single governed call fail `param_provenance` -
+there is never an earlier step to trace an origin to. That is not a wiring
+bug to fix, it is a missing prerequisite (session-state accumulation across
+calls) this pass does NOT build - **Family 2 stays un-wired here** for that
+reason; do not add it without that prerequisite.
 
-What IS safely single-call (no session-state prerequisite), for whenever
-this is picked up: `family3/call.py` (`catalog_membership`, `entitlement`,
-`version_conformance`, `side_effect_class` - args + caller only) and
-`family1/content.py` (`field_restriction` - needs only the post-execution
-result, available at `server.py`'s write/mcp/read branches). `family1/
-predicate.py`'s prohibition/approval_gate rules are ALSO single-call-safe in
-principle, but reusing them here would run in parallel with - not replace -
-the native `governance/rules.py`/`decide.py` pipeline skill-builder's
-published `policy.yaml` already drives; the two rule representations
-(`policy.yaml` for native inline enforcement, `rule_pack.yaml` for
-eval-engine's OOB shadow evaluation) are currently separate lowerings of the
-same approved rules, and unifying them is a bigger design decision than
-"call combine_inline somewhere," out of scope for a single pass.
+What WAS wired in, because it's genuinely single-call-safe (needs no session
+history): `semantic-mcp-server/semanticmcp/governance/inline_checks.py` runs
+`family3.call` (`catalog_membership`, `entitlement`, `version_conformance`,
+`side_effect_class`) PRE-execution - folded into `decision.status` right
+after `decision = ctx.decision`, before the `if decision.status != "allowed"`
+gate, so a block/approval_required from either source wins (native rules are
+never downgraded) - and `family1.content` (`field_restriction`) POST-execution,
+in all three result-producing branches (guarded-read precheck, `mcp`, plain
+read), unioned into the existing `masked_fields` set rather than trying to
+retroactively block a read that already ran. Both artifacts default to
+unconfigured (`PREFRONT_RULE_PACK_PATH` / `PREFRONT_INTENT_CATALOG_PATH`
+empty -> every call is a no-op here, Hard Rule 9); LoanPro's `loanpro-mcp`
+compose service (unused by default, behind the `mcp` profile) points them at
+`loanpro-demo/policy/` via a direct bind mount - the same staleness-trap-free
+pattern eval-engine uses, not the artifacts named volume's seed-once copy.
 
-Two more reconciliation points, confirmed but not resolved: the native
-engine's `decide.aggregate()` precedence is `block > approval_required >
-allow` **with no `flag` concept at all** - `combine_inline`'s `flag` effect
-would need an explicit policy (most natural: `flag` never changes
-`decision.status`, i.e. treated as `allowed`, but IS still recorded on the
-span - never silently dropped). And `_annotate_decision` (server.py, the
-`tracing.set_attributes(span, {...})` call keyed on `prefront.rules.fired`/
-`.indeterminate`) is the right pattern to extend with
-`prefront.rule.satisfied`/`prefront.rule.clause`, once there's something
-real to annotate.
+`family1/predicate.py`'s prohibition/approval_gate rules are deliberately
+**NOT** wired in here even though they're single-call-safe in principle:
+doing so would run in parallel with, not replace, the native
+`governance/rules.py`/`decide.py` pipeline skill-builder's published
+`policy.yaml` already drives. The two rule representations (`policy.yaml`
+for native inline enforcement, `rule_pack.yaml` for eval-engine's OOB shadow
+evaluation) stay separate lowerings of the same approved rules; unifying
+them is a bigger design decision than this pass makes.
+
+Reconciliation points resolved: the native engine's `decide.aggregate()`
+precedence is `block > approval_required > allow` with **no `flag` concept**
+- `inline_checks.py`'s `evaluate_pre_execution`/`evaluate_post_execution`
+map a `combine_inline` `flag` down to `"allow"` before returning, so it never
+touches `decision.status` but the verdict (status=violated, effect=flag) is
+still recorded in `inline_checks_trace` for the span. `_annotate_decision`
+(server.py) now sets `prefront.rule.satisfied` / `.violated` / `.clause`
+from `result["governance"]["inline_checks"]`, following the exact same
+`tracing.set_attributes(span, {...})` pattern as the pre-existing
+`prefront.rules.fired`/`.indeterminate` attributes.
+
+**Vendoring**: `contract.py`, `provenance.py`, `combinator.py`, `visibility.py`,
+`family1/`, `family3/` are copied into `semantic-mcp-server/semanticmcp/evalengine/`
+by `eval-engine/sync.sh` (same pattern as `tracing/sync.sh` - this service has
+its own Docker build context and cannot import eval-engine directly).
+`family2/`, `config.py`, `binding.py`, `reconstruct.py`, `ch.py`, `store.py`,
+`api.py`, `worker.py`, `evaluate.py`, `profiles/` are NOT vendored (either
+fastapi/clickhouse-connect-heavy, or Family 2, which isn't used here at all).
+Run `sh eval-engine/sync.sh` after editing any vendored file;
+`sh eval-engine/sync.sh --check` reports drift (not wired into CI - no CI
+exists in this repo yet).
+
+**A real bug this caught in review, before it ever ran live**: the first cut
+passed `govern_kind` (the NATIVE engine's own "read vs mcp_write" masking
+concept - "read" for every SQL precheck-write) as `side_effect_class`'s
+signal, so it could never observe a real write and the check could never
+fire. Fixed by deriving the true side effect from `kind`/`write_action`/
+`mcp_destructive` directly (`inline_side_effect` in `_call_governed`) -
+verified live: `decide_loan` now reports `side_effect (write) matches
+approval (write)` instead of always `(read)`. Also live-verified: an
+Applicant blocked from `view_applicant` **before the DB was ever queried**
+(entitlement), a Loan Officer blocked from `decide_loan` by BOTH the native
+`decide_loan_role_restricted` rule and the new `entitlement` check
+independently (real defense-in-depth, not redundant code), and
+`R-SSN-TAXID-BANK-RESTRICTION` (`rule_pack.yaml`) catching `ssn` in a real
+`view_applicant` query result and getting masked in the actual response
+alongside the native rule's `credit_score` mask.
+
+`semantic-mcp-server/tests/` (new - this service had none before):
+`test_inline_checks.py` (pure, `governance/inline_checks.py` in isolation,
+temp-file fixtures, no DB) and `test_inline_checks_wiring.py` (mocks
+`resolve_caller`/`govern`/`db.run_select` and calls the real `_call_governed`,
+so it's exercising server.py's actual control flow, not just the module -
+this is what caught the `govern_kind` bug once written).
+`requirements-dev.txt` adds `pytest`/`pytest-asyncio`; `pytest.ini` sets
+`asyncio_mode = auto`.

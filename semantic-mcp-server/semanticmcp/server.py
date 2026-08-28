@@ -21,11 +21,14 @@ from typing import Any, Optional
 import anyio
 import yaml
 
+import dataclasses as _dc
+
 from . import db
 from . import mcp_proxy
 from . import prefront_tracing as tracing
 from .governance import PolicyRegistry, govern, resolve_caller
 from .governance import identity as identity_mod
+from .governance import inline_checks
 from .governance import trace as trace_mod
 from .governance import writes as writes_mod
 
@@ -207,6 +210,19 @@ def _annotate_decision(span: Any, tool: dict, args: dict[str, Any], result: dict
             r.get("rule_key") for r in rules if r.get("indeterminate")
         ],
     })
+    # Inline reuse of eval-engine's single-call-safe checks (autonomous_build.md
+    # step 18: family3.call pre-execution, family1.content post-execution -
+    # see governance/inline_checks.py). Same list-of-dicts-under-`t`-then-
+    # span-attribute pattern as the native rules above.
+    inline = t.get("inline_checks") or []
+    if inline:
+        tracing.set_attributes(span, {
+            "prefront.rule.satisfied": [v["check_id"] for v in inline if v["status"] == "satisfied"],
+            "prefront.rule.violated": [v["check_id"] for v in inline if v["status"] == "violated"],
+            "prefront.rule.clause": [
+                v["source"]["section"] for v in inline if v.get("source") and v["source"].get("section")
+            ],
+        })
     # A block / approval_required is a CORRECT outcome, not a span error. Only a
     # failed precheck, query, or write marks the span failed.
     if execution_status in ("error", "write_error"):
@@ -222,6 +238,10 @@ async def _call_governed(
     intent, kind = tool["intent"], tool.get("kind", "read")
     caller = resolve_caller(dsn)
     bundle = policy.bundle
+    # Populated once inline_checks has run (see below); `respond` closes over
+    # this same list object, so it sees whatever's in it by the time it's
+    # actually called, however early that first call happens.
+    inline_checks_trace: list[dict] = []
 
     def respond(decision, execution_status, **extra) -> dict:
         t = trace_mod.build_trace(
@@ -229,6 +249,8 @@ async def _call_governed(
             decision=decision, execution_status=execution_status,
             template_id=tool.get("template_id"),
         )
+        if inline_checks_trace:
+            t["inline_checks"] = inline_checks_trace
         trace_mod.persist(t)
         return {"tool": tool["name"], "status": decision.status,
                 "reasons": decision.reasons or None,
@@ -296,8 +318,50 @@ async def _call_governed(
                  row=row, bundle=bundle, write_fields=write_fields)
     decision = ctx.decision
 
+    # Inline reuse of eval-engine's single-call-safe checks (autonomous_build.md
+    # step 18): catalog_membership / entitlement / version_conformance /
+    # side_effect_class, over an intent_catalog.yaml the native policy.yaml
+    # rules know nothing about. No-op (empty verdicts, "allow") when
+    # PREFRONT_INTENT_CATALOG_PATH isn't configured. A "flag" (schema drift)
+    # is recorded for the span but never gates the call - only block /
+    # approval_required fold into the native decision, and only ever
+    # escalate it (never downgrade a block the native rules already made).
+    # The TRUE side effect, for side_effect_class - distinct from govern_kind
+    # above (that's the native engine's own "read vs mcp_write" masking
+    # concept, not a general read/write signal: it's "read" for every SQL
+    # precheck-write, since decide.aggregate() masks those like reads).
+    if kind == "precheck":
+        inline_side_effect = "write" if tool.get("write_action") else "read"
+    elif kind == "mcp":
+        inline_side_effect = "write" if tool.get("mcp_destructive") else "read"
+    else:
+        inline_side_effect = "read"
+    inline_pre_effect, inline_pre_verdicts = inline_checks.evaluate_pre_execution(
+        intent, tool["name"], args or {}, caller.role or "",
+        caller.attrs.get("channel", "") or "", inline_side_effect,
+    )
+    inline_checks_trace.extend(_dc.asdict(v) for v in inline_pre_verdicts)
+    if inline_pre_effect == "block" and decision.status != "blocked":
+        decision.status = "blocked"
+        decision.reasons = [*decision.reasons, "inline_check_blocked: an intent_catalog.yaml check failed"]
+    elif inline_pre_effect == "approval_required" and decision.status == "allowed":
+        decision.status = "approval_required"
+        decision.reasons = [*decision.reasons, "inline_check_approval_required: an intent_catalog.yaml check requires approval"]
+
     if decision.status != "allowed":
         return respond(decision, "not_executed")
+
+    def inline_post_masked(result_obj: Any) -> set[str]:
+        """field_restriction (family1/content.py) over the executed result -
+        the read already happened, so this can only ever ADD masked field
+        names, never block (autonomous_build.md step 18). No-op set when
+        PREFRONT_RULE_PACK_PATH isn't configured."""
+        _effect, verdicts = inline_checks.evaluate_post_execution(
+            intent, tool["name"], args or {}, result_obj,
+            caller.role or "", caller.attrs.get("channel", "") or "",
+        )
+        inline_checks_trace.extend(_dc.asdict(v) for v in verdicts)
+        return inline_checks.restricted_field_names(result_obj)
 
     if kind == "precheck":
         wa = tool.get("write_action") or {}
@@ -307,7 +371,7 @@ async def _call_governed(
             # this caller. Because the precheck row's columns were facts, a rule can
             # gate on them — e.g. block when the row's owner != the caller — which a
             # plain read, having no row at decision time, cannot do.
-            masked = [m.split(".")[-1] for m in decision.mask_fields]
+            masked = sorted({m.split(".")[-1] for m in decision.mask_fields} | inline_post_masked(rows))
             out_rows = rows
             if masked:
                 out_rows = [{k: ("***" if k in masked else v) for k, v in r.items()}
@@ -334,7 +398,7 @@ async def _call_governed(
             return respond(Decision(status="blocked",
                                     reasons=[f"upstream_call_failed: {type(e).__name__}: {e}"]),
                            "error")
-        masked = [m.split(".")[-1] for m in decision.mask_fields]
+        masked = sorted({m.split(".")[-1] for m in decision.mask_fields} | inline_post_masked(result))
         if masked:
             result = _mask_result(result, masked)
         status = "write_executed" if tool.get("mcp_destructive") else "executed"
@@ -347,7 +411,7 @@ async def _call_governed(
         return respond(Decision(status="blocked",
                                 reasons=[f"query_failed: {type(e).__name__}: {e}"]),
                        "error")
-    masked = [m.split(".")[-1] for m in decision.mask_fields]
+    masked = sorted({m.split(".")[-1] for m in decision.mask_fields} | inline_post_masked(rows))
     if masked:
         rows = [{k: ("***" if k in masked else v) for k, v in r.items()} for r in rows]
     return respond(decision, "executed",

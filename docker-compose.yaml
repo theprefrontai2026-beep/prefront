@@ -556,8 +556,15 @@ services:
       IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       DATABASE_URL: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
       POLICY_PATH: /artifacts/loanpro-demo/policy.yaml
+      # Inline reuse of eval-engine's safe checks (autonomous_build.md step 18,
+      # see semanticmcp/governance/inline_checks.py) - a direct bind mount, not
+      # the artifacts NAMED VOLUME's seed-once pattern (that has a documented
+      # staleness trap in the root CLAUDE.md); same approach eval-engine uses.
+      PREFRONT_RULE_PACK_PATH: /loanpro-policy/rule_pack.yaml
+      PREFRONT_INTENT_CATALOG_PATH: /loanpro-policy/intent_catalog.yaml
     volumes:
       - artifacts:/artifacts:ro          # shared with the engine; read-only here
+      - ./loanpro-demo/policy:/loanpro-policy:ro
     ports: ["8101:8090"]                 # host 8101 (engine MCP owns 8090, securebank 8100)
     depends_on:
       loanpro-db: {condition: service_healthy}

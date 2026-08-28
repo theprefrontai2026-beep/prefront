@@ -6,6 +6,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY semanticmcp ./semanticmcp
+# semanticmcp/evalengine/ is vendored from eval-engine/evalengine/ - see
+# ../eval-engine/sync.sh (this service has its own Docker build context, so
+# it cannot import that package directly).
 
 EXPOSE 8090
 # Global flags + subcommand are supplied by docker-compose `command:`,
