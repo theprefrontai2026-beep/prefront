@@ -631,6 +631,7 @@ Top-level design docs, each answering a different question:
 | `autonomous_build.md` | the phased build order for the eval engine — the HOW |
 | `intent_learning_design.md` | **PLANNED, not built** (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog from observed traces, for customers with no policy document to compile |
 | `loanpro-demo/docs/check-coverage.md` | generated contract: check → session → the span attributes that detect it |
+| `loanpro-demo/docs/use-cases.md` | the policy-failure use cases in narrative form, each with its real `loan_underwriting_policy.md` citation (and a correction table for numbers from an older version of that document) |
 | `loanpro-demo/docs/eval-coverage.md` | generated grading report for the scenario catalogue |
 
 Sub-CLAUDE.mds: `eval-engine/CLAUDE.md`, `skill-builder/CLAUDE.md`,
