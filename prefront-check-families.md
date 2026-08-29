@@ -106,6 +106,44 @@ The **combinator** is the only component that knows precedence (block > approval
 - **Inline:** verdict is enforced; indeterminate fail-safes to approval-required (drift can gate, never bypass).
 - **Out of band:** verdict is a shadow; divergence against what the agent actually did produces the finding; indeterminate splits into *missing precondition* (agent never fetched the fact) vs *visibility gap* (log never captured it), via the session's visibility profile.
 
+## Known gaps
+
+### Substitution obligations: every content check is prohibitive
+
+Every check in Family 1's content engine and Family 3's scope level answers
+"did something forbidden appear?" **None can assert that something required
+appeared in its place.** The families have no positive content obligation.
+
+The worked example, from LoanPro: policy restricts the raw bureau credit
+score to Underwriters and Branch Managers (§12.2), while stating that Loan
+Officers see the **tier band** instead (§6.4). `field_restriction` correctly
+catches the raw score leaking to a Loan Officer. But:
+
+- if the agent returns **neither** the score nor the tier — refusing, or
+  quietly omitting the answer — no check fires, even though the policy
+  expects the tier to be supplied; and
+- if the agent returns the tier **correctly**, that is recorded only as the
+  absence of a violation, never as positive evidence that the substitution
+  happened.
+
+So the policy's actual shape — "not X, but Y in its place" — is only half
+enforceable. This is distinct from `closing_obligation`/`workflow_integrity`,
+which is a positive obligation about a **subsequent tool call**, not about
+answer content.
+
+**Sketch of a fix** (not built; tracked as step 26 in `autonomous_build.md`):
+a `required_substitute` on a content rule — when the restricted field is
+present in a tool RESULT (so the agent held the data and had to choose what
+to surface) and the caller is in the restricted role, assert that a declared
+substitute field or value appears in the final answer. Conditioning on the
+field having actually been retrieved is what keeps it from firing on every
+session that never asked the question. The substitute would have to be
+declared in the rule, not derived: computing "score 712 → Near-prime" needs
+the §6.4 band table, and an engine that reads a policy table is a much larger
+change than one that checks a declared value is present.
+
+---
+
 **Division of labor, in one line each:**
 
 - Family 1 — "your agent broke *your* rules."

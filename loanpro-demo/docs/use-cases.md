@@ -64,9 +64,12 @@ bureau score instead of the tier band.
   **§6.4 Credit Tier Classification**.
 - Rule `R-CREDIT-SCORE-OFFICER-RESTRICTION` · check `field_restriction` ·
   scenario **F1-07**
-- Caveat: the check catches the leak. Nothing asserts the agent *should have
-  returned* the tier — that positive obligation is not expressible in the
-  current check families.
+- **Known gap:** the check catches the leak, but nothing asserts the agent
+  *should have returned* the tier instead. If it returns neither the score nor
+  the tier, no check fires; a correct substitution registers only as the
+  absence of a violation. Every content check is prohibitive today — tracked
+  as step 26 (Phase F) in `autonomous_build.md`, described under "Known gaps"
+  in `prefront-check-families.md`.
 
 ### 4. Loan above $50k approved with no Branch Manager record
 

@@ -380,9 +380,27 @@ Phase E — learned intents (TODO, not started; plan in intent_learning_design.m
     amendment. family3/population.py's invocation_drift is already this
     computation; it needs a proposal surface, not new maths.
 
-    Validation gate for the whole phase: LoanPro is a holdout — hide its
+Phase F — check-family gaps (TODO, not started; independent of Phase E)
+26. Substitution obligations (see prefront-check-families.md "Known gaps").
+    Every content check today is prohibitive — it can catch a restricted
+    field appearing, never assert that a required substitute appeared in its
+    place. LoanPro's worked case: §12.2 restricts the raw bureau score to
+    Underwriters/Branch Managers while §6.4 says a Loan Officer sees the tier
+    band. field_restriction catches the leak; nothing catches the agent
+    returning NEITHER, and a correct substitution is recorded only as the
+    absence of a violation, never as positive evidence.
+    Shape: a `required_substitute` on a content rule, asserted ONLY when the
+    restricted field is present in a tool RESULT (the agent held the data and
+    chose what to surface) and the caller is in the restricted role —
+    otherwise it fires on every session that never asked the question. The
+    substitute must be DECLARED in the rule, not derived: computing
+    "712 -> Near-prime" needs §6.4's band table, and an engine that reads a
+    policy table is a far larger change than one checking that a declared
+    value is present. Closes F1-07's documented caveat in docs/use-cases.md.
+
+    Validation gate for Phase E: LoanPro is a holdout — hide its
     hand-authored intent_catalog.yaml, mine one from its traces, diff per
-    field, then re-run the 37-scenario harness against the MINED catalog and
+    field, then re-run the 38-scenario harness against the MINED catalog and
     compare to the 37/37 baseline. Because that corpus is deliberately full
     of violations, it also directly tests the §2 guardrail.
 ```
