@@ -35,6 +35,17 @@ class Rule:
     # others (a raw credit score hidden from a Loan Officer, visible to an
     # Underwriter), which applies_to_intents alone can't express.
     restricted_from_roles: tuple[str, ...] = ()
+    # content engine only: the POSITIVE half of a restriction - "not X, but Y in
+    # its place" (autonomous_build.md step 26). Tokens that an acceptable
+    # substitute answer may contain; ANY one of them satisfies. They are
+    # DECLARED, never derived: a rule may list the substitute field's name
+    # ("tier") and/or the literal values it can take ("near-prime", ...),
+    # because an answer often names the value without ever naming the field
+    # ("She's Near-prime"). Deriving the value instead - score 712 -> Near-prime
+    # - would mean the engine reading the policy's band table, a far bigger
+    # change than checking that a declared token is present. Empty = this rule
+    # asserts no substitute, and the check emits nothing (Hard Rule 16).
+    required_substitute: tuple[str, ...] = ()
     # The check-families vocabulary this rule reports as (prefront-check-families.md:
     # precondition | sequencing | prohibition | field_restriction | approval_gate).
     # Defaults to the engine's most common shape (see _DEFAULT_CHECK) - a rule pack
@@ -82,6 +93,7 @@ def _rule(raw: dict[str, Any]) -> Rule:
         automaton=raw.get("automaton") or {},
         check=str(raw.get("check", "")),
         restricted_from_roles=tuple(raw.get("restricted_from_roles") or ()),
+        required_substitute=tuple(raw.get("required_substitute") or ()),
     )
 
 

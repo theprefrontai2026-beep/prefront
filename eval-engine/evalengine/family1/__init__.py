@@ -22,4 +22,8 @@ def evaluate_all(session: Session, rule_pack: RulePack, ctx: CheckContext) -> li
     out.extend(temporal.evaluate(session, rule_pack, ctx))
     out.extend(predicate.evaluate(session, rule_pack, ctx))
     out.extend(content.evaluate(session, rule_pack, ctx))
+    # Substitution obligations (step 26). OOB only, by nature: it needs a
+    # final answer, which a single governed MCP call never produces - the
+    # inline path calls content.evaluate directly and so never reaches it.
+    out.extend(content.evaluate_substitution(session, rule_pack, ctx))
     return out

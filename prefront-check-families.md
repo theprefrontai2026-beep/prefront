@@ -16,6 +16,7 @@ The engine core evaluates every agent action against three families of checks. A
 | `prohibition` | "Never reveal internal risk scores" | Condition over tool args or outputs |
 | `field_restriction` | "tax_id, bank_account_hint must never appear in responses" | Sensitivity scan over tool results + final answer |
 | `approval_gate` | "Amounts over X require manager approval" | Condition that maps to approval-required |
+| `substitution` | "A Loan Officer sees the tier band, not the raw score" | The positive half of a restriction: a declared substitute must appear when the restricted field was retrieved |
 
 **Engine mapping:** precondition + sequencing → temporal engine (per-rule automata over the session's step stream). Fact conditions (prohibition on args, approval_gate) → predicate engine (expression eval over the fact bag). Output prohibitions + field_restriction → content engine (detector sets over payloads).
 
@@ -131,16 +132,29 @@ enforceable. This is distinct from `closing_obligation`/`workflow_integrity`,
 which is a positive obligation about a **subsequent tool call**, not about
 answer content.
 
-**Sketch of a fix** (not built; tracked as step 26 in `autonomous_build.md`):
-a `required_substitute` on a content rule — when the restricted field is
-present in a tool RESULT (so the agent held the data and had to choose what
-to surface) and the caller is in the restricted role, assert that a declared
-substitute field or value appears in the final answer. Conditioning on the
+**Status: BUILT** (step 26). Shipped as the `substitution` check —
+`required_substitute` on a content rule. When the restricted field is present
+in a tool RESULT (so the agent held the data and had to choose what to
+surface) and the caller is in `restricted_from_roles`, it asserts that a
+declared substitute token appears in that turn's answer. Conditioning on the
 field having actually been retrieved is what keeps it from firing on every
-session that never asked the question. The substitute would have to be
-declared in the rule, not derived: computing "score 712 → Near-prime" needs
-the §6.4 band table, and an engine that reads a policy table is a much larger
-change than one that checks a declared value is present.
+session that never asked the question.
+
+The substitute is **declared, never derived**: a rule lists the substitute
+field's name and/or the literal values it can take, because an answer usually
+names the value without naming the field ("She's Near-prime"). Deriving
+"712 → Near-prime" would mean the engine reading §6.4's band table — a far
+larger change than checking a declared token is present.
+
+Effect is `flag`, not the rule's own (usually `block`): withholding a
+restricted value while supplying nothing in its place is an incomplete
+answer, not a disclosure breach. The breach, if any, is separately reported
+by `field_restriction` on the same rule — the two are independent findings,
+and a session can legitimately raise both.
+
+**OOB only, by nature**: it needs a final answer, which a single governed MCP
+call never produces. `family1/__init__.evaluate_all` calls it; the inline
+path calls `content.evaluate` directly and so never reaches it.
 
 ---
 

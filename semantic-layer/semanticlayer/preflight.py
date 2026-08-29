@@ -42,6 +42,7 @@ from .schema import McpTool
 KNOWN_CHECKS = frozenset({
     # Family 1
     "precondition", "sequencing", "prohibition", "field_restriction", "approval_gate",
+    "substitution",
     # Family 2
     "param_provenance", "param_mutation", "param_discard", "param_taint",
     "param_staleness", "entity_consistency", "result_fidelity", "error_blindness",

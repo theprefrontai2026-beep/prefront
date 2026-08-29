@@ -380,8 +380,8 @@ Phase E — learned intents (TODO, not started; plan in intent_learning_design.m
     amendment. family3/population.py's invocation_drift is already this
     computation; it needs a proposal surface, not new maths.
 
-Phase F — check-family gaps (TODO, not started; independent of Phase E)
-26. Substitution obligations (see prefront-check-families.md "Known gaps").
+Phase F — check-family gaps
+26. DONE — Substitution obligations (see prefront-check-families.md "Known gaps").
     Every content check today is prohibitive — it can catch a restricted
     field appearing, never assert that a required substitute appeared in its
     place. LoanPro's worked case: §12.2 restricts the raw bureau score to
@@ -400,7 +400,7 @@ Phase F — check-family gaps (TODO, not started; independent of Phase E)
 
     Validation gate for Phase E: LoanPro is a holdout — hide its
     hand-authored intent_catalog.yaml, mine one from its traces, diff per
-    field, then re-run the 38-scenario harness against the MINED catalog and
+    field, then re-run the 39-scenario harness against the MINED catalog and
     compare to the 37/37 baseline. Because that corpus is deliberately full
     of violations, it also directly tests the §2 guardrail.
 ```

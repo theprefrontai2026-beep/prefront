@@ -16,7 +16,7 @@
 rule_pack:
   version: 1
   source_skill: loan_underwriting_policy
-  source_skill_version: "1.1"
+  source_skill_version: "1.2"
   rules:
     - rule_id: R-KYC-PRECONDITION
       engine: temporal
@@ -111,6 +111,10 @@ rule_pack:
       check: field_restriction
       effect: block
       restricted_from_roles: [Loan Officer]
+      # §6.4: a Loan Officer sees the TIER BAND in place of the raw score.
+      # Declared tokens, not derived - the answer usually names the value
+      # ("She's Near-prime") without ever naming the field.
+      required_substitute: [tier, superprime, prime, near-prime, subprime, deep subprime]
       # final_answer only - same reasoning as R-INTERNAL-RISK-SCORE above.
       detectors:
         - field_names: [credit_score]

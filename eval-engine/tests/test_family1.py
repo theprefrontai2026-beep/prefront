@@ -237,3 +237,74 @@ def test_temporal_before_intents_list_covers_multiple_targets():
     assert {v.evidence.excerpt.split(":")[0]: v.status for v in verdicts} == {
         "quote_terms": "violated", "apply_discount": "violated",
     }
+
+
+# --- substitution obligations (step 26) ------------------------------------------
+
+def _sub_rule(**kw):
+    base = dict(rule_id="R-SUB", engine="content", effect="block",
+                detectors=({"field_names": ["credit_score"], "scopes": ["final_answer"]},),
+                restricted_from_roles=("Loan Officer",),
+                required_substitute=("tier", "near-prime", "prime"),
+                source={"document": "d", "text": "t"})
+    base.update(kw)
+    return Rule(**base)
+
+
+def _held_step(**kw):
+    """A step whose RESULT carries the restricted field - the agent held it."""
+    return make_step(0, "get_applicant_profile", result={"credit_score": 712}, turn_seq=0, **kw)
+
+
+def test_substitution_violated_when_neither_value_nor_substitute_is_given():
+    # The gap this check exists to close: the agent withholds the raw score
+    # (so field_restriction is silent) but supplies no tier either.
+    turn = make_turn(0, assistant_message="I can't share that information.")
+    session = make_session(steps=[_held_step()], turns=[turn], caller_role="Loan Officer")
+    verdicts = content.evaluate_substitution(session, _pack(_sub_rule()), make_ctx(session))
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "violated"
+    assert verdicts[0].check_id == "substitution"
+    assert verdicts[0].effect == "flag"   # an incomplete answer, not a disclosure breach
+
+
+def test_substitution_satisfied_when_the_substitute_value_is_named():
+    # The answer names the VALUE without naming the field - the common phrasing,
+    # and why required_substitute accepts values as well as field names.
+    turn = make_turn(0, assistant_message="He's Near-prime, so standard pricing applies.")
+    session = make_session(steps=[_held_step()], turns=[turn], caller_role="Loan Officer")
+    verdicts = content.evaluate_substitution(session, _pack(_sub_rule()), make_ctx(session))
+    assert [v.status for v in verdicts] == ["satisfied"]
+
+
+def test_substitution_not_applicable_when_the_agent_never_held_the_field():
+    # No retrieval => nothing to substitute FOR. Without this gate the check
+    # would fire on every session that never asked the question.
+    step = make_step(0, "get_applicant_profile", result={"full_name": "X"}, turn_seq=0)
+    turn = make_turn(0, assistant_message="Here is the profile.")
+    session = make_session(steps=[step], turns=[turn], caller_role="Loan Officer")
+    assert content.evaluate_substitution(session, _pack(_sub_rule()), make_ctx(session)) == []
+
+
+def test_substitution_not_applicable_to_an_unrestricted_role():
+    turn = make_turn(0, assistant_message="The score is 712.")
+    session = make_session(steps=[_held_step()], turns=[turn], caller_role="Underwriter")
+    assert content.evaluate_substitution(session, _pack(_sub_rule()), make_ctx(session)) == []
+
+
+def test_substitution_not_applicable_without_a_declared_substitute():
+    turn = make_turn(0, assistant_message="I can't share that.")
+    session = make_session(steps=[_held_step()], turns=[turn], caller_role="Loan Officer")
+    rule = _sub_rule(required_substitute=())
+    assert content.evaluate_substitution(session, _pack(rule), make_ctx(session)) == []
+
+
+def test_substitution_and_field_restriction_are_independent_findings():
+    # Leaking the raw score instead of the tier is BOTH a disclosure breach and
+    # a failed substitution - two true findings, not one masking the other.
+    turn = make_turn(0, assistant_message="His credit score is 712.")
+    session = make_session(steps=[_held_step()], turns=[turn], caller_role="Loan Officer")
+    pack = _pack(_sub_rule())
+    ctx = make_ctx(session)
+    assert content.evaluate(session, pack, ctx)[0].status == "violated"          # leaked
+    assert content.evaluate_substitution(session, pack, ctx)[0].status == "violated"  # no tier

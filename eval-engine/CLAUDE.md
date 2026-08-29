@@ -370,7 +370,7 @@ curl ':8120/eval/sessions/<id>/conformance'
 
 **Phases A-D (steps 1-20) are DONE** — Family 2 built in, Family 1 + Family 3
 wired over their published artifacts, population checks, the grading harness
-(38/38 on the full catalogue), the Findings UI, Preflight, and inline reuse in
+(39/39 on the full catalogue), the Findings UI, Preflight, and inline reuse in
 `semantic-mcp-server`.
 
 **Phase E (steps 21-25) — learned intents — is TODO, not started.** Plan in
@@ -397,7 +397,7 @@ Two constraints from that plan bear directly on code here, if you pick it up:
 ## Live-run status and the bugs those runs found
 
 `loanpro-demo/grading_harness.py` (`make grade-loanpro`) has run the **full
-38-scenario catalogue** against the live stack: **38/38 PASS**, report at
+39-scenario catalogue** against the live stack: **39/39 PASS**, report at
 `loanpro-demo/docs/eval-coverage.md`. Steps 15-19 are done; Phase D / step 18
 (inline reuse in `semantic-mcp-server`) is summarized below.
 
