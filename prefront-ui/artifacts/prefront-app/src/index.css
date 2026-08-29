@@ -1698,7 +1698,8 @@ select { cursor: pointer; }
 
 /* One-liner + policy corroboration at the TOP of a Findings-opened flyout
    (SessionDetail's findingDetail/findingSource props) */
-.pf-find-flyout-top { margin-bottom: 12px; }
+.pf-find-flyout-top { margin: 4px 0 14px; padding: 10px 12px; border-radius: 8px; border-left: 3px solid var(--red); background: var(--red-light); }
+.pf-find-flyout-label { display: block; margin-bottom: 4px; }
 .pf-find-flyout-oneliner { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
 
 /* ── Findings: session fly-out panel ────────────────────────────────────── */

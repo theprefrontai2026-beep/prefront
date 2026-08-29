@@ -826,25 +826,6 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   const findingSrc = findingSource ? parseSource(findingSource) : null;
   return (
     <section className="pf-panel pf-oob-detail">
-      {/* ── One-liner + policy corroboration, ONLY when opened from a
-          Finding - the whole reason someone opened this panel. Everything
-          else (session/trace ids, role/channel, the "checks this scenario
-          triggers" / "actual verdicts" chip rows) is secondary context,
-          pushed to a footer below the (collapsed-by-default) trace. ── */}
-      {findingDetail && (
-        <div className="pf-find-flyout-top">
-          <div className="pf-find-flyout-oneliner">{findingDetail}</div>
-          {findingSrc?.text && (
-            <blockquote className="pf-find-quote">
-              “{findingSrc.text.trim()}”
-              <cite>{findingSrc.document}{findingSrc.section ? ` · §${findingSrc.section}` : ""}</cite>
-            </blockquote>
-          )}
-          {!findingSrc?.text && findingSrc?.section && (
-            <div className="pf-find-cite muted">{findingSrc.document} · §{findingSrc.section}</div>
-          )}
-        </div>
-      )}
       {err && <div className="pf-oob-error">{err}</div>}
       {/* ── The conversation itself: what the user asked, what the agent
           answered, per turn - always visible (the full trace below is
@@ -864,6 +845,25 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {/* ── "What was wrong": the finding's one-liner + policy citation, ONLY
+          when opened from a Finding. Placed right after the conversation so
+          the panel reads as a narrative - asked -> answered -> what was wrong
+          - with the trace and session meta below as supporting detail. ── */}
+      {findingDetail && (
+        <div className="pf-find-flyout-top">
+          <span className="pf-oob-convo-who pf-find-flyout-label">What was wrong</span>
+          <div className="pf-find-flyout-oneliner">{findingDetail}</div>
+          {findingSrc?.text && (
+            <blockquote className="pf-find-quote">
+              “{findingSrc.text.trim()}”
+              <cite>{findingSrc.document}{findingSrc.section ? ` · §${findingSrc.section}` : ""}</cite>
+            </blockquote>
+          )}
+          {!findingSrc?.text && findingSrc?.section && (
+            <div className="pf-find-cite muted">Policy reference: {findingSrc.document} · §{findingSrc.section}</div>
+          )}
         </div>
       )}
       <div className="pf-oob-detail-body">

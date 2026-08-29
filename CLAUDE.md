@@ -510,9 +510,12 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   `Observability.tsx` and are exported, so both places share one parser) as
   the FIRST thing in the panel - only set by the Findings call site;
   Sessions/Traces (no single "this is the finding" to lead with) skip it.
-  A **conversation block** (`.pf-oob-convo`, "User asked" / "Agent answered" per
-  turn, from the same turn/answer steps `stepsOf` orders) sits between that
-  summary and the trace and is always visible — a finding can't be judged
+  The flyout reads as a narrative, top to bottom: a **conversation block**
+  (`.pf-oob-convo`, "User asked" / "Agent answered" per turn, from the same
+  turn/answer steps `stepsOf` orders), then a **"What was wrong"** block
+  (`.pf-find-flyout-top`: the finding's one-liner + policy quote/reference —
+  this used to sit at the very top, above the conversation, and was moved
+  below it per explicit request), then the collapsed trace. All always visible — a finding can't be judged
   without seeing what was asked and what came back, and the trace is
   collapsed. Multi-turn sessions get a `turn N` separator per pair.
   The step-by-step trace is now a collapsed-by-default `<details>`
