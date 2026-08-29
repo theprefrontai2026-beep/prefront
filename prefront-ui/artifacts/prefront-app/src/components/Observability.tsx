@@ -850,7 +850,6 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           {" "}· {root?.user_role || root?.attributes["app.user.role"] || "?"} · user {root?.user_id || root?.attributes["user.id"] || "?"} · {root?.channel || root?.attributes["app.channel"] || "?"}
           {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
           {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turn{spans.filter((s) => /^turn /.test(s.name)).length === 1 ? "" : "s"}
-          {" "}· trace{traces.length === 1 ? "" : "s"} {traces.map(short).join(", ") || "—"}
         </div>
         {(checks.length > 0 || violated.length > 0) && (
           <div className="pf-oob-footer-row">
@@ -879,7 +878,12 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           </details>
         )}
         <div className="pf-oob-actions">
-          {traces.map((t) => <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}>trace {short(t)}</button>)}
+          {traces.map((t) => (
+            <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}
+                   title={`Open the raw OTEL span waterfall for trace ${t} in the Traces view - parent/child hierarchy and per-span timing, not shown in the curated steps above.`}>
+              Raw trace {short(t)}
+            </button>
+          ))}
           <button className="pf-btn sm" onClick={onClose}>Close</button>
         </div>
       </div>

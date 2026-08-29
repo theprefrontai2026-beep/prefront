@@ -547,7 +547,14 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   tool call. Live-verified: the same session that prompted this (24
   conformance tags, previously several wrapped lines of huge chips) now
   shows three compact chips + one "▸ 13 checks satisfied" toggle; hovering
-  a collapsed chip still surfaces its full section citation.
+  a collapsed chip still surfaces its full section citation. Same pass also
+  dropped the passive "· trace(s) {ids}" text from the summary line - purely
+  redundant with the "Raw trace {id}" button right below it, which (unlike
+  static text) actually DOES something: closes the flyout and jumps to
+  Observability's Traces view for the raw OTEL span waterfall
+  (parent/child hierarchy, per-span timing) - genuinely different
+  information from the curated steps above it, not just the same id
+  repeated, which the button's new label and `title` now say explicitly.
 - **"Clear ClickHouse" (Observability's Ingestion view) clears ALL FIVE
   ClickHouse tables, not just oob-ingest's.** `DELETE /oob/spans`
   (`ch.truncate()`, oob-ingest) only ever cleared `spans`/`ingest_state` — it
