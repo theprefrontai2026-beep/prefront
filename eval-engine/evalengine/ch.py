@@ -398,6 +398,21 @@ def session_conformance(session_id: str) -> list[dict[str, Any]]:
     return rows(f"SELECT * FROM {TAGS_T} WHERE session_id = %(s)s ORDER BY check_id", {"s": session_id})
 
 
+def list_conformance(limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    """Cross-session conformance tags, newest first - the POSITIVE evidence
+    (a rule was applied and satisfied, with its policy clause cited) as a
+    single list, mirroring list_findings' shape/cap for the violated side.
+    Before this the only read was per-session (session_conformance), so a
+    UI wanting "latest N satisfied rules across the deployment" had to fan
+    out one call per session."""
+    params: dict[str, Any] = {"limit": max(1, min(int(limit), 500)), "offset": max(0, int(offset))}
+    total = one(f"SELECT count() AS n FROM {TAGS_T}").get("n", 0)
+    data = rows(
+        f"SELECT * FROM {TAGS_T} ORDER BY evaluated_at DESC LIMIT %(limit)s OFFSET %(offset)s", params,
+    )
+    return {"conformance_tags": data, "total": total, "limit": params["limit"], "offset": params["offset"]}
+
+
 def truncate() -> None:
     client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.eval_verdicts")
     client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.eval_conformance_tags")

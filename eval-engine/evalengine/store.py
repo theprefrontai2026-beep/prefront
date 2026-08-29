@@ -59,6 +59,10 @@ def session_conformance(session_id: str) -> list[dict[str, Any]]:
     return ch.session_conformance(session_id)
 
 
+def list_conformance(**kwargs) -> dict[str, Any]:
+    return ch.list_conformance(**kwargs)
+
+
 def totals() -> dict[str, Any]:
     return ch.totals()
 

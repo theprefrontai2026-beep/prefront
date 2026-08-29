@@ -109,7 +109,13 @@ source data. `eval_conformance_tags` IS a separate, denormalized table (its
 own `policy_document`/`clause_id`/`section`/`page`/`clause_text` columns per
 `prefront-check-families.md` §3.5) because Family 1/3 tags need a real policy
 citation Family 2 never has (`source` stays empty for every Family 2 tag -
-Hard Rule 17).
+Hard Rule 17). Read two ways: per session (`GET /eval/sessions/{id}/conformance`,
+what `SessionDetail` shows) and cross-session newest-first
+(`GET /eval/conformance?limit=&offset=`, `ch.list_conformance`, same shape/cap
+as `/eval/findings`) - added for the UI's Overview page, which shows the
+newest policy-cited tags as positive evidence without fanning out one call
+per session. Callers wanting only cited tags filter on `section`/`clause_text`
+client-side; the newest rows are usually Family 2 (no citation).
 
 **`Finding.event_id`**: a monotonic serial number (decimal string, e.g.
 `"42"`) assigned per Finding at PERSIST time - `ch.py`'s `insert_verdicts`

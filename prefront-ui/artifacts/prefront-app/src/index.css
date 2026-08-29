@@ -1102,8 +1102,8 @@ select { cursor: pointer; }
 }
 
 /* ── Dashboard (Overview) ──────────────────────────────────────────────────
-   Decision-intelligence home screen. Composes the existing panel/token system;
-   data is fudged in Dashboard.tsx for v1. */
+   Overview home screen (components/Overview.tsx). Composes the existing
+   panel/token system; every number is live (hooks/useOverviewData.ts). */
 .pf-dash { display: flex; flex-direction: column; gap: 16px; }
 .pf-dash-row { display: grid; gap: 16px; }
 .pf-dash-row-2 { grid-template-columns: 1fr 1fr; }
@@ -1140,7 +1140,7 @@ select { cursor: pointer; }
   box-shadow: 0 0 0 3px var(--green-light);
 }
 
-/* Hero — Governance Health */
+/* Hero — decision evidence (Overview.tsx) */
 .pf-dash-hero {
   display: flex; align-items: stretch; gap: 40px;
   background: linear-gradient(120deg, #ffffff 0%, var(--blue-light) 140%);
@@ -1173,6 +1173,25 @@ select { cursor: pointer; }
   .pf-dash-hero { flex-direction: column; gap: 20px; }
   .pf-dash-hero-counters { border-left: none; border-top: 1px solid var(--line); padding-left: 0; padding-top: 20px; }
 }
+
+/* Overview — objection sections (Overview.tsx). One section per buyer
+   objection: persona tag, the objection as the h2, a one-line answer, then
+   the live widgets that back it. */
+.pf-ov-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 16px; }
+.pf-ov-head h2 { margin: 0 0 4px; font-size: 15px; }
+.pf-ov-answer { margin: 0; font-size: 12px; color: var(--ink-soft); max-width: 720px; line-height: 1.5; }
+.pf-ov-note { flex: none; max-width: 300px; font-size: 11px; color: var(--muted); line-height: 1.45; padding: 8px 10px; background: var(--surface-alt); border-left: 3px solid var(--amber); border-radius: 0 6px 6px 0; }
+.pf-ov-contrast { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.pf-ov-contrast-head { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.pf-ov-family-row { display: flex; gap: 18px; margin-top: 12px; }
+.pf-ov-family-row strong { color: var(--ink); font-size: 13px; }
+.pf-ov-clickable { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
+.pf-ov-clickable:hover .pf-oob-kpi, .pf-ov-clickable:hover.pf-dash-feed-row { background: var(--surface-alt); }
+.pf-ov-clickable.pf-dash-counter:hover .pf-dash-counter-value { color: var(--blue); }
+.pf-ov-counter-sep { color: var(--muted); font-weight: 400; margin: 0 6px; }
+.pf-ov-quote { margin-top: 6px; }
+.pf-ov-foot { display: flex; align-items: center; gap: 4px; padding: 4px 2px; }
+@media (max-width: 1100px) { .pf-ov-contrast { grid-template-columns: 1fr; } .pf-ov-head { flex-direction: column; } }
 
 /* Agent Activity stat grid */
 .pf-dash-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px 12px; }

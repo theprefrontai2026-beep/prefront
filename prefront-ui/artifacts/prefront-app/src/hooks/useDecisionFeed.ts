@@ -1,11 +1,13 @@
 /*
- * Live Decision Trace Feed — reads PERSISTED governance decisions from the DB.
+ * Governed decision store — reads PERSISTED governance decisions from the DB.
  *
- * The dashboard fetches from the api-server only (`GET /api/decisions`, proxied
- * by nginx to :8080 → Postgres `decision_trace`). It never re-runs the LLM
- * catalog on load. `POST /api/decisions/refresh` runs the SecureBank catalog
- * server-side and stores every governed result — the only write path,
- * triggered by `populate()` as an explicit user action.
+ * Backs Decision Traces > Decisions and the Overview's conditional "Governed
+ * runtime" section (rendered only when /api/stats.total > 0). Fetches from
+ * the api-server only (`GET /api/decisions`, proxied by nginx to :8080 →
+ * Postgres `decision_trace`); never re-runs the LLM catalog on load.
+ * `POST /api/decisions/refresh` is the only write path (`populate()`); it is
+ * a no-op for demos whose orchestrator has no governed side (LoanPro), so the
+ * UI no longer exposes it — kept for API completeness / SecureBank.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";

@@ -118,6 +118,11 @@ async def findings(check_id: str = "", family: str = "", limit: int = 100, offse
     return await asyncio.to_thread(store.list_findings, check_id=check_id, family=family, limit=limit, offset=offset)
 
 
+@app.get("/eval/conformance")
+async def conformance(limit: int = 100, offset: int = 0):
+    return await asyncio.to_thread(store.list_conformance, limit=limit, offset=offset)
+
+
 @app.get("/eval/sessions/{session_id}/verdicts")
 async def session_verdicts(session_id: str, status: str = ""):
     result = await asyncio.to_thread(store.list_verdicts, session_id=session_id, status=status, limit=500)

@@ -93,7 +93,10 @@ function WhatWentWrong({ r }: { r: EvalVerdict }) {
   );
 }
 
-function FindingsSection() {
+// `initialEffect` lets the Overview's effect tiles deep-link here prefiltered
+// (block / approval_required / flag); it re-applies whenever it changes so a
+// second click from the Overview isn't ignored.
+function FindingsSection({ initialEffect = "" }: { initialEffect?: string }) {
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -104,9 +107,10 @@ function FindingsSection() {
   const [eventId, setEventId] = useState("");
   const [family, setFamily] = useState("");
   const [checkId, setCheckId] = useState("");
-  const [effect, setEffect] = useState("");
+  const [effect, setEffect] = useState(initialEffect);
   const [policyNum, setPolicyNum] = useState("");
   const [q, setQ] = useState("");
+  useEffect(() => { setEffect(initialEffect); if (initialEffect) setRange(null); }, [initialEffect]);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -260,8 +264,17 @@ function FindingsSection() {
   );
 }
 
-export default function DecisionTraces({ active = true, demo }: { active?: boolean; demo: DemoConfig }) {
-  const [section, setSection] = useState<"decisions" | "findings">("decisions");
+export type TracesSection = "decisions" | "findings";
+
+// `section`/`onSection` make the Decisions|Findings sub-nav controllable
+// (App.tsx lifts it so the Overview can deep-link straight into Findings);
+// uncontrolled fallback keeps the component usable standalone.
+export default function DecisionTraces({ active = true, demo, section: controlled, onSection, findingsEffect }: {
+  active?: boolean; demo: DemoConfig; section?: TracesSection; onSection?: (s: TracesSection) => void; findingsEffect?: string;
+}) {
+  const [internal, setInternal] = useState<TracesSection>("decisions");
+  const section = controlled ?? internal;
+  const setSection = (s: TracesSection) => { setInternal(s); onSection?.(s); };
   const roleAgents = demo.roleAgents;
   const [traces, setTraces] = useState<Trace[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -342,7 +355,7 @@ export default function DecisionTraces({ active = true, demo }: { active?: boole
         <button className={`pf-oob-view ${section === "decisions" ? "active" : ""}`} onClick={() => setSection("decisions")}>Decisions</button>
         <button className={`pf-oob-view ${section === "findings" ? "active" : ""}`} onClick={() => setSection("findings")}>Findings</button>
       </div>
-      {section === "findings" && <FindingsSection />}
+      {section === "findings" && <FindingsSection initialEffect={findingsEffect} />}
       {section === "decisions" && <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">
@@ -412,7 +425,7 @@ export default function DecisionTraces({ active = true, demo }: { active?: boole
         )}
         {status !== "error" && filtered.length === 0 && (
           <div className="pf-dash-feed-status">
-            {traces.length === 0 ? "No decisions recorded yet — populate from the demo on the Overview tab." : "No decisions match these filters."}
+            {traces.length === 0 ? "No governed decisions recorded — this log fills only for demos with a governed orchestrator (see the Findings tab for shadow-evaluation evidence)." : "No decisions match these filters."}
           </div>
         )}
         {filtered.length > 0 && (

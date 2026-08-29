@@ -31,7 +31,9 @@ type SeriesPoint = {
   bucket: string; traces: number; spans: number; errors: number; llm_calls: number; tokens: number;
   tool_calls: number; p95_ms: number;
 };
-type Overview = {
+// Exported (as OobOverview/OobStatus/SessionRow/PopulationRow) for
+// components/Overview.tsx, which reads the same /oob/* shapes.
+export type Overview = {
   kpis: Partial<Kpis>;
   by_service: { service: string; spans: number; traces: number; errors: number; p50_ms: number; p95_ms: number }[];
   by_kind: { kind: string; spans: number; errors: number; p50_ms: number }[];
@@ -61,19 +63,19 @@ type Span = {
   scenario_id: string; tool_name: string;
   session_id?: string; user_id?: string; user_role?: string; channel?: string; intent_name?: string;
 };
-type SessionRow = {
+export type SessionRow = {
   session_id: string; start_time: string; end_time: string; duration_ms: number; user_id: string; role: string;
   channel: string; scenario_id: string; variant: string; family: string; checks: string; turns: number;
   tool_calls: number; llm_calls: number; off_catalog_calls: number; writes: number; errors: number;
   tokens_total: number; span_count: number; trace_ids: string[]; tools: string[]; intents: string[];
   first_input: string; last_output: string; project: string;
 };
-type PopulationRow = {
+export type PopulationRow = {
   scenario_id: string; variant: string; sessions: number; distinct_shapes: number; avg_tool_calls: number;
   avg_writes: number; avg_errors: number; last_run: string;
 };
 type Facets = { services: string[]; kinds: string[]; tools: string[]; scenarios: string[]; projects: string[]; models: string[]; roles?: string[]; channels?: string[]; intents?: string[] };
-type Status = {
+export type Status = {
   clickhouse: { ok: boolean; url: string; database: string; spans?: number; traces?: number; from_phoenix?: number; from_otlp?: number; oldest?: string; newest?: string };
   phoenix: { enabled: boolean; endpoint: string; projects: string[]; poll_seconds: number; lookback_seconds: number; polls: number; ingested_total: number; excluded_inline_total: number; unprovable_dropped: number; held_for_parent: number; exclude: { attr_prefixes: string[]; span_names: string[]; services: string[]; strip_attr_prefixes: string[] }; last_sync: string | null; last_error: string; watermarks: Record<string, string | null> };
   otlp: { endpoint: string; api_key_required: boolean; requests: number; spans: number; excluded_inline: number; last: string | null; last_error: string };
@@ -117,6 +119,20 @@ export type ConformanceTag = {
   evidence_span_ids: string[]; engine_version: string; rule_pack_version: string;
   catalog_version: string; evaluated_at: string;
 };
+// GET /eval/status (eval-engine/evalengine/api.py) - read by the Overview
+// page's hero. Every field optional-safe: a stack with no rule pack/catalog
+// configured reports rule_count/intent_count 0 and `configured: false`.
+export type EvalStatus = {
+  clickhouse: { ok: boolean; verdicts?: number; findings?: number; conformance_tags?: number; sessions_evaluated?: number };
+  worker: {
+    polls: number; evaluated_total: number; skipped_total: number; last_poll: string | null; last_error: string;
+    quiet_seconds: number; poll_seconds: number;
+    rule_pack: { configured: boolean; source_skill: string; source_skill_version: string; rule_count: number };
+    intent_catalog: { configured: boolean; version: string; intent_count: number };
+  };
+  profiles: { rule_pack: { path: string; rule_count: number }; intent_catalog: { path: string; intent_count: number } };
+  engine_version: string; mode: string; started_at: string;
+};
 
 // A rule pack's materialized source citation block (Hard Rule 17,
 // eval-engine/CLAUDE.md) - verbatim policy document/section/quoted text.
@@ -150,22 +166,25 @@ const VIEW_LABEL: Record<View, string> = {
   overview: "Overview", sessions: "Sessions", traces: "Traces", llm: "LLM", ingestion: "Ingestion",
 };
 
-const num = (n: number | undefined | null) => (n ?? 0).toLocaleString();
-const ms = (n: number | undefined | null) => {
+// Formatters + getJSON/qs + the Kpi/Bars/Empty primitives below are exported
+// for components/Overview.tsx (same app; Dashboard.tsx used to carry its own
+// near-duplicate num/timeAgo - one copy now).
+export const num = (n: number | undefined | null) => (n ?? 0).toLocaleString();
+export const ms = (n: number | undefined | null) => {
   const v = Number(n ?? 0);
   if (!Number.isFinite(v)) return "—";
   if (v >= 1000) return `${(v / 1000).toFixed(2)}s`;
   return `${Math.round(v)}ms`;
 };
 const usd = (n: number | undefined) => (n ? `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}` : "$0.00");
-const pct = (n: number | undefined) => `${Math.round((n ?? 0) * 100)}%`;
+export const pct = (n: number | undefined) => `${Math.round((n ?? 0) * 100)}%`;
 const when = (iso: string | null | undefined) => {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—"
     : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 };
-const ago = (iso: string | null | undefined) => {
+export const ago = (iso: string | null | undefined) => {
   if (!iso) return "never";
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
   if (s < 60) return `${s}s ago`;
@@ -182,7 +201,7 @@ const kindTone = (k: string) => (
   k === "RETRIEVER" ? "retriever" : "span"
 );
 
-async function getJSON<T>(url: string): Promise<T> {
+export async function getJSON<T>(url: string): Promise<T> {
   const res = await fetch(url);
   const text = await res.text();
   let body: any = {};
@@ -194,7 +213,7 @@ async function getJSON<T>(url: string): Promise<T> {
   return body as T;
 }
 
-function qs(params: Record<string, string | number | undefined | null>): string {
+export function qs(params: Record<string, string | number | undefined | null>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === "" ) continue;
@@ -206,7 +225,7 @@ function qs(params: Record<string, string | number | undefined | null>): string 
 
 /* ── small presentational bits ──────────────────────────────────────────── */
 
-function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+export function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
   return (
     <div className="pf-oob-kpi">
       <div className={`pf-oob-kpi-value ${tone ?? ""}`}>{value}</div>
@@ -221,11 +240,11 @@ function KindBadge({ kind }: { kind: string }) {
   return <span className={`pf-oob-kind ${kindTone(k)}`}>{k}</span>;
 }
 
-function Empty({ text }: { text: string }) {
+export function Empty({ text }: { text: string }) {
   return <div className="pf-oob-empty">{text}</div>;
 }
 
-function Bars({ rows, label, value, max, tone }: {
+export function Bars({ rows, label, value, max, tone }: {
   rows: any[]; label: (r: any) => string; value: (r: any) => number; max?: number; tone?: (r: any) => string;
 }) {
   const m = max ?? Math.max(1, ...rows.map(value));

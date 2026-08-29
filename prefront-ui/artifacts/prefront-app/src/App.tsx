@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import Dashboard from "./components/Dashboard";
-import DecisionTraces from "./components/DecisionTraces";
+import Overview from "./components/Overview";
+import DecisionTraces, { type TracesSection } from "./components/DecisionTraces";
 import IntentFlows from "./components/IntentFlows";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
@@ -143,7 +143,7 @@ function IconSettings() {
 }
 
 const PAGE_META: Record<string, { title: string; desc: string }> = {
-  dashboard:{ title: "Overview",          desc: "Decision intelligence — can I trust what my agents are doing right now?" },
+  dashboard:{ title: "Overview",          desc: "Moving agents from demo to production — every action follows business rules, uses approved context, and produces decision evidence." },
   traces:   { title: "Decision Traces",  desc: "The full governance decision log — filter every recorded decision by outcome, caller, role, intent, or policy." },
   flows:    { title: "Intent Flows",     desc: "Profile which intents each user invokes, in what order, within a session." },
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
@@ -169,6 +169,10 @@ function ReviewerDot({ name, color, focused }: { name: string; color: string; fo
 export default function App() {
   const { demo, demoId, openChooser } = useDemo();
   const [tab, setTab] = useState("dashboard");
+  // Lifted so the Overview can deep-link into Decision Traces > Findings,
+  // optionally prefiltered by effect (block / approval_required / flag).
+  const [tracesSection, setTracesSection] = useState<TracesSection>("decisions");
+  const [findingsEffect, setFindingsEffect] = useState("");
   const [graphMounted, setGraphMounted] = useState(false);
   const [bizGraphMounted, setBizGraphMounted] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
@@ -332,10 +336,13 @@ export default function App() {
         {/* Tab bodies — keyed on the active demo so per-tab state resets on switch */}
         <div className="pf-body" key={demoId}>
           <div className={tab === "dashboard" ? "" : "tab-hidden"}>
-            <Dashboard demo={demo} onViewAllTraces={() => setTab("traces")} />
+            <Overview demo={demo} active={tab === "dashboard"}
+                      onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setTracesSection("findings"); setTab("traces"); }}
+                      onOpenDecisions={() => { setTracesSection("decisions"); setTab("traces"); }}
+                      onOpenObservability={() => setTab("oob")} />
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
-            <DecisionTraces active={tab === "traces"} demo={demo} />
+            <DecisionTraces active={tab === "traces"} demo={demo} section={tracesSection} onSection={setTracesSection} findingsEffect={findingsEffect} />
           </div>
           <div className={tab === "flows" ? "" : "tab-hidden"}>
             <IntentFlows active={tab === "flows"} demo={demo} />
