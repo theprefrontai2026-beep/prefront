@@ -104,6 +104,12 @@ export type EvalVerdict = {
   // this field existed, or a leftover uuid4 from the brief window it was
   // one (both self-heal forward: a re-evaluated session gets a real serial).
   event_id: string;
+  // The session's first user turn (up to 240 chars), joined in from the
+  // shared `spans` table at read time (ch.py's list_findings, not a stored
+  // eval_verdicts column) - "" for a session with no turn spans yet, or for
+  // routes other than /eval/findings that don't populate it (only that one
+  // does the join).
+  user_query: string;
 };
 export type ConformanceTag = {
   session_id: string; check_id: string; rule_id: string; policy_document: string;

@@ -361,9 +361,36 @@ def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", fa
     return {"verdicts": data, "total": total, "limit": params["limit"], "offset": params["offset"]}
 
 
+def _first_user_messages(session_ids: list[str]) -> dict[str, str]:
+    """The first user turn's text per session_id, read from the shared
+    `spans` table (this service's own read-only access, same as
+    session_spans above) - what the Findings UI shows as "the user query
+    the agent received" alongside each finding. Same `name LIKE 'turn %'` +
+    argMinIf(..., start_time, ...) pattern oob-ingest's own `first_input`
+    column uses (ch.py there), kept independent rather than shared (separate
+    Docker build context, no shared code between the two services - the
+    established convention in this repo)."""
+    if not session_ids:
+        return {}
+    data = rows(
+        f"""
+        SELECT session_id,
+               argMinIf(substring(input_value, 1, 240), start_time, name LIKE 'turn %%') AS user_query
+        FROM {SPANS_T}
+        WHERE session_id IN %(ids)s
+        GROUP BY session_id
+        """,
+        {"ids": session_ids},
+    )
+    return {r["session_id"]: r["user_query"] for r in data if r.get("user_query")}
+
+
 def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0) -> dict[str, Any]:
     result = list_verdicts(status="violated", check_id=check_id, family=family, limit=limit, offset=offset)
     result["findings"] = result.pop("verdicts")
+    queries = _first_user_messages(sorted({f["session_id"] for f in result["findings"]}))
+    for f in result["findings"]:
+        f["user_query"] = queries.get(f["session_id"], "")
     return result
 
 

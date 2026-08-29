@@ -451,29 +451,41 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   `SessionFlyout` for `DecisionTraces.tsx` to import (`SessionDetail` was
   already exported) - same app, so sharing code across this file boundary is
   fine, unlike the deliberate non-sharing between `prefront-app` and `verdict`.
-  Every displayed column is filterable (time range, event id, family, check,
-  effect, policy section, and a free-text search over detail/policy text) -
-  fetches the most recent 500 findings once (server-sorted, the endpoint's own
-  cap) and filters/paginates entirely client-side, same pattern the Decisions
-  log above it already used (fetch a recent slice, slice-and-dice in the
-  browser) rather than a filter query param per column. `session_id` is
-  deliberately NOT a displayed column (only used internally to open the
-  flyout) - per explicit request.
-- **Each finding states what went wrong in plain language, plus its policy
-  citation and a verbatim quote when the check has one.** `Verdict.detail`
-  (already human-readable, e.g. `"rule R-KYC-PRECONDITION: quote_terms fired
-  without 'verify_kyc' established first"`) renders above a styled blockquote
-  of `source.text` (`.pf-find-quote`) when present, with `source.document`/
-  `section` cited below the quote. Family 1 always has quotable `text` (the
-  rule pack's materialized source citation, Hard Rule 17); Family 3 has a
-  `section` with NO `text` (the intent catalog only carries section numbers,
-  not policy prose) - shown as a plain citation, never a fabricated quote;
-  Family 2 has neither - shown as `—`, correctly, not an error. The Policy
-  filter's dropdown values are the LEADING numeric token of each `/`- or
-  `,`-separated clause in `source.section` (`policyNumbers()` in
-  `DecisionTraces.tsx`) - e.g. `"13.2 Verify Before Quoting / 5.3 KYC Refresh
-  Requirement"` yields filter options `13.2` and `5.3`; the table cell still
-  shows the full string with titles.
+  Every displayed column is filterable, PLUS two that are filterable but
+  deliberately not shown as columns - Check and Policy section still have
+  their own dropdowns (the check/policy `useMemo`s and `<Select>`s never
+  went away), they're just not rendered per-row any more, per explicit
+  request to narrow the table. Columns, left to right: Event, When, Family,
+  Effect, User query, What went wrong. `session_id` is not a column either
+  (only used internally to open the flyout). Fetches the most recent 500
+  findings once (server-sorted, the endpoint's own cap) and filters/
+  paginates entirely client-side, same pattern the Decisions log above it
+  already used, rather than a filter query param per column.
+- **"User query" is the session's first user turn** - joined in from the
+  shared `spans` table at READ time, not a stored `eval_verdicts` column:
+  `ch.py`'s `_first_user_messages(session_ids)` (eval-engine) runs one extra
+  ClickHouse query per `list_findings` call (`argMinIf(substring(input_value,
+  1, 240), start_time, name LIKE 'turn %%')` grouped by `session_id` - the
+  literal `%` in `LIKE 'turn %%'` needs the double-`%%` because
+  clickhouse_connect's client-side parameter binding runs the SQL string
+  through Python `%`-formatting; a single `%` there raised `ValueError:
+  unsupported format character` in a live run before this was caught), same
+  pattern oob-ingest's own `first_input` column already uses for its Sessions
+  view, kept as an independent copy rather than shared code (separate Docker
+  build context, the established convention). Empty string, not an error,
+  for a session with no turn spans (yet, or ever).
+- **Every column is width-capped (`table-layout: fixed`, `.pf-find-table`
+  `nth-child` widths) with the full value on hover** (a native `title`
+  attribute, not a custom tooltip component) - a long user query or a long
+  `detail` sentence truncates with an ellipsis instead of blowing out the
+  table. `WhatWentWrong` (the "What went wrong" cell) now renders ONLY
+  `Verdict.detail`, truncated the same way - the policy citation + verbatim
+  quote that used to render underneath it in this cell moved to the flyout's
+  top summary exclusively (`SessionDetail`'s `findingDetail`/`findingSource`,
+  see below), per explicit request to keep this column to "just the brief
+  one-liner." Family 1 always has a quotable `source.text` there (Hard Rule
+  17); Family 3 has a `section` with no quotable text (the intent catalog
+  only carries section numbers); Family 2 has neither.
 - **Clicking a Findings row opens a `SessionFlyout`**, a slide-in side panel
   (`.pf-flyout*` CSS, ported into `prefront-app/src/index.css` from Verdict's
   `SessionRunner.tsx`/`index.css` — no shared code between the two apps, so

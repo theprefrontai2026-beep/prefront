@@ -82,21 +82,14 @@ function findingWhen(iso: string): string {
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+// Table cell version: just the one-liner, truncated to fit a fixed column
+// width with the full text on hover (native title tooltip) - the full
+// policy-quote corroboration lives in the flyout now (SessionDetail's
+// findingDetail/findingSource, opened by clicking the row), not repeated
+// here where every column is deliberately kept narrow.
 function WhatWentWrong({ r }: { r: EvalVerdict }) {
-  const src = parseSource(r.source);
   return (
-    <div className="pf-find-wrong">
-      <div className="pf-find-detail">{r.detail}</div>
-      {src?.text && (
-        <blockquote className="pf-find-quote">
-          “{src.text.trim()}”
-          <cite>{src.document}{src.section ? ` · §${src.section}` : ""}</cite>
-        </blockquote>
-      )}
-      {!src?.text && src?.section && (
-        <div className="pf-find-cite muted">{src.document} · §{src.section}</div>
-      )}
-    </div>
+    <div className="pf-tr-truncate pf-find-detail" title={r.detail}>{r.detail}</div>
   );
 }
 
@@ -232,26 +225,27 @@ function FindingsSection({ onOpenTrace }: { onOpenTrace: (id: string) => void })
           </div>
         )}
         {filtered.length > 0 && (
-          <table className="pf-dash-table pf-tr-table">
+          <table className="pf-dash-table pf-tr-table pf-find-table">
+            {/* Check and Policy stay filterable above (families/checks/policies
+               dropdowns) but aren't shown as columns here - narrower table,
+               less redundant with the one-liner + flyout. Every column is
+               width-capped (.pf-tr-truncate) with the full value on hover
+               (native title tooltip) so long text never blows out the layout. */}
             <thead>
-              <tr><th>Event</th><th>When</th><th>Family</th><th>Check</th><th>Effect</th><th>Policy</th><th>What went wrong</th></tr>
+              <tr><th>Event</th><th>When</th><th>Family</th><th>Effect</th><th>User query</th><th>What went wrong</th></tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => {
-                const src = parseSource(r.source);
-                return (
-                  <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
-                      onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source })}>
-                    <td className="mono">{r.event_id || "—"}</td>
-                    <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
-                    <td className="mono">{r.family}</td>
-                    <td><code className="pf-tr-intent">{r.check_id}</code></td>
-                    <td><span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span></td>
-                    <td>{src?.section ? <code className="pf-tr-policy">§{src.section}</code> : <span className="muted">—</span>}</td>
-                    <td><WhatWentWrong r={r} /></td>
-                  </tr>
-                );
-              })}
+              {filtered.map((r, i) => (
+                <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
+                    onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source })}>
+                  <td className="mono pf-tr-truncate narrow" title={r.event_id || undefined}>{r.event_id || "—"}</td>
+                  <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
+                  <td className="mono pf-tr-truncate narrow" title={r.family}>{r.family}</td>
+                  <td><span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span></td>
+                  <td className="pf-tr-truncate" title={r.user_query || undefined}>{r.user_query || <span className="muted">—</span>}</td>
+                  <td><WhatWentWrong r={r} /></td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
