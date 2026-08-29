@@ -1299,11 +1299,17 @@ select { cursor: pointer; }
    query, a detail sentence) never blows out the table - the full value is
    still available via the native title tooltip on hover. */
 .pf-find-table { table-layout: fixed; width: 100%; }
+/* table-layout: fixed only caps each CELL's box - it does nothing to a
+   child element wider than that box (a long chip just renders past the
+   edge, visually overlapping the next column). overflow: hidden on every
+   cell is the actual clip; APPROVAL_REQUIRED (the longest Effect value)
+   sized the Effect column's width so it never needs that clip in practice. */
+.pf-find-table td { overflow: hidden; }
 .pf-find-table th:nth-child(1), .pf-find-table td:nth-child(1) { width: 64px; }   /* Event */
 .pf-find-table th:nth-child(2), .pf-find-table td:nth-child(2) { width: 132px; }  /* When */
 .pf-find-table th:nth-child(3), .pf-find-table td:nth-child(3) { width: 70px; }   /* Family */
-.pf-find-table th:nth-child(4), .pf-find-table td:nth-child(4) { width: 90px; }   /* Effect */
-.pf-find-table th:nth-child(5), .pf-find-table td:nth-child(5) { width: 26%; }    /* User query */
+.pf-find-table th:nth-child(4), .pf-find-table td:nth-child(4) { width: 140px; }  /* Effect - fits "APPROVAL_REQUIRED" on one line */
+.pf-find-table th:nth-child(5), .pf-find-table td:nth-child(5) { width: 22%; }    /* User query */
 .pf-find-table th:nth-child(6), .pf-find-table td:nth-child(6) { width: auto; }   /* What went wrong */
 .pf-tr-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .pf-tr-truncate.narrow { max-width: 90px; }

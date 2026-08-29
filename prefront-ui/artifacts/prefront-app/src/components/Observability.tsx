@@ -173,7 +173,6 @@ const ago = (iso: string | null | undefined) => {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 };
-const short = (id: string, n = 8) => (id || "").slice(0, n);
 const parseList = (s: string): string[] => {
   if (!s) return [];
   try { const v = JSON.parse(s); return Array.isArray(v) ? v.map(String) : [String(v)]; } catch { return [s]; }
@@ -619,9 +618,9 @@ function SpanInspector({ span }: { span: Span }) {
 // the value-provenance graph is built from. No verdicts here: those belong to
 // the evaluator, and this surface is deliberately just the evidence.
 
-function SessionsView({ since, project, facets, refreshKey, initialSession, onOpenSession, onOpenTrace }: {
+function SessionsView({ since, project, facets, refreshKey, initialSession, onOpenSession }: {
   since: number; project: string; facets: Facets | null; refreshKey: number;
-  initialSession: string | null; onOpenSession: (id: string | null) => void; onOpenTrace: (id: string) => void;
+  initialSession: string | null; onOpenSession: (id: string | null) => void;
 }) {
   const [role, setRole] = useState("");
   const [channel, setChannel] = useState("");
@@ -699,7 +698,7 @@ function SessionsView({ since, project, facets, refreshKey, initialSession, onOp
           <button className="pf-btn sm" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}>Next ›</button>
         </div>
       </section>
-      {initialSession && <SessionDetail sessionId={initialSession} refreshKey={refreshKey} onClose={() => onOpenSession(null)} onOpenTrace={onOpenTrace} />}
+      {initialSession && <SessionDetail sessionId={initialSession} refreshKey={refreshKey} onClose={() => onOpenSession(null)} />}
       {pop.length > 0 && (
         <section className="pf-panel">
           <div className="pf-oob-panel-head"><div><h3>Population · action shape per scenario</h3><div className="pf-oob-subtle">How many distinct tool-call shapes the same scenario produced — the raw material for outcome_consistency and invocation_drift (v1 vs v2).</div></div></div>
@@ -755,7 +754,7 @@ function stepsOf(spans: Span[]): Step[] {
   return out;
 }
 
-export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDetail, findingSource, onClose, onOpenTrace }: {
+export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDetail, findingSource, onClose }: {
   sessionId: string; refreshKey: number; initialSpanId?: string | null;
   // Set only when opened from a Findings row (SessionFlyout below) - the
   // finding's own one-liner + policy citation, shown prominently at the TOP
@@ -763,7 +762,7 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   // Sessions/Traces call sites, which have no single "this is the finding"
   // to lead with.
   findingDetail?: string; findingSource?: string;
-  onClose: () => void; onOpenTrace: (id: string) => void;
+  onClose: () => void;
 }) {
   const [spans, setSpans] = useState<Span[]>([]);
   const [err, setErr] = useState("");
@@ -792,8 +791,6 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   const steps = useMemo(() => stepsOf(spans), [spans]);
   const root = spans.find((s) => s.name.startsWith("session ")) ?? spans.find((s) => /^turn /.test(s.name)) ?? spans[0];
   const sel = spans.find((s) => s.span_id === selected) ?? null;
-  const tools = spans.filter((s) => s.kind === "TOOL");
-  const traces = Array.from(new Set(spans.map((s) => s.trace_id)));
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
   const policy = parseList(root?.attributes["scenario.policy"] ?? "");
   const violated = verdicts.filter((v) => v.status !== "satisfied");
@@ -878,12 +875,6 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           </details>
         )}
         <div className="pf-oob-actions">
-          {traces.map((t) => (
-            <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}
-                   title={`Open the raw OTEL span waterfall for trace ${t} in the Traces view - parent/child hierarchy and per-span timing, not shown in the curated steps above.`}>
-              Raw trace {short(t)}
-            </button>
-          ))}
           <button className="pf-btn sm" onClick={onClose}>Close</button>
         </div>
       </div>
@@ -898,10 +889,10 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */
-export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, refreshKey, onClose, onOpenTrace }: {
+export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, refreshKey, onClose }: {
   sessionId: string; initialSpanId?: string | null; eventId?: string | null;
   findingDetail?: string; findingSource?: string; refreshKey: number;
-  onClose: () => void; onOpenTrace: (id: string) => void;
+  onClose: () => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -922,8 +913,7 @@ export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail
         </div>
         <div className="pf-flyout-body">
           <SessionDetail sessionId={sessionId} refreshKey={refreshKey} initialSpanId={initialSpanId}
-                        findingDetail={findingDetail} findingSource={findingSource}
-                        onClose={onClose} onOpenTrace={(id) => { onOpenTrace(id); onClose(); }} />
+                        findingDetail={findingDetail} findingSource={findingSource} onClose={onClose} />
         </div>
       </aside>
     </>
@@ -1155,7 +1145,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
       {err && <div className="pf-oob-error">Observability backend: {err}</div>}
 
       {view === "overview" && <OverviewView data={overview} />}
-      {view === "sessions" && <SessionsView since={since} project={project} facets={facets} refreshKey={tick} initialSession={openSess} onOpenSession={goSession} onOpenTrace={goTrace} />}
+      {view === "sessions" && <SessionsView since={since} project={project} facets={facets} refreshKey={tick} initialSession={openSess} onOpenSession={goSession} />}
       {view === "traces" && <TracesView since={since} project={project} facets={facets} refreshKey={tick} initialTrace={openTrace} onOpenTrace={goTrace} />}
       {view === "llm" && <LlmView data={llm} onOpenTrace={goTrace} />}
       {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}

@@ -547,14 +547,38 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   tool call. Live-verified: the same session that prompted this (24
   conformance tags, previously several wrapped lines of huge chips) now
   shows three compact chips + one "▸ 13 checks satisfied" toggle; hovering
-  a collapsed chip still surfaces its full section citation. Same pass also
-  dropped the passive "· trace(s) {ids}" text from the summary line - purely
-  redundant with the "Raw trace {id}" button right below it, which (unlike
-  static text) actually DOES something: closes the flyout and jumps to
-  Observability's Traces view for the raw OTEL span waterfall
-  (parent/child hierarchy, per-span timing) - genuinely different
-  information from the curated steps above it, not just the same id
-  repeated, which the button's new label and `title` now say explicitly.
+  a collapsed chip still surfaces its full section citation.
+- **The trace id/button are gone from `SessionDetail` entirely now** - first
+  the passive "· trace(s) {ids}" summary-line text (purely redundant with a
+  button showing the same id right below it), then the button itself
+  (`onOpenTrace`, "jump to the raw OTEL span waterfall in Observability's
+  Traces view") - per explicit request, since the full trace is already one
+  click away in this SAME panel (the collapsed `<details>` above). Removing
+  the button meant `onOpenTrace` was never invoked by anything in
+  `SessionDetail` any more, so the whole now-dead plumbing chain came out
+  too rather than leaving an orphaned prop: `SessionDetail`'s
+  `onOpenTrace` prop, `SessionFlyout`'s (it only ever forwarded to
+  `SessionDetail`), `SessionsView`'s (same), the
+  `onOpenTrace={goTrace}` passed to `SessionsView` from the root
+  `Observability` component (`goTrace` itself stays - `TracesView`/
+  `LlmView` still use it independently), `DecisionTraces`'s
+  `onOpenObservability` prop, and `App.tsx`'s
+  `onOpenObservability={() => setTab("oob")}` wiring - four files, one
+  coherent removal. Also caught two variables in `SessionDetail` that had
+  quietly gone dead in the PREVIOUS pass (`tools`/`short()`'s only callers
+  were the already-removed "N tool calls" text and this button) and removed
+  those too.
+- **A real overflow bug, not just clutter: the Effect chip
+  (`APPROVAL_REQUIRED`, the longest value) was wider than its column and
+  visually overlapped the User Query text next to it** -
+  `table-layout: fixed` caps a cell's own box but does nothing to a child
+  element wider than that box, and no cell had `overflow: hidden` to clip
+  it. Fixed both ends: `.pf-find-table td { overflow: hidden }` as a general
+  clip (defends against any future case), and the Effect column widened
+  from 90px to 140px so `APPROVAL_REQUIRED` fits on one line in practice, rather
+  than relying on the clip to hide it. Live-verified: filtered Findings to
+  `effect=approval_required` and confirmed every row's chip now sits fully
+  inside its own column with no overlap.
 - **"Clear ClickHouse" (Observability's Ingestion view) clears ALL FIVE
   ClickHouse tables, not just oob-ingest's.** `DELETE /oob/spans`
   (`ch.truncate()`, oob-ingest) only ever cleared `spans`/`ingest_state` — it

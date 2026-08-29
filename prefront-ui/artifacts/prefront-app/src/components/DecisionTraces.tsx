@@ -93,7 +93,7 @@ function WhatWentWrong({ r }: { r: EvalVerdict }) {
   );
 }
 
-function FindingsSection({ onOpenTrace }: { onOpenTrace: (id: string) => void }) {
+function FindingsSection() {
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -254,13 +254,13 @@ function FindingsSection({ onOpenTrace }: { onOpenTrace: (id: string) => void })
       {flyout && (
         <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId}
                        findingDetail={flyout.detail} findingSource={flyout.source} refreshKey={0}
-                       onClose={() => setFlyout(null)} onOpenTrace={onOpenTrace} />
+                       onClose={() => setFlyout(null)} />
       )}
     </>
   );
 }
 
-export default function DecisionTraces({ active = true, demo, onOpenObservability }: { active?: boolean; demo: DemoConfig; onOpenObservability?: () => void }) {
+export default function DecisionTraces({ active = true, demo }: { active?: boolean; demo: DemoConfig }) {
   const [section, setSection] = useState<"decisions" | "findings">("decisions");
   const roleAgents = demo.roleAgents;
   const [traces, setTraces] = useState<Trace[]>([]);
@@ -342,7 +342,7 @@ export default function DecisionTraces({ active = true, demo, onOpenObservabilit
         <button className={`pf-oob-view ${section === "decisions" ? "active" : ""}`} onClick={() => setSection("decisions")}>Decisions</button>
         <button className={`pf-oob-view ${section === "findings" ? "active" : ""}`} onClick={() => setSection("findings")}>Findings</button>
       </div>
-      {section === "findings" && <FindingsSection onOpenTrace={() => onOpenObservability?.()} />}
+      {section === "findings" && <FindingsSection />}
       {section === "decisions" && <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">
