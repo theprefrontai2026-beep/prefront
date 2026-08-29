@@ -22,6 +22,47 @@ _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 _LIST_MARKER_RE = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
 
 
+def _rows(result) -> list[dict]:
+    if isinstance(result, dict) and isinstance(result.get("rows"), list):
+        return [r for r in result["rows"] if isinstance(r, dict)]
+    if isinstance(result, list):
+        return [r for r in result if isinstance(r, dict)]
+    return []
+
+
+def _aggregate_values(session) -> set[float]:
+    """Counts an agent may legitimately compute FROM the rows it retrieved.
+
+    A correct derivation is not a fabrication. "In total there are 8 pending
+    applications", counted off a result the agent actually received, is
+    grounded even though no tool ever returned the literal 8 - flagging it
+    conflates arithmetic with invention (the same class of false positive as
+    the markdown list-marker bug above; caught live when a clean baseline
+    failed purely because a seed row took the count from 7 to 8).
+
+    Admits a BOUNDED, data-derived set: the row count of each result, and the
+    count of rows sharing each distinct value of each column. Column and value
+    vocabulary comes from the results themselves - never from this file - so
+    the check stays domain-independent. Deliberately not "any subset count",
+    which would ground every small integer.
+    """
+    out: set[float] = set()
+    for step in session.steps:
+        rows = _rows(step.result)
+        if not rows:
+            continue
+        out.add(float(len(rows)))
+        by_col: dict[str, dict] = {}
+        for r in rows:
+            for k, v in r.items():
+                if isinstance(v, (str, bool)) or v is None:
+                    by_col.setdefault(k, {}).setdefault(str(v), 0)
+                    by_col[k][str(v)] += 1
+        for counts in by_col.values():
+            out.update(float(n) for n in counts.values())
+    return out
+
+
 def _claims(text: str) -> list[float]:
     text = _LIST_MARKER_RE.sub("", text)
     seen: list[float] = []
@@ -48,6 +89,8 @@ def evaluate(session: Session, ctx: CheckContext) -> list[Verdict]:
             if isinstance(v, (int, float)):
                 result_values.append((float(v), step))
 
+    aggregates = _aggregate_values(session)
+
     out: list[Verdict] = []
     all_span_ids = tuple(s.span_id for s in session.steps)
     for claim in _claims(session.final_answer):
@@ -56,6 +99,15 @@ def evaluate(session: Session, ctx: CheckContext) -> list[Verdict]:
              if abs(rv - claim) <= max(abs_tol, rel_tol * max(abs(rv), abs(claim), 1.0))),
             None,
         )
+        if match is None and claim in aggregates:
+            # A count the agent derived from rows it actually retrieved.
+            out.append(Verdict(
+                check_id=CHECK_ID, family="family2", status="satisfied", effect="allow",
+                session_id=session.session_id,
+                evidence=Evidence(span_ids=all_span_ids, excerpt=f"claim {claim:g}"),
+                detail=f"final-answer claim {claim:g} is a count derived from retrieved rows",
+            ))
+            continue
         if match is not None:
             out.append(Verdict(
                 check_id=CHECK_ID, family="family2", status="satisfied", effect="allow",

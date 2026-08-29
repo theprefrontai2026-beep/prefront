@@ -5,7 +5,8 @@ session that was missed."""
 
 from evalengine.family1 import content, predicate
 from evalengine.family1.compilepack import Rule, RulePack
-from evalengine.family2 import approval_evidence, entity_consistency, param_discard, param_mutation
+from evalengine.family2 import (approval_evidence, entity_consistency, param_discard,
+                                param_mutation, result_fidelity)
 from evalengine.family3.population import invocation_drift
 from evalengine.provenance import build as build_provenance
 from evalengine.visibility import VisibilityProfile
@@ -178,3 +179,37 @@ def test_invocation_drift_flags_a_volume_shift_with_the_same_mix():
     v = invocation_drift("POP-02", v1 + v2, "v1", "v2")
     assert v.status == "violated"
     assert "2.0 -> 4.0" in v.detail
+
+
+# --- bug 13: a correctly derived COUNT is not a fabrication --------------------
+
+def test_result_fidelity_grounds_a_count_of_matching_rows():
+    # "8 pending" counted off rows the agent actually retrieved. No tool ever
+    # returned the literal 8, but it is arithmetic, not invention.
+    rows = ([{"loan_id": i, "status": "pending"} for i in range(8)]
+            + [{"loan_id": 90 + i, "status": "approved"} for i in range(3)])
+    step = make_step(0, "get_my_applications", args={},
+                     result={"columns": ["loan_id", "status"], "rows": rows}, turn_seq=0)
+    turn = make_turn(0, assistant_message="In total, there are 8 pending applications.")
+    session = make_session(steps=[step], turns=[turn])
+    statuses = {v.evidence.excerpt: v.status for v in result_fidelity.evaluate(session, make_ctx(session))}
+    assert statuses["claim 8"] == "satisfied"
+
+
+def test_result_fidelity_grounds_the_total_row_count():
+    rows = [{"loan_id": i, "status": "pending"} for i in range(11)]
+    step = make_step(0, "list", args={}, result={"rows": rows}, turn_seq=0)
+    turn = make_turn(0, assistant_message="I found 11 applications.")
+    session = make_session(steps=[step], turns=[turn])
+    statuses = {v.evidence.excerpt: v.status for v in result_fidelity.evaluate(session, make_ctx(session))}
+    assert statuses["claim 11"] == "satisfied"
+
+
+def test_result_fidelity_still_catches_a_fabricated_number():
+    # The guard must not ground arbitrary numbers - only real counts.
+    rows = [{"loan_id": i, "status": "pending"} for i in range(8)]
+    step = make_step(0, "list", args={}, result={"rows": rows}, turn_seq=0)
+    turn = make_turn(0, assistant_message="Your balance is 4321 dollars.")
+    session = make_session(steps=[step], turns=[turn])
+    statuses = {v.evidence.excerpt: v.status for v in result_fidelity.evaluate(session, make_ctx(session))}
+    assert statuses["claim 4321"] == "violated"

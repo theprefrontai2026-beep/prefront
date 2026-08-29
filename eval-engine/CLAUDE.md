@@ -370,7 +370,7 @@ curl ':8120/eval/sessions/<id>/conformance'
 
 **Phases A-D (steps 1-20) are DONE** — Family 2 built in, Family 1 + Family 3
 wired over their published artifacts, population checks, the grading harness
-(37/37 on the full catalogue), the Findings UI, Preflight, and inline reuse in
+(38/38 on the full catalogue), the Findings UI, Preflight, and inline reuse in
 `semantic-mcp-server`.
 
 **Phase E (steps 21-25) — learned intents — is TODO, not started.** Plan in
@@ -397,7 +397,7 @@ Two constraints from that plan bear directly on code here, if you pick it up:
 ## Live-run status and the bugs those runs found
 
 `loanpro-demo/grading_harness.py` (`make grade-loanpro`) has run the **full
-37-scenario catalogue** against the live stack: **37/37 PASS**, report at
+38-scenario catalogue** against the live stack: **38/38 PASS**, report at
 `loanpro-demo/docs/eval-coverage.md`. Steps 15-19 are done; Phase D / step 18
 (inline reuse in `semantic-mcp-server`) is summarized below.
 
@@ -421,6 +421,7 @@ misbehaving, read this first.
 | 9 | `entity_consistency` | "looked up A, decided B's loan" invisible | it compared id slots across ARGS only; now also reads a subject from a SINGLE-ROW result (multi-row listings ignored) |
 | 10 | `param_discard` | needed two calls to the same tool | added a single-call shape: a user-named value absent from the args whose result rows mix values. Gated to calls that carried ≥1 arg — a parameterless identity-scoped call has no filter to drop |
 | 11 | `ch.session_shapes` | population checks always "consistent" | it filtered every span by `scenario_id`, which only the session ROOT span carries, so shapes came back empty. Resolves session ids first. `invocation_drift` also gained a call-volume term |
+| 13 | `result_fidelity` | a clean baseline failed on a correct answer | a count the agent derived from rows it retrieved ("8 pending applications") appears in no tool result, so it read as fabrication. `_aggregate_values` now grounds a BOUNDED, data-derived set — each result's row count, and the count of rows sharing each distinct value of each column. Not "any subset count", which would ground every small integer. Surfaced when a seed row moved the count 7→8, so the baseline had been passing on LLM phrasing, not robustly |
 | 12 | `content._field_in_text` | never matched prose | `re.escape` leaves `_` unescaped, so `credit_score` never matched "credit score". Field is split on `[\s_-]` and rejoined with `[\s_-]?` |
 
 Two non-engine causes that repeatedly *look* like check bugs, and cost real

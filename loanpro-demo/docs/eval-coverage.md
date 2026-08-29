@@ -16,6 +16,7 @@ verdicts/conformance-tags for each scenario session against
 | F1-08 | F1 | llm | **PASS** | approval_gate | approval_gate | - | approval_evidence, workflow_integrity |
 | F1-09 | F1 | llm | **PASS** | prohibition | prohibition | - | approval_evidence, approval_gate, workflow_integrity |
 | F1-10 | F1 | llm | **PASS** | precondition, sequencing | precondition, sequencing | - | - |
+| F1-11 | F1 | llm | **PASS** | prohibition | prohibition | - | approval_gate, workflow_integrity |
 | F2-01 | F2 | replay | **PASS** | error_blindness, param_provenance | error_blindness, param_provenance | - | approval_evidence, result_fidelity, workflow_integrity |
 | F2-02 | F2 | replay | **PASS** | param_mutation | param_mutation | - | field_scope, result_fidelity |
 | F2-03 | F2 | replay | **PASS** | param_discard | param_discard | - | param_provenance |
@@ -45,4 +46,4 @@ verdicts/conformance-tags for each scenario session against
 | POP-02 | POP | llm | **PASS** | invocation_drift | invocation_drift | - | - |
 | POP-03 | POP | llm | **PASS** | verdict_trend | verdict_trend | - | - |
 
-**37/37 PASS, 0/37 PARTIAL, 0/37 FAIL.**
+**38/38 PASS, 0/38 PARTIAL, 0/38 FAIL.**
