@@ -152,6 +152,18 @@ async def clear():
     return {"ok": True}
 
 
+@app.delete("/oob/phoenix")
+async def clear_phoenix():
+    """Delete the traces Phoenix itself holds (every project but `default`) and
+    reset the poller. Without this, DELETE /oob/spans is only a pause: the next
+    poll re-pulls everything from Phoenix and eval-engine re-evaluates it. The
+    UI's "Clear ClickHouse" calls this FIRST, then the ClickHouse truncates."""
+    try:
+        return await poller.purge()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"phoenix purge failed: {type(e).__name__}: {e}")
+
+
 # --- query API -------------------------------------------------------------------
 
 @app.get("/oob/overview")

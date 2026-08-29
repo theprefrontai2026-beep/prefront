@@ -587,7 +587,17 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   than relying on the clip to hide it. Live-verified: filtered Findings to
   `effect=approval_required` and confirmed every row's chip now sits fully
   inside its own column with no overlap.
-- **"Clear ClickHouse" (Observability's Ingestion view) clears ALL FIVE
+- **The Ingestion view's clear button (now labelled "Clear all trace data")
+  also purges Phoenix.** Clearing ClickHouse alone was only a pause: oob-ingest
+  re-pulls every span from Phoenix on its next poll and eval-engine re-evaluates
+  them, so findings came back within a minute. `DELETE /oob/phoenix` (oob-ingest,
+  `PhoenixPoller.purge`) now deletes every Phoenix project but `default` via
+  Phoenix's own `DELETE /v1/projects/{id}` (a project is recreated on the next
+  span it receives) and resets the poller's in-memory watermarks/seen-set/held
+  orphans/aliases under the sync lock; the UI calls it FIRST, then the two
+  ClickHouse truncates. After a clear the stack is genuinely empty until a new
+  session runs, and event ids restart at 1.
+- **"Clear ClickHouse" (the button's earlier name) clears ALL FIVE
   ClickHouse tables, not just oob-ingest's.** `DELETE /oob/spans`
   (`ch.truncate()`, oob-ingest) only ever cleared `spans`/`ingest_state` — it
   left eval-engine's `eval_verdicts`/`eval_conformance_tags`/

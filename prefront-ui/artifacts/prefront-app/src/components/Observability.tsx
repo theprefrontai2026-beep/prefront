@@ -1074,7 +1074,7 @@ function IngestionView({ status, scenarios, onSync, onClear, busy }: {
           <h3>Scenario coverage</h3>
           <div className="pf-oob-actions">
             <button className="pf-btn sm" onClick={onSync} disabled={busy}>Sync from Phoenix now</button>
-            <button className="pf-btn sm reject" onClick={onClear} disabled={busy}>Clear ClickHouse</button>
+            <button className="pf-btn sm reject" onClick={onClear} disabled={busy} title="Phoenix projects + every ClickHouse table (spans, findings, conformance). Nothing retained.">Clear all trace data</button>
           </div>
         </div>
         {scenarios.length ? (
@@ -1150,18 +1150,22 @@ export default function Observability({ active = true }: { active?: boolean }) {
     try { await fetch("/oob/sync", { method: "POST" }); refresh(); } finally { setBusy(false); }
   };
   const clear = async () => {
-    if (!window.confirm("Delete every ClickHouse table — spans, ingest state, AND eval-engine's verdicts/conformance tags/evaluated-sessions? Phoenix keeps its own copy and will be re-pulled from scratch; eval-engine will re-evaluate every session from zero.")) return;
+    if (!window.confirm("Delete ALL trace data — Phoenix's projects, every ClickHouse table (spans, ingest state), AND eval-engine's verdicts/conformance tags/evaluated-sessions? Nothing is retained; findings only reappear when new sessions run.")) return;
     setBusy(true);
     try {
-      // /oob/spans truncates spans + ingest_state (oob-ingest's tables);
-      // /eval/verdicts truncates eval_verdicts + eval_conformance_tags +
-      // eval_evaluated_sessions (eval-engine's) - together, every ClickHouse
-      // table in the stack. Both in parallel; both are dev-only truncates,
-      // idempotent either order.
+      // Phoenix FIRST (it's the source oob-ingest re-pulls from - clearing
+      // ClickHouse alone is only a pause), then the two ClickHouse truncates
+      // in parallel: /oob/spans (spans + ingest_state) and /eval/verdicts
+      // (eval_verdicts + eval_conformance_tags + eval_evaluated_sessions).
+      // Phoenix can take a few seconds (the purge waits for any in-flight
+      // poll to finish) or be unreachable - either way still truncate
+      // ClickHouse; a Phoenix failure must not leave stale findings behind.
+      const phoenix = await fetch("/oob/phoenix", { method: "DELETE" }).catch((e) => ({ ok: false, statusText: String(e) } as Response));
       await Promise.all([
         fetch("/oob/spans", { method: "DELETE" }),
         fetch("/eval/verdicts", { method: "DELETE" }),
       ]);
+      if (!phoenix.ok) setErr(`ClickHouse cleared, but Phoenix purge failed (${phoenix.statusText || phoenix.status}) — its traces will be re-pulled on the next poll.`);
       setOpenTrace(null);
       refresh();
     } finally { setBusy(false); }

@@ -83,6 +83,39 @@ class PhoenixPoller:
     def wake(self) -> None:
         self._wake.set()
 
+    async def purge(self) -> dict[str, Any]:
+        """Delete every Phoenix project this poller reads (all but Phoenix's own
+        `default`) - `DELETE /v1/projects/{id}` drops the project and every
+        trace in it; Phoenix recreates a project on the next span it receives
+        - and reset the poller's in-memory state (watermarks, seen-set, held
+        orphans, learned aliases) so the next poll starts from nothing rather
+        than believing it has already ingested spans that no longer exist.
+        Runs under the sync lock so it can't interleave with a poll. The
+        ClickHouse side is the caller's job (api.py's DELETE /oob/spans)."""
+        if not self.enabled:
+            return {"enabled": False, "deleted": []}
+        deleted: list[str] = []
+        async with self._busy:
+            async with httpx.AsyncClient(base_url=self.endpoint, timeout=30.0) as http:
+                r = await http.get("/v1/projects", params={"limit": 100})
+                r.raise_for_status()
+                for p in r.json().get("data", []):
+                    if not p.get("id") or p.get("name") == "default":
+                        continue
+                    d = await http.delete(f"/v1/projects/{p['id']}")
+                    if d.status_code in (200, 204):
+                        deleted.append(p["name"])
+                    else:
+                        log.warning("phoenix purge: delete %s -> %s %s", p.get("name"), d.status_code, d.text[:200])
+            self.watermarks.clear()
+            self._seen.clear()
+            self._dropped.clear()
+            self._pending.clear()
+            self._alias.clear()
+            self.projects = []
+        log.info("phoenix purge: deleted projects %s", deleted)
+        return {"enabled": True, "deleted": deleted}
+
     async def _loop(self) -> None:
         while True:
             try:
