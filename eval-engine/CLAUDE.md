@@ -111,6 +111,23 @@ own `policy_document`/`clause_id`/`section`/`page`/`clause_text` columns per
 citation Family 2 never has (`source` stays empty for every Family 2 tag -
 Hard Rule 17).
 
+**`Finding.event_id`**: a fresh `uuid4` assigned per Finding, by `combine_oob`
+(the combinator - never by the check that emitted the underlying `Verdict`,
+same reasoning as version stamps: checks stay pure, Hard Rule 3). It is NOT
+part of `eval_verdicts`' dedup identity (`ORDER BY (session_id, check_id,
+rule_id, evidence_excerpt)`) - two persisted rows for the "same" logical
+finding still collapse to one via ReplacingMergeTree, and `event_id` just
+names whichever row won, not a lifetime identity for the finding concept
+itself. Exists so a caller (the UI's Findings flyout, an API consumer) has
+one opaque stable field to key/reference/deep-link a specific finding by,
+instead of composing one from several columns. `ConformanceTag` deliberately
+does NOT get one - the user's request was specifically about findings, and
+extending it to conformance tags is a separate decision nobody has asked
+for yet. The ClickHouse column self-heals via `ADD COLUMN IF NOT EXISTS`
+(`ch.py`'s `_ADDED_VERDICT_COLUMNS`, same convention as oob-ingest's
+`_ADDED_COLUMNS`) - a row persisted before this shipped reads back as
+`event_id=""`, never null, never an error.
+
 ## Family 1 rule shapes: what the current compiler can and can't lower
 
 skill-builder's flat `CandidateRule` IR (`rule_type` enum:

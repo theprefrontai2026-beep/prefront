@@ -13,6 +13,8 @@ the only place deployment mode changes behavior (Hard Rule 5).
 
 from __future__ import annotations
 
+import uuid
+
 from .contract import EFFECT_PRECEDENCE, ConformanceTag, Effect, Finding, Verdict, VersionStamp
 from .visibility import VisibilityProfile
 
@@ -45,7 +47,8 @@ def combine_oob(verdicts: list[Verdict], visibility: VisibilityProfile, versions
     for v in verdicts:
         reason = _resolve_indeterminate_reason(v, visibility) if v.status == "indeterminate" else None
         out.append(Finding(verdict=v, versions=versions, mode="oob",
-                           indeterminate_reason=reason, evaluated_at=evaluated_at))
+                           indeterminate_reason=reason, evaluated_at=evaluated_at,
+                           event_id=str(uuid.uuid4())))
     return out
 
 

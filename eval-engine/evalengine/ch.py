@@ -43,11 +43,22 @@ CREATE TABLE IF NOT EXISTS {config.CLICKHOUSE_DB}.eval_verdicts
     rule_pack_version            LowCardinality(String),
     catalog_version               LowCardinality(String),
     evaluated_at                 DateTime64(3, 'UTC'),
+    event_id                     String,
     row_version                  DateTime64(6, 'UTC') DEFAULT now64(6)
 )
 ENGINE = ReplacingMergeTree(row_version)
 ORDER BY (session_id, check_id, rule_id, evidence_excerpt)
 """
+
+# Columns added after the table first shipped. A volume created by an older
+# build lacks them; ADD COLUMN IF NOT EXISTS is metadata-only on MergeTree
+# (instant, old rows read as '' for a String default), so it is safe to run
+# on every start - same self-healing convention as oob-ingest/ch.py's
+# _ADDED_COLUMNS. NOT part of ORDER BY (see contract.py's Finding.event_id
+# docstring): adding a column here never changes the dedup identity.
+_ADDED_VERDICT_COLUMNS = (
+    ("event_id", "String"),
+)
 
 DDL_CONFORMANCE = f"""
 CREATE TABLE IF NOT EXISTS {config.CLICKHOUSE_DB}.eval_conformance_tags
@@ -113,6 +124,8 @@ def ensure_schema() -> None:
     c.command(DDL_VERDICTS)
     c.command(DDL_CONFORMANCE)
     c.command(DDL_EVALUATED)
+    for name, typ in _ADDED_VERDICT_COLUMNS:
+        c.command(f"ALTER TABLE {config.CLICKHOUSE_DB}.eval_verdicts ADD COLUMN IF NOT EXISTS {name} {typ}")
 
 
 def ping() -> bool:
@@ -241,7 +254,7 @@ _VERDICT_COLS = [
     "indeterminate_reason", "detail", "evidence_span_ids", "evidence_excerpt",
     "source", "mode", "engine_version", "binding_profile_version",
     "visibility_profile_version", "rule_pack_version", "catalog_version",
-    "evaluated_at",
+    "evaluated_at", "event_id",
 ]
 
 _TAG_COLS = [
@@ -261,7 +274,7 @@ def insert_verdicts(findings: Iterable) -> int:
             json.dumps(v.source) if v.source else "", f.mode,
             f.versions.engine_version, f.versions.binding_profile_version,
             f.versions.visibility_profile_version, f.versions.rule_pack_version,
-            f.versions.catalog_version, f.evaluated_at,
+            f.versions.catalog_version, f.evaluated_at, f.event_id,
         ])
     if not data:
         return 0

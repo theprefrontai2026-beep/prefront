@@ -97,6 +97,11 @@ type EvalVerdict = {
   evidence_excerpt: string; source: string; mode: string; engine_version: string;
   binding_profile_version: string; visibility_profile_version: string;
   rule_pack_version: string; catalog_version: string; evaluated_at: string;
+  // A fresh uuid4 per finding, assigned when it's persisted (combinator.py's
+  // combine_oob) - empty ("") on any row written before this field existed
+  // (the ClickHouse column self-heals via ADD COLUMN IF NOT EXISTS, but old
+  // rows keep the type default). Falls back to the old composite key.
+  event_id: string;
 };
 type ConformanceTag = {
   session_id: string; check_id: string; rule_id: string; policy_document: string;
@@ -817,8 +822,8 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, onClose, o
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */
-function SessionFlyout({ sessionId, initialSpanId, refreshKey, onClose, onOpenTrace }: {
-  sessionId: string; initialSpanId?: string | null; refreshKey: number;
+function SessionFlyout({ sessionId, initialSpanId, eventId, refreshKey, onClose, onOpenTrace }: {
+  sessionId: string; initialSpanId?: string | null; eventId?: string | null; refreshKey: number;
   onClose: () => void; onOpenTrace: (id: string) => void;
 }) {
   useEffect(() => {
@@ -831,7 +836,14 @@ function SessionFlyout({ sessionId, initialSpanId, refreshKey, onClose, onOpenTr
       <div className="pf-flyout-backdrop" onClick={onClose} />
       <aside className="pf-flyout" role="dialog" aria-label={`Session ${sessionId}`}>
         <div className="pf-flyout-head">
-          <div className="pf-flyout-title">Trace detail</div>
+          <div>
+            <div className="pf-flyout-title">Trace detail</div>
+            {eventId && (
+              <div className="pf-oob-subtle mono" title="eval-engine's unique id for this finding">
+                finding {eventId}
+              </div>
+            )}
+          </div>
           <div className="pf-oob-actions">
             <button className="pf-btn sm" onClick={onClose}>Close ✕</button>
           </div>
@@ -976,7 +988,7 @@ function StatusChip({ status }: { status: string }) {
   return <span className={`pf-oob-chip ${STATUS_TONE[status] || ""}`}>{status}</span>;
 }
 
-function FindingsView({ refreshKey, onOpenFinding }: { refreshKey: number; onOpenFinding: (sessionId: string, spanId: string | null) => void }) {
+function FindingsView({ refreshKey, onOpenFinding }: { refreshKey: number; onOpenFinding: (sessionId: string, spanId: string | null, eventId: string | null) => void }) {
   const [family, setFamily] = useState("");
   const [checkId, setCheckId] = useState("");
   const [rows, setRows] = useState<EvalVerdict[]>([]);
@@ -1019,8 +1031,9 @@ function FindingsView({ refreshKey, onOpenFinding }: { refreshKey: number; onOpe
             <thead><tr><th>When</th><th>Session</th><th>Family</th><th>Check</th><th>Effect</th><th>Rule</th><th>Detail</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
-                    onClick={() => onOpenFinding(r.session_id, r.evidence_span_ids?.[0] ?? null)}>
+                <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
+                    title={r.event_id ? `finding ${r.event_id}` : undefined}
+                    onClick={() => onOpenFinding(r.session_id, r.evidence_span_ids?.[0] ?? null, r.event_id || null)}>
                   <td className="nowrap">{when(r.evaluated_at)}</td>
                   <td className="mono">{r.session_id}</td>
                   <td className="mono">{r.family}</td>
@@ -1048,7 +1061,7 @@ function FindingsView({ refreshKey, onOpenFinding }: { refreshKey: number; onOpe
 export default function Observability({ active = true }: { active?: boolean }) {
   const [view, setView] = useState<View>("overview");
   const [openSess, setOpenSess] = useState<string | null>(null);
-  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null } | null>(null);
+  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null } | null>(null);
   const [since, setSince] = useState<number>(86400);
   const [project, setProject] = useState("");
   const [auto, setAuto] = useState(true);
@@ -1088,7 +1101,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
 
   const goTrace = (id: string | null) => { setOpenTrace(id); if (id) setView("traces"); };
   const goSession = (id: string | null) => { setOpenSess(id); if (id) setView("sessions"); };
-  const openFinding = (sessionId: string, spanId: string | null) => setFlyout({ sessionId, spanId });
+  const openFinding = (sessionId: string, spanId: string | null, eventId: string | null) => setFlyout({ sessionId, spanId, eventId });
 
   const sync = async () => {
     setBusy(true);
@@ -1145,7 +1158,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
       {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}
       {view === "findings" && <FindingsView refreshKey={tick} onOpenFinding={openFinding} />}
       {flyout && (
-        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} refreshKey={tick}
+        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId} refreshKey={tick}
                        onClose={() => setFlyout(null)} onOpenTrace={goTrace} />
       )}
     </div>
