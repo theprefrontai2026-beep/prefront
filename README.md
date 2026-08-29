@@ -1,56 +1,98 @@
-What was built
+# Prefront
 
-docker-compose.yaml (repo root) orchestrating the services + the SecureBank Postgres datasource the runtime needs:
+A **governed data-access runtime between AI agents and enterprise databases**.
+LLMs are used only at **design time**; the runtime is deterministic — it never
+does "request → LLM → fresh SQL". Policy documents are compiled into versioned,
+human-approved YAML artifacts, and the runtime evaluates those artifacts as pure
+mechanism: authz → facts → rule evaluation → decision (mask / block / approve /
+execute) → trace.
 
-┌─────────────────────┬───────────────────────┬───────────────────────────────────────────────────────────────┬──────┐
-│       Service       │     Build context     │                             Role                              │ Port │
-├─────────────────────┼───────────────────────┼───────────────────────────────────────────────────────────────┼──────┤
-│ skill-builder       │ ./skill-builder       │ docs → rules (FastAPI)                                        │ 8000 │
-├─────────────────────┼───────────────────────┼───────────────────────────────────────────────────────────────┼──────┤
-│ semantic-layer-api  │ ./semantic-layer      │ design-time API: rules+schema → templates                     │ 8010 │
-├─────────────────────┼───────────────────────┼───────────────────────────────────────────────────────────────┼──────┤
-│ semantic-mcp-server │ ./semantic-mcp-server │ templates → live MCP query tools (HTTP/SSE)                   │ 8090 │
-├─────────────────────┼───────────────────────┼───────────────────────────────────────────────────────────────┼──────┤
-│ ui                  │ ./prefront-ui         │ skill-builder front-end (nginx)                               │ 5173 │
-├─────────────────────┼───────────────────────┼───────────────────────────────────────────────────────────────┼──────┤
-│ securebank-db       │ postgres:16           │ SecureBank datasource (schema+seed from securebank-demo/db/)  │ 5434 │
-└─────────────────────┴───────────────────────┴───────────────────────────────────────────────────────────────┴──────┘
+Alongside that inline path, an **out-of-band evaluation engine** shadow-evaluates
+agent traces after the fact against three check families, so an *ungoverned*
+deployment can be assessed without sitting on its request path.
 
-Each got a Dockerfile + .dockerignore; added requirements.txt to skill-builder and semantic-layer. The UI is a multi-stage build (Node builds, nginx serves + proxies /design → skill-builder:8000, so no CORS).
+See `CLAUDE.md` for the working architecture reference and `design.md` for
+positioning.
 
-One code change was required: the MCP server only spoke stdio, which can't be a network service. I added an HTTP/SSE transport (serve --http) — serve_http() in server.py + flags in cli.py. stdio still works.
+## Deployments: the engine and each demo are separate Compose projects
 
-Wiring: curated SecureBank demo artifacts are committed at securebank-demo/policy/ and seeded into the shared artifacts volume (into /artifacts/securebank-demo/) by the securebank-seed service; semantic-mcp-server reads them and connects to securebank-db (depends_on: securebank-db healthy + securebank-seed completed). LLM keys come from .env (gitignored; .env.example provided).
+The engine's `docker-compose.yaml` defines **no demo's** database, agent or
+orchestrator. Each demo has its own compose file and runs as its own Compose
+project, attaching to the engine's network and `artifacts` volume as
+`external: true`. A plain `docker compose up` therefore starts **no demo**.
 
-Verified
+### The engine (`docker-compose.yaml`)
 
-- All images build (the UI image building = the React app compiles cleanly).
-- docker compose up: securebank-db healthy → securebank-seed populated the artifacts volume → semantic-mcp-server came up serving the governed tools → skill-builder /healthz ok → ui returns 200.
-- MCP SSE client call against localhost:8090 returned real rows from the SecureBank DB container.
+| Service | Port | Role |
+|---|---|---|
+| `ui` | 5173 | React SPA; nginx proxies `/design/` → 8000, `/design/semantic/` → 8010, `/api/` → 8080, `/oob/` → 8110, `/eval/` → 8120, `/pii/` → 8020 |
+| `skill-builder` | 8000 | policy compiler: policy doc → clauses → LLM candidate rules → human review → published skill |
+| `semantic-layer-api` | 8010 | design-time API: schema introspect, build/publish templates, bind+publish policy |
+| `api-server` | 8080 | UI companion: audit log, decision-trace store, review WebSocket |
+| `pii-analyzer` | 8020 | Presidio service that guesses which schema columns are PII (design-time aid) |
+| `oob-ingest` | 8110 | OOB ingestion + query API (Phoenix → ClickHouse) |
+| `eval-engine` | 8120 | out-of-band evaluation: reconstructs sessions, runs the check families, persists verdicts/findings |
+| `clickhouse` | 8123 / 9000 | OOB trace store (db `prefront`, table `spans`) |
+| `phoenix` | 6006 / 4317 | Arize Phoenix trace collector + UI |
+| `skill-builder-db`, `api-db` | — | Postgres (design-time docs/rules; audit + decision traces) |
+| `semantic-mcp-server` | 8090 | **behind the `mcp` profile — NOT started by `docker compose up`.** The governed MCP runtime; the demos run their own |
 
-Run it
+### The demos
 
-cp .env.example .env          # add GROQ_API_KEY=...
-docker compose up --build
-# UI            → http://localhost:5173
-# skill-builder → http://localhost:8000
-# MCP server    → http://localhost:8090/sse   (HTTP/SSE)
-docker compose down           # stop  (down -v to wipe volumes)
+| Compose file | Services |
+|---|---|
+| `loanpro-demo/docker-compose.yml` | `loanpro-orchestrator` :8098, `loanpro-ungoverned` :8097, `loanpro-app-mcp` :8102, `loanpro-db` :5435, `verdict` :5180 (+ `loanpro-mcp` :8101 behind that file's own `mcp` profile, unused by default) |
+| `securebank-demo/docker-compose.yml` | `securebank-orchestrator` :8095, `securebank-ungoverned` :8096, `securebank-mcp` :8100, `securebank-db` :5434 |
 
-The stack is currently up in your environment. A couple of notes:
-- The runtime serves the curated SecureBank demo artifacts (committed under securebank-demo/policy/, seeded into the artifacts volume); regenerate templates anytime with the semantic-layer build CLI or the semantic-layer-api on :8010 (e.g. after editing the schema/rules).
-- semantic-layer-api and skill-builder need an LLM key in .env; the runtime (semantic-mcp-server, securebank-db, ui) doesn't.
+**LoanPro is the active demo** — an intentionally ungoverned deployment that is
+the *subject* of the out-of-band checks. **SecureBank** is the governed
+before/after example, with curated artifacts committed at
+`securebank-demo/policy/` and seeded into the shared `artifacts` volume.
 
-Domain independence (multi-tenant)
+## Run it
+
+```bash
+cp .env.example .env               # LLM key + the EVAL_* artifact paths
+
+# 1. the engine (must come first — demos attach to its network/volume)
+docker compose up --build -d
+#    UI            → http://localhost:5173
+#    skill-builder → http://localhost:8000
+#    Phoenix       → http://localhost:6006
+
+# 2. the active demo
+docker compose -f loanpro-demo/docker-compose.yml up --build -d
+curl 'localhost:8098/api/run?only=F2-05'        # run one scenario
+curl 'localhost:8110/oob/sessions?since=3600'   # what OOB ingested
+
+make test                                        # every offline suite
+
+# teardown (demo first, then the engine)
+docker compose -f loanpro-demo/docker-compose.yml down
+docker compose down                              # add -v to wipe volumes
+```
+
+Optional, not started above:
+
+```bash
+docker compose -f securebank-demo/docker-compose.yml up --build -d  # SecureBank
+docker compose --profile mcp up -d semantic-mcp-server              # the engine's own MCP
+```
+
+`skill-builder` and `semantic-layer-api` need an LLM key in `.env`, as do the
+demo agents; the runtime and the OOB/eval services do not.
+
+## Domain independence (multi-tenant)
 
 The same Prefront runs across any customer or domain with zero code edits. The
 engine code (semantic-layer, skill-builder, semantic-mcp-server, prefront-ui) is
 pure mechanism — it names no table, column, policy, or tenant. All
 tenant-specific content lives in three planes OUTSIDE the code:
 
-  1. Database + schema — a datasource. The demo's SecureBank Postgres runs in
-     this compose (host :5434) with its schema/seed in-repo at securebank-demo/db/;
-     nothing tenant-specific is baked into these images.
+  1. Database + schema — a datasource. Each demo ships its own Postgres in its
+     OWN compose file (SecureBank on host :5434 with schema/seed in-repo at
+     securebank-demo/db/; LoanPro on :5435), never in the engine's compose;
+     nothing tenant-specific is baked into the engine images.
   2. Business policy — policy documents become extracted rules and then published
      artifacts (policy.yaml, query_templates.yaml, intent bindings) on the shared
      artifacts volume. Runtime evaluation is deterministic dict-lookups + a
@@ -75,7 +117,7 @@ Conventions that keep it independent:
   - Tenant specifics belong in deployment config (docker-compose.yaml,
     .env.example) — the demo wires SecureBank there, not in the packages.
 
-Tracing (Arize Phoenix)
+## Tracing (Arize Phoenix)
 
 The stack ships a Phoenix collector + trace UI at http://localhost:6006. Every
 Python service exports OTLP/HTTP spans to it, all under one Phoenix project
@@ -134,7 +176,7 @@ in tracing/prefront_tracing.py, vendored into each service by tracing/sync.sh
 (each service has its own Docker build context, so they can't share an import).
 Run `sh tracing/sync.sh --check` to detect drift.
 
-OOB observability (Phoenix → ClickHouse → the Observability tab)
+## OOB observability (Phoenix → ClickHouse → the Observability tab)
 
 Phoenix is the collector; the durable, queryable store is ClickHouse, fed
 out-of-band by the `oob-ingest` service (nothing here is on a governed call's
@@ -173,8 +215,18 @@ The UI's Observability tab (nginx: /oob/ → oob-ingest) is the AEOP view over i
   Traces       filter by service, kind, status, scenario, free text → waterfall →
                span inspector (I/O, LLM messages, attributes, events)
   LLM          per-model usage/tokens/cost/latency, tool-call rate, recent calls
+  Sessions     per-session view: turns, tool calls, writes, off-catalog calls
   Ingestion    ClickHouse / Phoenix poller / OTLP tap health, the inline
-               exclusion rules, scenario coverage, "sync now" and "clear"
+               exclusion rules, scenario coverage, "sync now", and "clear all
+               trace data" (purges Phoenix's projects AND every ClickHouse
+               table — clearing ClickHouse alone is only a pause, since
+               oob-ingest re-pulls from Phoenix on its next poll)
+
+Findings — eval-engine's shadow-evaluation log — lives in the Decision Traces
+tab (Decisions | Findings), not here: a finding is a governance-decision-log
+concept, not a pipeline-health one. eval-engine (:8120, nginx /eval/) reads the
+same `spans` table read-only, reconstructs each session, runs the three check
+families over it, and persists verdicts, findings and conformance tags.
 
   clickhouse   http://localhost:8123 (HTTP), :9000 (native); db `prefront`, table `spans`
   oob-ingest   http://localhost:8110  (/oob/status, /oob/overview, /oob/traces, …)
