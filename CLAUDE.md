@@ -55,15 +55,15 @@ This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml`
 | Service | Dir / package | Port | Role |
 |---|---|---|---|
 | skill-builder | `skill-builder/skillbuilder` | 8000 | **policy compiler**: policy doc → clauses → LLM candidate rules → human review → published skill (FastAPI) |
-| semantic-layer-api | `semantic-layer/semanticlayer` | 8010 | design-time API: schema introspect/parse, build/publish templates, bind+publish policy. Also owns `intent_catalog.py` (the Family 3 schema/generator, see eval-engine's row) and `preflight.py` (autonomous_build.md step 19: an LLM proposes candidate adversarial test scenarios in `loanpro-demo/scenarios.py`'s shape from a tool list + intent catalog — always `review_status="pending"`, structurally validated against real tool/check names, never auto-approved; wired to `POST /design/semantic/preflight/generate`, live-verified against a real LLM — see eval-engine/CLAUDE.md's step 19 section for the worked example, including a first-draft prompt that got a real response validation correctly rejected in full before a schema-example fix got 4/4 valid candidates. `loanpro-demo/preflight_import.py` closes the loop this service's endpoint alone doesn't: `generate` calls it for real, `approve <id...>` is the human gate that converts approved candidates into `scenarios.py`'s own shape and runs them through the SAME orchestrator + grading harness — live-verified catching both a correct candidate (PASS) and a wrong one (FAIL, then rejected)) |
-| semantic-mcp-server | `semantic-mcp-server/semanticmcp` | 8090 | **runtime**: loads published templates as governed MCP tools (HTTP/SSE); runs the governance pipeline per call — native `governance/rules.py`/`decide.py` over `policy.yaml`, **plus** (autonomous_build.md step 18) eval-engine's single-call-safe checks inline (`governance/inline_checks.py`: `family3.call` pre-execution, `family1.content` post-execution, and five of Family 2's six parameter-side checks pre-execution using a new per-connection `governance/session_state.py` history — `param_provenance` excluded, unconditional false positives with no turn/message corpus at this layer, see `eval-engine/CLAUDE.md`'s step 18 section — all over `rule_pack.yaml`/`intent_catalog.yaml`, vendored from `eval-engine/` via `eval-engine/sync.sh`, unconfigured by default). Bundled to serve the SecureBank example (`/artifacts/securebank-demo/`). **Behind compose profile `mcp` — `docker compose up` does NOT start it**; the demos run their own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101, the latter pointed at LoanPro's `rule_pack.yaml`/`intent_catalog.yaml`) |
+| semantic-layer-api | `semantic-layer/semanticlayer`| 8010| design-time API: schema introspect/parse, build/publish templates, bind+publish policy. Also owns `intent_catalog.py` (Family 3's schema/generator) and `preflight.py` (LLM-proposed candidate test scenarios — see `eval-engine/CLAUDE.md` § step 19) |
+| semantic-mcp-server | `semantic-mcp-server/semanticmcp`| 8090| **runtime**: loads published templates as governed MCP tools (HTTP/SSE); per call runs `governance/rules.py`/`decide.py` over `policy.yaml`, **plus** eval-engine's single-call-safe checks inline (`governance/inline_checks.py` — what runs inline and why `param_provenance` cannot, in `eval-engine/CLAUDE.md` § Phase D). Bundled to serve the SecureBank example from `/artifacts/securebank-demo/`. **Behind compose profile `mcp` — `docker compose up` does NOT start it**; each demo runs its own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/pii/` → :8020 |
-| verdict | `prefront-ui/artifacts/verdict` | 5180 | **Verdict** — standalone "business decision evaluator": what was the LoanPro Runtime tab (`SessionRunner`), extracted into its own small app so it can run/share independently of the design-time UI. Talks to `loanpro-orchestrator` by absolute URL (cross-origin, CORS already open); nginx proxies only `/oob/` → :8110 for session inspection. The main UI's Runtime tab (and SecureBank's governed-vs-ungoverned diff view, which lived in the same `RuntimeDiff.tsx`) has since been **removed** — Verdict is the only place to run LoanPro's scenario catalogue interactively now. **Deployed from `loanpro-demo/docker-compose.yml` now, not the engine's** — it's a LoanPro-specific tool, moved there in the demo/engine compose split (see "Active demo: LoanPro" below) |
+| verdict | `prefront-ui/artifacts/verdict`| 5180| **Verdict** — standalone "business decision evaluator": runs LoanPro's scenario catalogue interactively and shows each session's transcript beside its expected findings. Its own Vite/React app sharing no code or stylesheet with `prefront-app` (a style change meant for both must be made twice, by hand). Talks to `loanpro-orchestrator` by absolute URL; deployed from `loanpro-demo/docker-compose.yml` |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
-| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 (built-in integrity invariants, `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (`evalengine/family1/` — temporal/predicate/content engines over a `rule_pack.yaml` compiled by `skill-builder/skillbuilder/rulepack.py` at publish time, `EVAL_RULE_PACK_PATH`) and Family 3 (`evalengine/family3/` — call/scope/session **and population** checks over an `intent_catalog.yaml`, schema+generator in `semantic-layer/semanticlayer/intent_catalog.py`, `EVAL_INTENT_CATALOG_PATH`; LoanPro's hand-authored one is `loanpro-demo/policy/intent_catalog.yaml`) are both wired in, plus population checks (`family3/population.py`, `POST /eval/population`) and a Preflight-generated-and-approved scenario loop (`loanpro-demo/preflight_import.py`; see step 19 below). The LoanPro grading harness (`loanpro-demo/grading_harness.py`, `make grade-loanpro`) has been run live end-to-end against the real stack for the **full 37-scenario catalogue** — `loanpro-demo/docs/eval-coverage.md` is 37/37 PASS. See `eval-engine/CLAUDE.md`. |
+| eval-engine | `eval-engine/evalengine`| 8120| **evaluation engine** (FastAPI + background worker): reads the shared `spans` table read-only, reconstructs each session, runs the three check families over it, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 needs no onboarding; Family 1 needs `rule_pack.yaml` (`EVAL_RULE_PACK_PATH`) and Family 3 an `intent_catalog.yaml` (`EVAL_INTENT_CATALOG_PATH`), both degrading to zero verdicts when unconfigured. Full 37-scenario grading run is 37/37 (`loanpro-demo/docs/eval-coverage.md`). See `eval-engine/CLAUDE.md` |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
@@ -80,7 +80,7 @@ In the UI, both the LLM-generate and dbt-import paths are unified in one **Seman
 
 The UI is a **pnpm workspace** (`pnpm-workspace.yaml`) with packages under `artifacts/` (the React SPA, api-server, and `verdict` — see below) and `lib/` (shared: `api-spec`, `api-zod`, `api-client-react`, `db`). The React SPA lives at `prefront-ui/artifacts/prefront-app/src/`.
 
-`artifacts/verdict/` is a second, independent Vite/React app (`@workspace/verdict`, modeled on the pre-existing `artifacts/mockup-sandbox/` pattern for a standalone package in this workspace) — it has its own `package.json`/`vite.config.ts`/`Dockerfile.verdict`/`verdict-nginx.conf` and no shared code with `prefront-app` at build time (it started as a copy of `prefront-app`'s `SessionRunner.tsx`, plus a `SessionDetail.tsx` extracted from `Observability.tsx`, which bundled it with views Verdict doesn't need — `prefront-app` no longer has either component: its own Runtime tab, `RuntimeDiff.tsx`, and `DecisionTrace.tsx` were removed once Verdict existed, taking SecureBank's governed-vs-ungoverned diff view down with them). Verdict's `index.css` is a curated subset of what the main app's stylesheet *used to* carry for those two components (design tokens + `.pf-sess-*`/`.pf-diff-*`/`.pf-oob-*`/`.pf-flyout*`) — there is no shared stylesheet between the two apps, so a style change meant for both has to be made in both places by hand.
+`artifacts/verdict/` is a second, independent Vite/React app (`@workspace/verdict`) with its own `package.json`/`vite.config.ts`/`Dockerfile.verdict`/`verdict-nginx.conf` and **no shared code or stylesheet with `prefront-app`** — a change meant for both apps must be made in both places by hand. `prefront-app` has no Runtime tab: Verdict is the only place to run LoanPro's scenario catalogue interactively.
 
 The `db` lib is the Drizzle schema shared between the `api-server` and the Drizzle migrations (`lib/db/src/`). The OpenAPI spec at `lib/api-spec/openapi.yaml` is the contract; `api-client-react` (generated by orval) is the typed React-Query client.
 
@@ -184,20 +184,12 @@ tab any more).
   `loanpro-mcp` (which bind-mounts `./policy` directly for its OWN inline
   reuse — a different, unrelated mechanism, see that service's own comment).
 
-- **An MCP SSE endpoint MUST return a Response.** Starlette >=1.0 does
-  `await (await endpoint(request))(scope, receive, send)`, so an SSE handler that
-  returns `None` — the shape every MCP example uses — dies with
-  `TypeError: 'NoneType' object is not callable` *after* the stream is served,
-  surfacing at the client as an opaque `ExceptionGroup`. Return a bare
-  `Response()` after `connect_sse` (it is never sent; the connection is already
-  hijacked). This was the same fault as the old "MCP SSE transport flakes" note —
-  now fixed in both MCP servers; see that entry.
 - **Use `AsyncOpenAI` inside an MCP session.** The agent loop runs in the MCP
   client's task group; `await`-ing the SYNC `OpenAI` client's `create()` raises
   inside the group and surfaces only as `ExceptionGroup: unhandled errors in a
-  TaskGroup`, which looks exactly like a transport flake. `_describe()` in
-  `ungoverned_server.py` flattens a group to its leaves — reach for it before
-  assuming the transport is at fault.
+  TaskGroup`, which looks exactly like a transport flake. See "Engine mechanics
+  that bite" for that whole failure class, and for the SSE-endpoint rule
+  `app_mcp_server.py` also depends on.
 
 ## SecureBank in-repo demo (`securebank-demo/`)
 
@@ -260,8 +252,7 @@ A second connector alongside Postgres: point the Data Connector tab's **MCP Serv
   volume created before a demo's artifacts changed keeps serving the OLD ones —
   silently, and `docker compose up --build` will not fix it. Symptom: a scenario
   fails with an outcome like `BLOCK (no approved intent)` because the intent it
-  needs was never published. This actually happened: C1/C2 (added in 52c7537)
-  blocked for weeks against an Aug-16 volume copy. Diagnose by comparing
+  needs was never published. Diagnose by comparing
   `md5sum securebank-demo/policy/*.yaml` with the same files inside the volume;
   fix with the RW helper above (the MCP hot-reloads on mtime — no restart), or
   rebuild the volume from scratch — since the demo/engine compose split, `artifacts`
@@ -276,22 +267,21 @@ A second connector alongside Postgres: point the Data Connector tab's **MCP Serv
   The requirement was an unpinned `mcp>=1.0`, so ANY cache-invalidating rebuild
   floated it to 2.x. Now pinned `mcp>=1.24,<2` in `semantic-mcp-server/`,
   `semantic-layer/`, the root `requirements.txt`, and both demo Dockerfiles.
-- **~~The MCP SSE transport can flake on slower calls~~ — FIXED; it was never the
-  transport.** An SSE endpoint that returns `None` (the shape every MCP example
-  uses) dies under Starlette >=1.0 with `TypeError: 'NoneType' object is not
-  callable`, because the router does
-  `await (await endpoint(request))(scope, receive, send)`. It fires at teardown,
-  *after* the exchange has completed, so the tool call appears to work and the
-  client intermittently sees a dead connection / `ExceptionGroup` /
-  `JSONDecodeError` instead. Both MCP servers now `return Response()` after
-  `connect_sse` (`semanticmcp/server.py`, `loanpro-demo/app_mcp_server.py`);
-  reproduced on the unmodified engine image and verified fixed — server-side
-  errors went 1 → 0 over repeated connections. **Any new SSE endpoint must
-  return a Response.**
-- Because that error surfaced only at the client as an `ExceptionGroup`, two
-  unrelated faults used to look identical to it. Before blaming the transport,
-  flatten the group to its leaves (`_describe()` in
-  `loanpro-demo/ungoverned_server.py`) and read the MCP server's own log.
+- **Any MCP SSE endpoint MUST return a Response.** Starlette >=1.0 does
+  `await (await endpoint(request))(scope, receive, send)`, so a handler
+  returning `None` — the shape every MCP example uses — dies with
+  `TypeError: 'NoneType' object is not callable`. It fires at teardown, *after*
+  the exchange completed, so the tool call appears to work while the client
+  intermittently sees a dead connection / `ExceptionGroup` / `JSONDecodeError`.
+  Return a bare `Response()` after `connect_sse` (never sent; the connection is
+  already hijacked). Done in `semanticmcp/server.py` and
+  `loanpro-demo/app_mcp_server.py`.
+- **An `ExceptionGroup` at an MCP client is not evidence about the transport.**
+  At least three unrelated faults surface identically (the one above, a sync
+  `OpenAI` client awaited inside the client's task group, a real server error).
+  Flatten the group to its leaves (`_describe()` in
+  `loanpro-demo/ungoverned_server.py`) and read the MCP server's own log before
+  concluding anything.
 
 ## Tracing (Arize Phoenix)
 
@@ -435,7 +425,6 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   it is a ClickHouse mutation, so it runs at startup and on `POST /oob/sync`,
   never per poll. The scheme **self-heals**: a name with no OTLP counterpart yet
   keeps its guess and flips to the real service on the next sync after one
-  arrives (verified live — one span relabelled the moment its sibling landed).
 - **NaN is not JSON.** An aggregate over an EMPTY set — a `quantileExact`/`avg`
   where a time bucket holds no root span, or any range with no data — returns
   NaN, and FastAPI's encoder then 500s the whole endpoint. It only shows up on
@@ -444,7 +433,7 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   ClickHouse has `isNaN(x)` but **no** `ifNaN(x, y)`. `ch.rows()` also coerces any
   non-finite float to 0 as a backstop. Test new endpoints against a range with no
   data, not just the default one.
-- **ClickHouse alias trap (bit twice):** `SELECT sum(x) AS x, avg(x)` fails with
+- **ClickHouse alias trap:** `SELECT sum(x) AS x, avg(x)` fails with
   `ILLEGAL_AGGREGATION` — the alias shadows the column for the whole query. Never
   alias an aggregate to a column name another expression in the same SELECT reads
   (`list_traces` aliases to `t_start`/`t_end` and renames in an outer SELECT).
