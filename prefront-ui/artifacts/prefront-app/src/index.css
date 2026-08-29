@@ -1612,6 +1612,25 @@ select { cursor: pointer; }
 .pf-oob-step-text.mono { font-family: var(--app-font-mono); font-size: 11px; }
 .pf-oob-turn-sep { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 0; }
 
+/* Full trace, collapsed by default (SessionDetail) */
+.pf-oob-steps-collapse summary {
+  font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer;
+  list-style: none; padding: 6px 0; border-bottom: 1px dashed var(--line); margin-bottom: 8px;
+}
+.pf-oob-steps-collapse summary::-webkit-details-marker { display: none; }
+.pf-oob-steps-collapse summary::before { content: "▸ "; }
+.pf-oob-steps-collapse[open] summary::before { content: "▾ "; }
+
+/* Session/trace ids, role/channel, and the "checks triggered"/"actual
+   verdicts" chip rows - secondary context, pushed below the trace. */
+.pf-oob-detail-footer { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.pf-oob-detail-footer .pf-oob-actions { margin-top: 6px; }
+
+/* One-liner + policy corroboration at the TOP of a Findings-opened flyout
+   (SessionDetail's findingDetail/findingSource props) */
+.pf-find-flyout-top { margin-bottom: 12px; }
+.pf-find-flyout-oneliner { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+
 /* ── Findings: session fly-out panel ────────────────────────────────────── */
 /* Same pattern as Verdict's SessionFlyout (artifacts/verdict/src/index.css) -
    no shared stylesheet between the two apps, so this is a deliberate copy,
@@ -1628,4 +1647,4 @@ select { cursor: pointer; }
 .pf-flyout-body { overflow: auto; padding: 12px 18px 24px; display: flex; flex-direction: column; gap: 12px; }
 .pf-flyout-body .pf-oob-detail { padding: 0; border: 0; box-shadow: none; }
 .pf-flyout-body .pf-oob-detail-body { grid-template-columns: 1fr; }
-.pf-flyout .pf-oob-detail > .pf-oob-panel-head .pf-oob-actions > button:last-child { display: none; } /* the fly-out has its own Close */
+.pf-flyout .pf-oob-detail > .pf-oob-detail-footer .pf-oob-actions > button:last-child { display: none; } /* the fly-out has its own Close */

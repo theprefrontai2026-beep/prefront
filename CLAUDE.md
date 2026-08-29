@@ -488,6 +488,29 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   Traces view of its own to deep-link into) switches to the Observability tab.
   Live-verified in a real browser, from both Findings' new home and (before
   the move) the old one.
+- **`SessionDetail`'s layout is reordered so the flyout leads with the
+  finding, not the session.** Two new optional props, `findingDetail`/
+  `findingSource` (the clicked row's `detail` + raw `source` JSON, threaded
+  `FindingsSection` → `SessionFlyout` → `SessionDetail`) render a one-liner +
+  policy-quote block (`.pf-find-flyout-top`, reusing the same
+  `.pf-find-quote`/`.pf-find-cite` markup `DecisionTraces.tsx`'s table cell
+  uses - `parseSource`/`PolicySource` moved from that file into
+  `Observability.tsx` and are exported, so both places share one parser) as
+  the FIRST thing in the panel - only set by the Findings call site;
+  Sessions/Traces (no single "this is the finding" to lead with) skip it.
+  The step-by-step trace is now a collapsed-by-default `<details>`
+  (`.pf-oob-steps-collapse`, "▸ Full trace (N steps)") instead of always
+  expanded - collapsing it does NOT hide the `SpanInspector` for a
+  pre-selected span, so the finding's own evidence is still visible without
+  expanding anything. Session id, trace id(s), role/channel/turn counts, and
+  the "checks triggered"/"actual verdicts" chip rows all moved into a new
+  `.pf-oob-detail-footer` below the trace - secondary context now, not the
+  first thing you see. This reorder applies to EVERY `SessionDetail` call
+  site (Sessions view included, not just the flyout) - one component, one
+  layout; live-verified both ways: a Family 1 finding's flyout shows its
+  one-liner + verbatim policy quote up top and the collapsed trace/footer
+  below, and Observability's Sessions view still renders correctly with
+  the same reordered layout, trace collapsed there too.
 - **"Clear ClickHouse" (Observability's Ingestion view) clears ALL FIVE
   ClickHouse tables, not just oob-ingest's.** `DELETE /oob/spans`
   (`ch.truncate()`, oob-ingest) only ever cleared `spans`/`ingest_state` — it

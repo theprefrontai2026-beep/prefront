@@ -112,6 +112,21 @@ export type ConformanceTag = {
   catalog_version: string; evaluated_at: string;
 };
 
+// A rule pack's materialized source citation block (Hard Rule 17,
+// eval-engine/CLAUDE.md) - verbatim policy document/section/quoted text.
+// Exported so DecisionTraces.tsx's Findings table and SessionFlyout's
+// one-liner summary (below) share one parser instead of two.
+export type PolicySource = { document: string; section: string; page: number | null; text: string };
+
+export function parseSource(raw: string): PolicySource | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return null;
+    return { document: String(p.document || ""), section: String(p.section || ""), page: p.page ?? null, text: String(p.text || "") };
+  } catch { return null; }
+}
+
 /* ── helpers ────────────────────────────────────────────────────────────── */
 
 const RANGES: { label: string; seconds: number }[] = [
@@ -734,7 +749,16 @@ function stepsOf(spans: Span[]): Step[] {
   return out;
 }
 
-export function SessionDetail({ sessionId, refreshKey, initialSpanId, onClose, onOpenTrace }: { sessionId: string; refreshKey: number; initialSpanId?: string | null; onClose: () => void; onOpenTrace: (id: string) => void }) {
+export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDetail, findingSource, onClose, onOpenTrace }: {
+  sessionId: string; refreshKey: number; initialSpanId?: string | null;
+  // Set only when opened from a Findings row (SessionFlyout below) - the
+  // finding's own one-liner + policy citation, shown prominently at the TOP
+  // instead of being buried among session meta. Absent for the plain
+  // Sessions/Traces call sites, which have no single "this is the finding"
+  // to lead with.
+  findingDetail?: string; findingSource?: string;
+  onClose: () => void; onOpenTrace: (id: string) => void;
+}) {
   const [spans, setSpans] = useState<Span[]>([]);
   const [err, setErr] = useState("");
   const [selected, setSelected] = useState<string | null>(initialSpanId ?? null);
@@ -766,55 +790,77 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, onClose, o
   const traces = Array.from(new Set(spans.map((s) => s.trace_id)));
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
   const policy = parseList(root?.attributes["scenario.policy"] ?? "");
+  const findingSrc = findingSource ? parseSource(findingSource) : null;
   return (
     <section className="pf-panel pf-oob-detail">
-      <div className="pf-oob-panel-head">
-        <div>
-          <h3>session <span className="mono">{sessionId}</span></h3>
-          <div className="pf-oob-subtle mono">
-            {root?.user_role || root?.attributes["app.user.role"] || "?"} · user {root?.user_id || root?.attributes["user.id"] || "?"} · {root?.channel || root?.attributes["app.channel"] || "?"}
-            {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
-            {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turns · {tools.length} tool calls · {traces.length} trace{traces.length === 1 ? "" : "s"}
-          </div>
-          {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}{policy.map((c) => <span key={c} className="pf-oob-chip">§{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger and the policy sections they attribute to (from the harness, not a verdict)</span></div>}
-          {(verdicts.length > 0 || tags.length > 0) && (
-            <div style={{ marginTop: 4 }}>
-              {verdicts.filter((v) => v.status !== "satisfied").map((v, i) => (
-                <span key={"v" + i} className={`pf-oob-chip ${STATUS_TONE[v.status] || ""}`} title={v.detail}>{v.check_id} · {v.status}</span>
-              ))}
-              {tags.map((t, i) => (
-                <span key={"t" + i} className="pf-oob-chip green" title={t.clause_text || t.check_id}>{t.check_id}{t.section ? ` · §${t.section}` : ""} ✓</span>
-              ))}
-              <span className="pf-oob-subtle"> ← eval-engine's actual verdicts for this session (green = satisfied/conformance, red/amber = violated/indeterminate)</span>
-            </div>
+      {/* ── One-liner + policy corroboration, ONLY when opened from a
+          Finding - the whole reason someone opened this panel. Everything
+          else (session/trace ids, role/channel, the "checks this scenario
+          triggers" / "actual verdicts" chip rows) is secondary context,
+          pushed to a footer below the (collapsed-by-default) trace. ── */}
+      {findingDetail && (
+        <div className="pf-find-flyout-top">
+          <div className="pf-find-flyout-oneliner">{findingDetail}</div>
+          {findingSrc?.text && (
+            <blockquote className="pf-find-quote">
+              “{findingSrc.text.trim()}”
+              <cite>{findingSrc.document}{findingSrc.section ? ` · §${findingSrc.section}` : ""}</cite>
+            </blockquote>
+          )}
+          {!findingSrc?.text && findingSrc?.section && (
+            <div className="pf-find-cite muted">{findingSrc.document} · §{findingSrc.section}</div>
           )}
         </div>
+      )}
+      {err && <div className="pf-oob-error">{err}</div>}
+      <div className="pf-oob-detail-body">
+        <details className="pf-oob-steps-collapse">
+          <summary>Full trace ({steps.length || "…"} steps)</summary>
+          <div className="pf-oob-steps">
+            {steps.map((st, i) => (
+              <div key={st.span.span_id + st.kind + i}>
+                {st.kind === "turn" && <div className="pf-oob-turn-sep">turn {st.turn}</div>}
+                <div className={`pf-oob-step ${selected === st.span.span_id ? "selected" : ""} ${st.span.status === "ERROR" && st.kind === "tool" ? "error" : ""}`} onClick={() => setSelected(st.span.span_id)}>
+                  <div className="pf-oob-step-kind">
+                    <KindBadge kind={st.kind === "turn" || st.kind === "answer" ? "AGENT" : st.span.kind} />
+                    <span className="pf-oob-subtle">{ms(st.span.duration_ms)}</span>
+                  </div>
+                  <div className="pf-oob-step-body">
+                    <div className="pf-oob-step-title">{st.title}{st.span.status === "ERROR" && st.kind === "tool" && <span className="pf-oob-chip red">error</span>}</div>
+                    <div className={`pf-oob-step-text ${st.mono ? "mono" : ""}`}>{st.text}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!steps.length && !err && <Empty text="Loading…" />}
+          </div>
+        </details>
+        {sel && <SpanInspector span={sel} />}
+      </div>
+      <div className="pf-oob-detail-footer">
+        <div className="pf-oob-subtle mono">
+          session {sessionId}
+          {" "}· {root?.user_role || root?.attributes["app.user.role"] || "?"} · user {root?.user_id || root?.attributes["user.id"] || "?"} · {root?.channel || root?.attributes["app.channel"] || "?"}
+          {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
+          {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turns · {tools.length} tool calls
+          {" "}· trace{traces.length === 1 ? "" : "s"} {traces.map(short).join(", ") || "—"}
+        </div>
+        {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}{policy.map((c) => <span key={c} className="pf-oob-chip">§{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger and the policy sections they attribute to (from the harness, not a verdict)</span></div>}
+        {(verdicts.length > 0 || tags.length > 0) && (
+          <div style={{ marginTop: 4 }}>
+            {verdicts.filter((v) => v.status !== "satisfied").map((v, i) => (
+              <span key={"v" + i} className={`pf-oob-chip ${STATUS_TONE[v.status] || ""}`} title={v.detail}>{v.check_id} · {v.status}</span>
+            ))}
+            {tags.map((t, i) => (
+              <span key={"t" + i} className="pf-oob-chip green" title={t.clause_text || t.check_id}>{t.check_id}{t.section ? ` · §${t.section}` : ""} ✓</span>
+            ))}
+            <span className="pf-oob-subtle"> ← eval-engine's actual verdicts for this session (green = satisfied/conformance, red/amber = violated/indeterminate)</span>
+          </div>
+        )}
         <div className="pf-oob-actions">
           {traces.map((t) => <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}>trace {short(t)}</button>)}
           <button className="pf-btn sm" onClick={onClose}>Close</button>
         </div>
-      </div>
-      {err && <div className="pf-oob-error">{err}</div>}
-      <div className="pf-oob-detail-body">
-        <div className="pf-oob-steps">
-          {steps.map((st, i) => (
-            <div key={st.span.span_id + st.kind + i}>
-              {st.kind === "turn" && <div className="pf-oob-turn-sep">turn {st.turn}</div>}
-              <div className={`pf-oob-step ${selected === st.span.span_id ? "selected" : ""} ${st.span.status === "ERROR" && st.kind === "tool" ? "error" : ""}`} onClick={() => setSelected(st.span.span_id)}>
-                <div className="pf-oob-step-kind">
-                  <KindBadge kind={st.kind === "turn" || st.kind === "answer" ? "AGENT" : st.span.kind} />
-                  <span className="pf-oob-subtle">{ms(st.span.duration_ms)}</span>
-                </div>
-                <div className="pf-oob-step-body">
-                  <div className="pf-oob-step-title">{st.title}{st.span.status === "ERROR" && st.kind === "tool" && <span className="pf-oob-chip red">error</span>}</div>
-                  <div className={`pf-oob-step-text ${st.mono ? "mono" : ""}`}>{st.text}</div>
-                </div>
-              </div>
-            </div>
-          ))}
-          {!steps.length && !err && <Empty text="Loading…" />}
-        </div>
-        {sel && <SpanInspector span={sel} />}
       </div>
     </section>
   );
@@ -827,8 +873,9 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, onClose, o
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */
-export function SessionFlyout({ sessionId, initialSpanId, eventId, refreshKey, onClose, onOpenTrace }: {
-  sessionId: string; initialSpanId?: string | null; eventId?: string | null; refreshKey: number;
+export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, refreshKey, onClose, onOpenTrace }: {
+  sessionId: string; initialSpanId?: string | null; eventId?: string | null;
+  findingDetail?: string; findingSource?: string; refreshKey: number;
   onClose: () => void; onOpenTrace: (id: string) => void;
 }) {
   useEffect(() => {
@@ -841,13 +888,8 @@ export function SessionFlyout({ sessionId, initialSpanId, eventId, refreshKey, o
       <div className="pf-flyout-backdrop" onClick={onClose} />
       <aside className="pf-flyout" role="dialog" aria-label={`Session ${sessionId}`}>
         <div className="pf-flyout-head">
-          <div>
-            <div className="pf-flyout-title">Trace detail</div>
-            {eventId && (
-              <div className="pf-oob-subtle mono" title="eval-engine's unique id for this finding">
-                finding {eventId}
-              </div>
-            )}
+          <div className="pf-flyout-title mono" title={eventId ? "eval-engine's unique id for this finding" : undefined}>
+            {eventId ? `finding ${eventId}` : "Trace detail"}
           </div>
           <div className="pf-oob-actions">
             <button className="pf-btn sm" onClick={onClose}>Close ✕</button>
@@ -855,6 +897,7 @@ export function SessionFlyout({ sessionId, initialSpanId, eventId, refreshKey, o
         </div>
         <div className="pf-flyout-body">
           <SessionDetail sessionId={sessionId} refreshKey={refreshKey} initialSpanId={initialSpanId}
+                        findingDetail={findingDetail} findingSource={findingSource}
                         onClose={onClose} onOpenTrace={(id) => { onOpenTrace(id); onClose(); }} />
         </div>
       </aside>

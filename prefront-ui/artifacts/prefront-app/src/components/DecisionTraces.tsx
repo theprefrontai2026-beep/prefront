@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FeedDecision, Trace } from "../hooks/useDecisionFeed";
 import type { DemoConfig } from "../demos";
-import { SessionFlyout, type EvalVerdict } from "./Observability";
+import { SessionFlyout, parseSource, type EvalVerdict } from "./Observability";
 
 const DECISIONS: FeedDecision[] = ["ALLOWED", "MASKED", "APPROVAL", "BLOCKED"];
 
@@ -63,17 +63,6 @@ function Select({ label, value, options, onChange }: {
    the intent catalog doesn't carry policy prose; Family 2 has neither -
    see eval-engine/CLAUDE.md's Hard Rule 17). ──────────────────────────── */
 
-type PolicySource = { document: string; section: string; page: number | null; text: string };
-
-function parseSource(raw: string): PolicySource | null {
-  if (!raw) return null;
-  try {
-    const p = JSON.parse(raw);
-    if (!p || typeof p !== "object") return null;
-    return { document: String(p.document || ""), section: String(p.section || ""), page: p.page ?? null, text: String(p.text || "") };
-  } catch { return null; }
-}
-
 // "13.2 Verify Before Quoting / 5.3 KYC Refresh Requirement" -> ["13.2", "5.3"]
 // "11.4, 12.6" -> ["11.4", "12.6"] - the leading numeric token of each
 // slash/comma-separated clause, for filter matching; display uses the full string.
@@ -115,7 +104,7 @@ function FindingsSection({ onOpenTrace }: { onOpenTrace: (id: string) => void })
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
-  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null } | null>(null);
+  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail: string; source: string } | null>(null);
 
   // ── Filters, one per displayed column ──
   const [range, setRange] = useState<number | null>(86400);
@@ -252,7 +241,7 @@ function FindingsSection({ onOpenTrace }: { onOpenTrace: (id: string) => void })
                 const src = parseSource(r.source);
                 return (
                   <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
-                      onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null })}>
+                      onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source })}>
                     <td className="mono">{r.event_id || "—"}</td>
                     <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
                     <td className="mono">{r.family}</td>
@@ -269,7 +258,8 @@ function FindingsSection({ onOpenTrace }: { onOpenTrace: (id: string) => void })
       </section>
 
       {flyout && (
-        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId} refreshKey={0}
+        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId}
+                       findingDetail={flyout.detail} findingSource={flyout.source} refreshKey={0}
                        onClose={() => setFlyout(null)} onOpenTrace={onOpenTrace} />
       )}
     </>
