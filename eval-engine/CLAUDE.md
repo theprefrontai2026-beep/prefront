@@ -21,14 +21,53 @@ services, not here - eval-engine only ever reads the published YAML.
 Population-level Family 3 checks (`outcome_consistency`, `invocation_drift`,
 `verdict_trend`) are still Phase C (step 17).
 
-## Hard rule: the engine names no demo
+## Hard rule: the engine names no demo, and no demo's domain
 
-`grep -rin "loanpro\|securebank" evalengine/` must be zero hits, forever -
-enforced by `tests/test_domain_independence.py`. This applies to `.py` AND to
-the bundled `evalengine/profiles/*.yaml` - a docstring or a YAML comment
-naming a demo fails the guard exactly like code would (caught once during
-Phase A: a comment in `visibility_profile.default.yaml` referencing
-`loanpro-demo/CLAUDE.md`).
+`tests/test_domain_independence.py` enforces this with **two guards of
+deliberately different strictness**:
+
+1. **Deployment names** - `grep -rin "loanpro\|securebank" evalengine/` must be
+   zero hits, forever. Applies to `.py` AND to the bundled
+   `evalengine/profiles/*.yaml`, comments included: a docstring or a YAML
+   comment naming a demo fails exactly like code would (caught once during
+   Phase A: a comment in `visibility_profile.default.yaml` referencing
+   `loanpro-demo/CLAUDE.md`).
+2. **Domain nouns** (`DOMAIN_NOUNS`: loan, applicant, credit/score, tier,
+   account, teller, ssn, …) may not appear in **executable** code - identifiers,
+   string literals, dict keys, f-string text. **Comments and docstrings are
+   exempt on purpose**: several modules explain a general mechanism via a
+   concrete loan example (`family2/entity_consistency.py`, `family1/facts.py`),
+   and that documentation is worth keeping. What must stay domain-free is
+   anything the engine can BRANCH on.
+
+Guard 2 exists because guard 1 is weaker than the principle it is named for -
+it passes cleanly on an engine that hardcodes `credit_score` or `applicant_id`,
+since neither string contains a deployment name. Mechanics worth knowing before
+editing it:
+
+- Tokens are split into word PARTS before matching (`credit_score` →
+  {credit, score}; `applicantId` → {applicant, id}). A substring match would
+  flag `frontier` for "tier" and `payload` for "loan" - both real words here,
+  and both covered by a regression test.
+- Docstrings are located via `ast`, by node position, not by a "is this string
+  the first statement?" token heuristic - that heuristic has to special-case
+  module docstrings, decorated defs and `if:`-bodies, and gets one of them
+  wrong quietly, which is the exact failure mode this file exists to prevent.
+- The guard carries **positive controls** (it must FIRE on an injected
+  `credit_score`, on a string literal, on an f-string) alongside the negative
+  ones. A detector with no test that it can fire is the recurring bug shape in
+  the check table below; the guard is not exempt from it.
+- Every listed noun probed to zero hits when this shipped, so there is no
+  allowlist. If one ever becomes genuinely generic engine vocabulary, **rename
+  the engine's use of it** rather than deleting the word - or argue the
+  exemption explicitly in the diff.
+
+Scope is `eval-engine/evalengine/` only. The other engine packages are not
+covered: `semanticlayer/mapper.py`, `skillbuilder/llm.py` and
+`semanticlayer/preflight.py` carry domain nouns *deliberately*, as few-shot
+examples inside LLM prompt templates, and `skillbuilder/domain_packs/*.yaml` is
+config that names a demo by design. Extending guard 2 there needs those
+exemptions designed first, not a wider `rglob`.
 
 ## Pipeline
 
