@@ -808,6 +808,16 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   }, [sessionId, refreshKey]);
 
   const steps = useMemo(() => stepsOf(spans), [spans]);
+  // One (asked, answered) pair per turn, from the turn/answer steps stepsOf
+  // already orders - the same spans, just the two ends of each turn.
+  const conversation = useMemo(() => {
+    const out: { turn: number; asked: string; answered: string }[] = [];
+    for (const st of steps) {
+      if (st.kind === "turn") out.push({ turn: st.turn, asked: st.text || "", answered: "" });
+      else if (st.kind === "answer") { const last = out[out.length - 1]; if (last && last.turn === st.turn) last.answered = st.text || ""; }
+    }
+    return out;
+  }, [steps]);
   const root = spans.find((s) => s.name.startsWith("session ")) ?? spans.find((s) => /^turn /.test(s.name)) ?? spans[0];
   const sel = spans.find((s) => s.span_id === selected) ?? null;
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
@@ -836,6 +846,26 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
         </div>
       )}
       {err && <div className="pf-oob-error">{err}</div>}
+      {/* ── The conversation itself: what the user asked, what the agent
+          answered, per turn - always visible (the full trace below is
+          collapsed), because a finding can't be judged without it. ── */}
+      {conversation.length > 0 && (
+        <div className="pf-oob-convo">
+          {conversation.map((c) => (
+            <div key={c.turn} className="pf-oob-convo-turn">
+              {conversation.length > 1 && <div className="pf-oob-turn-sep">turn {c.turn}</div>}
+              <div className="pf-oob-convo-msg user">
+                <span className="pf-oob-convo-who">User asked</span>
+                <div className="pf-oob-convo-text">{c.asked || <span className="pf-oob-subtle">(no user message captured)</span>}</div>
+              </div>
+              <div className="pf-oob-convo-msg agent">
+                <span className="pf-oob-convo-who">Agent answered</span>
+                <div className="pf-oob-convo-text">{c.answered || <span className="pf-oob-subtle">(no answer captured)</span>}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="pf-oob-detail-body">
         <details className="pf-oob-steps-collapse">
           <summary>Full trace ({steps.length || "…"} steps)</summary>

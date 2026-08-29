@@ -1653,6 +1653,16 @@ select { cursor: pointer; }
 .pf-oob-step-text.mono { font-family: var(--app-font-mono); font-size: 11px; }
 .pf-oob-turn-sep { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 0; }
 
+/* Conversation block (SessionDetail): user asked / agent answered per turn,
+   always visible above the collapsed trace. */
+.pf-oob-convo { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 14px; }
+.pf-oob-convo-turn { display: flex; flex-direction: column; gap: 6px; }
+.pf-oob-convo-msg { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }
+.pf-oob-convo-msg.user { background: var(--blue-light); }
+.pf-oob-convo-msg.agent { background: var(--surface-alt); border: 1px solid var(--line); }
+.pf-oob-convo-who { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding-top: 3px; }
+.pf-oob-convo-text { color: var(--ink); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+
 /* Full trace, collapsed by default (SessionDetail) */
 .pf-oob-steps-collapse summary {
   font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer;
