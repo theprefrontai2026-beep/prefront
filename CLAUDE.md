@@ -436,33 +436,70 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
 - Cost is a list-price estimate from `config.price_for` (prefix match on model
   name; `OOB_MODEL_PRICES` JSON overrides). Unknown model ⇒ $0.
 - UI: `components/Observability.tsx` (tab id `oob`; views Overview / Sessions / Traces /
-  LLM / Ingestion / **Findings**), CSS under `.pf-oob-*` (the Findings view and
-  `SessionDetail`'s verdict/conformance chips reuse this same prefix — no new
-  CSS needed). Findings queries eval-engine's `/eval/*` (autonomous_build.md
-  step 16), a separate nginx `location /eval/` block (and `VITE_EVAL_TARGET`
-  dev proxy) alongside the existing `/oob/` one; Verdict's `SessionDetail.tsx`
-  and `verdict-nginx.conf` carry the same addition (its own hand-curated CSS
-  copy already had the `.pf-oob-chip.red/green/amber` tone classes). Vite
-  dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
+  LLM / Ingestion), CSS under `.pf-oob-*`. Findings queries eval-engine's `/eval/*`
+  (autonomous_build.md step 16), a separate nginx `location /eval/` block (and
+  `VITE_EVAL_TARGET` dev proxy) alongside the existing `/oob/` one; Verdict's
+  `SessionDetail.tsx` and `verdict-nginx.conf` carry the same addition (its own
+  hand-curated CSS copy already had the `.pf-oob-chip.red/green/amber` tone
+  classes). Vite dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
+- **Findings lives in `components/DecisionTraces.tsx` now, not Observability** -
+  a `FindingsSection`, toggled via a "Decisions | Findings" sub-nav at the top
+  of that tab (`.pf-oob-view`/`.pf-oob-views`, reused from Observability's own
+  tab-bar styling), moved there because findings are a governance-decision-log
+  concept like decision traces are, not an observability-pipeline-health one.
+  `Observability.tsx` exports `EvalVerdict`/`ConformanceTag`/`STATUS_TONE`/
+  `SessionFlyout` for `DecisionTraces.tsx` to import (`SessionDetail` was
+  already exported) - same app, so sharing code across this file boundary is
+  fine, unlike the deliberate non-sharing between `prefront-app` and `verdict`.
+  Every displayed column is filterable (time range, event id, family, check,
+  effect, policy section, and a free-text search over detail/policy text) -
+  fetches the most recent 500 findings once (server-sorted, the endpoint's own
+  cap) and filters/paginates entirely client-side, same pattern the Decisions
+  log above it already used (fetch a recent slice, slice-and-dice in the
+  browser) rather than a filter query param per column. `session_id` is
+  deliberately NOT a displayed column (only used internally to open the
+  flyout) - per explicit request.
+- **Each finding states what went wrong in plain language, plus its policy
+  citation and a verbatim quote when the check has one.** `Verdict.detail`
+  (already human-readable, e.g. `"rule R-KYC-PRECONDITION: quote_terms fired
+  without 'verify_kyc' established first"`) renders above a styled blockquote
+  of `source.text` (`.pf-find-quote`) when present, with `source.document`/
+  `section` cited below the quote. Family 1 always has quotable `text` (the
+  rule pack's materialized source citation, Hard Rule 17); Family 3 has a
+  `section` with NO `text` (the intent catalog only carries section numbers,
+  not policy prose) - shown as a plain citation, never a fabricated quote;
+  Family 2 has neither - shown as `—`, correctly, not an error. The Policy
+  filter's dropdown values are the LEADING numeric token of each `/`- or
+  `,`-separated clause in `source.section` (`policyNumbers()` in
+  `DecisionTraces.tsx`) - e.g. `"13.2 Verify Before Quoting / 5.3 KYC Refresh
+  Requirement"` yields filter options `13.2` and `5.3`; the table cell still
+  shows the full string with titles.
 - **Clicking a Findings row opens a `SessionFlyout`**, a slide-in side panel
   (`.pf-flyout*` CSS, ported into `prefront-app/src/index.css` from Verdict's
   `SessionRunner.tsx`/`index.css` — no shared code between the two apps, so
   keep both copies in sync by hand) wrapping the SAME `SessionDetail` used by
-  the Sessions view, rather than navigating away to the Sessions tab. It
-  pre-selects the finding's own offending span (`SessionDetail`'s new
-  `initialSpanId` prop, from `evidence_span_ids[0]`) so the SpanInspector's
-  raw input/output is visible immediately, no extra click. Escape and a
-  backdrop click both close it; "jump to trace" closes the flyout and
-  switches to the Traces tab. Live-verified in a real browser.
-- **"Clear ClickHouse" (Ingestion view) clears ALL FIVE ClickHouse tables, not
-  just oob-ingest's.** `DELETE /oob/spans` (`ch.truncate()`, oob-ingest) only
-  ever cleared `spans`/`ingest_state` — it left eval-engine's `eval_verdicts`/
-  `eval_conformance_tags`/`eval_evaluated_sessions` untouched, so Findings kept
-  showing stale rows after a "clear". The button now also fires
-  `DELETE /eval/verdicts` (eval-engine's own truncate-all, already existed for
-  its own dev use) in parallel. `FindingsView` didn't self-refresh on this
-  action either (no `refreshKey` wired) - it now takes the same `tick`
-  `refreshKey` prop `TracesView`/`SessionsView` already used. Both gaps found
+  Observability's Sessions view, rather than navigating away. It pre-selects
+  the finding's own offending span (`SessionDetail`'s `initialSpanId` prop,
+  from `evidence_span_ids[0]`) so the SpanInspector's raw input/output is
+  visible immediately, no extra click, and shows the finding's `event_id` in
+  the flyout header for reference. Escape and a backdrop click both close it;
+  "jump to trace" (`onOpenTrace`, threaded from `App.tsx` as
+  `onOpenObservability={() => setTab("oob")}`, since Decision Traces has no
+  Traces view of its own to deep-link into) switches to the Observability tab.
+  Live-verified in a real browser, from both Findings' new home and (before
+  the move) the old one.
+- **"Clear ClickHouse" (Observability's Ingestion view) clears ALL FIVE
+  ClickHouse tables, not just oob-ingest's.** `DELETE /oob/spans`
+  (`ch.truncate()`, oob-ingest) only ever cleared `spans`/`ingest_state` — it
+  left eval-engine's `eval_verdicts`/`eval_conformance_tags`/
+  `eval_evaluated_sessions` untouched, so Findings kept showing stale rows
+  after a "clear". The button now also fires `DELETE /eval/verdicts`
+  (eval-engine's own truncate-all, already existed for its own dev use) in
+  parallel. Findings didn't self-refresh on this action either (no
+  `refreshKey` wired to the old `FindingsView`) - moot now that Findings
+  fetches its own page-load snapshot in `DecisionTraces.tsx`'s
+  `FindingsSection` rather than reading Observability's shared `tick`. Both
+  gaps found
   and fixed together; Phoenix is untouched by design (oob-ingest re-pulls from
   it), so `spans` repopulates on the next poll — that's a re-pull, not
   retention, and is what the confirm dialog now says explicitly.

@@ -77,14 +77,16 @@ class Finding:
     mode: Mode
     indeterminate_reason: Optional[IndeterminateReason] = None
     evaluated_at: str = ""  # ISO timestamp, bookkeeping only - never part of dedup identity
-    # A fresh uuid4 per Finding, assigned by the combinator (combine_oob) at
-    # persistence time - never by the check that emitted the Verdict (checks
-    # stay pure/deterministic, same reason version stamps are stamped here
-    # and not by the check). NOT part of the ClickHouse dedup identity
-    # (`ORDER BY (session_id, check_id, rule_id, evidence_excerpt)`, ch.py) -
-    # two persisted rows for the "same" logical finding still collapse to one
-    # via ReplacingMergeTree; event_id just names THIS row, the one that won.
-    # A stable API/UI key (React list key, deep-link, "copy finding id") that
+    # A monotonic serial number (as a decimal string, e.g. "42"), assigned by
+    # ch.insert_verdicts at PERSIST time - never by the combinator or the
+    # check that emitted the Verdict (checks stay pure/deterministic, Hard
+    # Rule 3; this needs a live counter against the store, which only the
+    # storage layer has). Left "" here on purpose - ch.py fills it in right
+    # before the ClickHouse insert. NOT part of the dedup identity (`ORDER BY
+    # (session_id, check_id, rule_id, evidence_excerpt)`) - two persisted
+    # rows for the "same" logical finding still collapse to one via
+    # ReplacingMergeTree; event_id just names THIS row, the one that won. A
+    # stable API/UI key (React list key, deep-link, "copy finding id") that
     # doesn't require composing one from several fields.
     event_id: str = ""
 

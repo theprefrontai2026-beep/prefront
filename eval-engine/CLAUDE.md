@@ -111,22 +111,43 @@ own `policy_document`/`clause_id`/`section`/`page`/`clause_text` columns per
 citation Family 2 never has (`source` stays empty for every Family 2 tag -
 Hard Rule 17).
 
-**`Finding.event_id`**: a fresh `uuid4` assigned per Finding, by `combine_oob`
-(the combinator - never by the check that emitted the underlying `Verdict`,
-same reasoning as version stamps: checks stay pure, Hard Rule 3). It is NOT
-part of `eval_verdicts`' dedup identity (`ORDER BY (session_id, check_id,
+**`Finding.event_id`**: a monotonic serial number (decimal string, e.g.
+`"42"`) assigned per Finding at PERSIST time - `ch.py`'s `insert_verdicts`
+(`_next_event_ids`), never by `combine_oob` or the check that emitted the
+underlying `Verdict` (checks and the combinator stay pure, Hard Rule 3 -
+assigning a serial number needs a live counter against the store, which only
+the storage layer has; `combine_oob` leaves `event_id=""` on purpose). It is
+NOT part of `eval_verdicts`' dedup identity (`ORDER BY (session_id, check_id,
 rule_id, evidence_excerpt)`) - two persisted rows for the "same" logical
 finding still collapse to one via ReplacingMergeTree, and `event_id` just
 names whichever row won, not a lifetime identity for the finding concept
-itself. Exists so a caller (the UI's Findings flyout, an API consumer) has
-one opaque stable field to key/reference/deep-link a specific finding by,
+itself. Exists so a caller (the UI's Findings flyout/table, an API consumer)
+has one opaque stable field to key/reference/deep-link a specific finding by,
 instead of composing one from several columns. `ConformanceTag` deliberately
 does NOT get one - the user's request was specifically about findings, and
 extending it to conformance tags is a separate decision nobody has asked
-for yet. The ClickHouse column self-heals via `ADD COLUMN IF NOT EXISTS`
-(`ch.py`'s `_ADDED_VERDICT_COLUMNS`, same convention as oob-ingest's
-`_ADDED_COLUMNS`) - a row persisted before this shipped reads back as
-`event_id=""`, never null, never an error.
+for yet.
+
+Originally a `uuid4` (assigned by `combine_oob`); switched to a serial
+number per explicit request ("can we use a serial number instead of a
+uuid"). **Not a ClickHouse-native auto-increment** - this ClickHouse version
+(24.8) predates `generateSerialID()`, and a MergeTree has no sequence type -
+so it's a process-local `threading.Lock`-protected counter
+(`ch._event_seq`/`_next_event_ids`), seeded lazily from `SELECT
+max(toUInt64OrZero(event_id))` on first use (an old uuid4-shaped or empty
+`event_id` parses to 0 via `toUInt64OrZero`, so it never collides with or
+influences the new sequence - counting just starts at 1). Safe against this
+service's actual concurrency profile: eval-engine is a SINGLE uvicorn
+process (no `--workers`), with exactly two callers that can race each
+other - the background `Worker`'s asyncio task and a manual `POST
+/eval/run`, both landing in `insert_verdicts` via `anyio`'s threadpool - so
+a plain lock is sufficient; there is no second process or pod to coordinate
+a real sequence with. The ClickHouse column self-heals via `ADD COLUMN IF
+NOT EXISTS` (`ch.py`'s `_ADDED_VERDICT_COLUMNS`, same convention as
+oob-ingest's `_ADDED_COLUMNS`) - a row persisted before this shipped reads
+back as `event_id=""`, and one persisted during the brief uuid4 window
+keeps its uuid4 forever unless the session is re-evaluated - both self-heal
+forward, never an error either way.
 
 ## Family 1 rule shapes: what the current compiler can and can't lower
 
@@ -424,18 +445,23 @@ session. `grading_harness.py` drives this for POP-01/02/03 (`POP_VARIANT` /
 `POP_DRIFT` / `POP_RULE_TREND` maps in that file - demo-specific knowledge
 that belongs in the fixture-side harness, never in eval-engine).
 
-Step 16 (Findings UI) is also DONE: `prefront-app`'s Observability tab
-gained a "Findings" view over `/eval/findings` (family/check filters,
-click-through to `SessionDetail`), and `SessionDetail` (both the main app's
-and Verdict's copy) now shows real `/eval/sessions/<id>/verdicts` +
-`/eval/sessions/<id>/conformance` chips alongside the existing static
-"checks this scenario is built to trigger" ones - the former is what the
-harness EXPECTS, the latter is what the engine ACTUALLY found. nginx (both
-`nginx.conf` and `verdict-nginx.conf`) gained a `/eval/` proxy block
-mirroring the existing `/oob/` one; `ui`/`verdict` compose services now
-depend on `eval-engine`. Typechecked clean via the documented WSL docker-tsc
-workaround; not yet exercised against a running eval-engine in a browser
-(same "not run live" caveat as the grading harness).
+Step 16 (Findings UI) is DONE and live-verified: `prefront-app` gained a
+Findings view over `/eval/findings` (originally in the Observability tab,
+later moved into `DecisionTraces.tsx` as a "Decisions | Findings" sub-nav -
+see root CLAUDE.md's OOB section - once real usage showed findings are a
+governance-decision-log concept, not an observability-pipeline-health one;
+also gained per-column filters, a policy-citation+quote block per finding,
+and a monotonic `event_id`, none of which existed in the first pass), and
+`SessionDetail` (both the main app's and Verdict's copy) shows real
+`/eval/sessions/<id>/verdicts` + `/eval/sessions/<id>/conformance` chips
+alongside the existing static "checks this scenario is built to trigger"
+ones - the former is what the harness EXPECTS, the latter is what the
+engine ACTUALLY found. nginx (both `nginx.conf` and `verdict-nginx.conf`)
+has a `/eval/` proxy block mirroring the existing `/oob/` one; `ui`/`verdict`
+compose services depend on `eval-engine`. Live-verified repeatedly in a real
+browser against the running stack (real findings, real policy quotes, a
+real flyout) - the original "not yet exercised in a browser" caveat no
+longer applies.
 
 Step 19 (Preflight) is DONE and live-verified end to end:
 `semantic-layer/semanticlayer/preflight.py` (`CandidateScenario`,

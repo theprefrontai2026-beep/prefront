@@ -90,26 +90,27 @@ type Scenario = { scenario_id: string; runs: number; capability: string; role: s
 // eval-engine (/eval/*) — verdicts are family2/family1/family3 checks over a
 // session; findings are the violated subset; conformance tags are the
 // satisfied-and-exercised subset with a policy citation when one exists.
-type EvalVerdict = {
+// Exported: DecisionTraces.tsx's Findings section (moved there from this
+// file - see the VIEWS comment above) reads the same /eval/* shapes.
+export type EvalVerdict = {
   session_id: string; check_id: string; family: string; rule_id: string;
   status: "satisfied" | "violated" | "indeterminate"; effect: string;
   indeterminate_reason: string; detail: string; evidence_span_ids: string[];
   evidence_excerpt: string; source: string; mode: string; engine_version: string;
   binding_profile_version: string; visibility_profile_version: string;
   rule_pack_version: string; catalog_version: string; evaluated_at: string;
-  // A fresh uuid4 per finding, assigned when it's persisted (combinator.py's
-  // combine_oob) - empty ("") on any row written before this field existed
-  // (the ClickHouse column self-heals via ADD COLUMN IF NOT EXISTS, but old
-  // rows keep the type default). Falls back to the old composite key.
+  // A monotonic serial number (decimal string, e.g. "42"), assigned at
+  // PERSIST time (ch.py's insert_verdicts) - "" on any row written before
+  // this field existed, or a leftover uuid4 from the brief window it was
+  // one (both self-heal forward: a re-evaluated session gets a real serial).
   event_id: string;
 };
-type ConformanceTag = {
+export type ConformanceTag = {
   session_id: string; check_id: string; rule_id: string; policy_document: string;
   clause_id: string; section: string; page: number; clause_text: string;
   evidence_span_ids: string[]; engine_version: string; rule_pack_version: string;
   catalog_version: string; evaluated_at: string;
 };
-type FindingsPage = { findings: EvalVerdict[]; total: number; limit: number; offset: number };
 
 /* ── helpers ────────────────────────────────────────────────────────────── */
 
@@ -117,11 +118,15 @@ const RANGES: { label: string; seconds: number }[] = [
   { label: "15m", seconds: 900 }, { label: "1h", seconds: 3600 }, { label: "6h", seconds: 6 * 3600 },
   { label: "24h", seconds: 86400 }, { label: "7d", seconds: 7 * 86400 }, { label: "All", seconds: 0 },
 ];
-const VIEWS = ["overview", "sessions", "traces", "llm", "ingestion", "findings"] as const;
+// "findings" used to live here as a view; it moved to the Decision Traces
+// tab (DecisionTraces.tsx imports SessionFlyout, exported below, for the
+// same click-a-finding-to-see-its-trace flyout) - see that file's own
+// FindingsSection for why: findings are a governance-decision-log concept
+// like decision traces are, not an observability-pipeline-health one.
+const VIEWS = ["overview", "sessions", "traces", "llm", "ingestion"] as const;
 type View = typeof VIEWS[number];
 const VIEW_LABEL: Record<View, string> = {
   overview: "Overview", sessions: "Sessions", traces: "Traces", llm: "LLM", ingestion: "Ingestion",
-  findings: "Findings",
 };
 
 const num = (n: number | undefined | null) => (n ?? 0).toLocaleString();
@@ -822,7 +827,7 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, onClose, o
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */
-function SessionFlyout({ sessionId, initialSpanId, eventId, refreshKey, onClose, onOpenTrace }: {
+export function SessionFlyout({ sessionId, initialSpanId, eventId, refreshKey, onClose, onOpenTrace }: {
   sessionId: string; initialSpanId?: string | null; eventId?: string | null; refreshKey: number;
   onClose: () => void; onOpenTrace: (id: string) => void;
 }) {
@@ -981,87 +986,18 @@ function IngestionView({ status, scenarios, onSync, onClear, busy }: {
 }
 
 /* ── findings (eval-engine) ────────────────────────────────────────────── */
+/* FindingsView/StatusChip used to live here - moved to DecisionTraces.tsx's
+   FindingsSection (see the VIEWS comment above). STATUS_TONE stays here
+   (SessionDetail's own verdict chips still use it) and is exported for that
+   moved section to reuse rather than redefine. */
 
-const STATUS_TONE: Record<string, string> = { violated: "red", satisfied: "green", indeterminate: "amber" };
-
-function StatusChip({ status }: { status: string }) {
-  return <span className={`pf-oob-chip ${STATUS_TONE[status] || ""}`}>{status}</span>;
-}
-
-function FindingsView({ refreshKey, onOpenFinding }: { refreshKey: number; onOpenFinding: (sessionId: string, spanId: string | null, eventId: string | null) => void }) {
-  const [family, setFamily] = useState("");
-  const [checkId, setCheckId] = useState("");
-  const [rows, setRows] = useState<EvalVerdict[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [err, setErr] = useState("");
-  const limit = 50;
-
-  useEffect(() => { setOffset(0); }, [family, checkId]);
-  useEffect(() => {
-    let alive = true;
-    getJSON<FindingsPage>(`/eval/findings${qs({ family, check_id: checkId, limit, offset })}`)
-      .then((d) => { if (alive) { setRows(d.findings); setTotal(d.total); setErr(""); } })
-      .catch((e) => { if (alive) setErr(String(e?.message || e)); });
-    return () => { alive = false; };
-  }, [family, checkId, offset, refreshKey]);
-
-  const checkIds = useMemo(() => Array.from(new Set(rows.map((r) => r.check_id))).sort(), [rows]);
-  const sel = (label: string, value: string, set: (v: string) => void, opts: string[]) => (
-    <label className="pf-oob-filter">
-      <span>{label}</span>
-      <select value={value} onChange={(e) => set(e.target.value)}>
-        <option value="">All</option>
-        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
-    </label>
-  );
-
-  return (
-    <div className="pf-oob-stack">
-      <section className="pf-panel">
-        <div className="pf-oob-filters">
-          {sel("Family", family, setFamily, ["family1", "family2", "family3"])}
-          {sel("Check", checkId, setCheckId, checkIds)}
-          <span className="pf-oob-subtle">Violations only — eval-engine's shadow evaluation of every ingested session (see eval-engine/CLAUDE.md). A clean stack shows none.</span>
-        </div>
-        {err && <div className="pf-oob-error">Findings backend: {err}</div>}
-        {rows.length ? (
-          <table className="pf-oob-table">
-            <thead><tr><th>When</th><th>Session</th><th>Family</th><th>Check</th><th>Effect</th><th>Rule</th><th>Detail</th></tr></thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
-                    title={r.event_id ? `finding ${r.event_id}` : undefined}
-                    onClick={() => onOpenFinding(r.session_id, r.evidence_span_ids?.[0] ?? null, r.event_id || null)}>
-                  <td className="nowrap">{when(r.evaluated_at)}</td>
-                  <td className="mono">{r.session_id}</td>
-                  <td className="mono">{r.family}</td>
-                  <td><StatusChip status={r.status} />{" "}{r.check_id}</td>
-                  <td className="mono">{r.effect}</td>
-                  <td className="mono">{r.rule_id || "—"}</td>
-                  <td className="pf-oob-preview" title={r.detail}>{r.detail}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : <Empty text={err ? "" : "No findings in range — either nothing violated, or Family 1/3 have no rule_pack/intent_catalog configured."} />}
-        <div className="pf-oob-pager">
-          <span>{total ? `${offset + 1}–${Math.min(total, offset + rows.length)} of ${num(total)}` : "0 findings"}</span>
-          <button className="pf-btn sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>‹ Prev</button>
-          <button className="pf-btn sm" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}>Next ›</button>
-        </div>
-      </section>
-    </div>
-  );
-}
+export const STATUS_TONE: Record<string, string> = { violated: "red", satisfied: "green", indeterminate: "amber" };
 
 /* ── root ───────────────────────────────────────────────────────────────── */
 
 export default function Observability({ active = true }: { active?: boolean }) {
   const [view, setView] = useState<View>("overview");
   const [openSess, setOpenSess] = useState<string | null>(null);
-  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null } | null>(null);
   const [since, setSince] = useState<number>(86400);
   const [project, setProject] = useState("");
   const [auto, setAuto] = useState(true);
@@ -1101,7 +1037,6 @@ export default function Observability({ active = true }: { active?: boolean }) {
 
   const goTrace = (id: string | null) => { setOpenTrace(id); if (id) setView("traces"); };
   const goSession = (id: string | null) => { setOpenSess(id); if (id) setView("sessions"); };
-  const openFinding = (sessionId: string, spanId: string | null, eventId: string | null) => setFlyout({ sessionId, spanId, eventId });
 
   const sync = async () => {
     setBusy(true);
@@ -1156,11 +1091,6 @@ export default function Observability({ active = true }: { active?: boolean }) {
       {view === "traces" && <TracesView since={since} project={project} facets={facets} refreshKey={tick} initialTrace={openTrace} onOpenTrace={goTrace} />}
       {view === "llm" && <LlmView data={llm} onOpenTrace={goTrace} />}
       {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}
-      {view === "findings" && <FindingsView refreshKey={tick} onOpenFinding={openFinding} />}
-      {flyout && (
-        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId} refreshKey={tick}
-                       onClose={() => setFlyout(null)} onOpenTrace={goTrace} />
-      )}
     </div>
   );
 }

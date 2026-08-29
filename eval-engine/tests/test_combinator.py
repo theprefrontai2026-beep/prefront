@@ -59,10 +59,12 @@ def test_violations_and_conformance_tags_partition_by_status():
     assert len(conformance_tags(findings)) == 1
 
 
-def test_combine_oob_assigns_a_unique_event_id_per_finding():
+def test_combine_oob_leaves_event_id_unassigned():
+    # event_id is a monotonic serial number assigned at PERSIST time
+    # (ch.insert_verdicts, see test_ch_event_id.py) - the combinator has no
+    # counter to hand one out from and shouldn't (Hard Rule 3: checks and
+    # the combinator stay pure).
     visibility = VisibilityProfile(version="1", captures={})
-    verdicts = [_v("a", "satisfied", "allow"), _v("b", "violated", "block"), _v("c", "indeterminate", "flag")]
+    verdicts = [_v("a", "satisfied", "allow"), _v("b", "violated", "block")]
     findings = combine_oob(verdicts, visibility, VersionStamp(), "2026-01-01T00:00:00Z")
-    ids = [f.event_id for f in findings]
-    assert all(ids), "every finding must get a non-empty event_id"
-    assert len(set(ids)) == len(ids), "event_ids must be unique, even for verdicts from the same session"
+    assert all(f.event_id == "" for f in findings)

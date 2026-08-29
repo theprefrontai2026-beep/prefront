@@ -335,7 +335,7 @@ export default function App() {
             <Dashboard demo={demo} onViewAllTraces={() => setTab("traces")} />
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
-            <DecisionTraces active={tab === "traces"} demo={demo} />
+            <DecisionTraces active={tab === "traces"} demo={demo} onOpenObservability={() => setTab("oob")} />
           </div>
           <div className={tab === "flows" ? "" : "tab-hidden"}>
             <IntentFlows active={tab === "flows"} demo={demo} />

@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FeedDecision, Trace } from "../hooks/useDecisionFeed";
 import type { DemoConfig } from "../demos";
+import { SessionFlyout, type EvalVerdict } from "./Observability";
 
 const DECISIONS: FeedDecision[] = ["ALLOWED", "MASKED", "APPROVAL", "BLOCKED"];
 
@@ -51,7 +52,232 @@ function Select({ label, value, options, onChange }: {
   );
 }
 
-export default function DecisionTraces({ active = true, demo }: { active?: boolean; demo: DemoConfig }) {
+/* ── Findings: eval-engine's shadow-evaluation log, moved here from the
+   Observability tab (see Observability.tsx's VIEWS comment) — it's a
+   governance-decision-log concept like the traces above, not an
+   observability-pipeline-health one. Every displayed column is filterable,
+   session_id is never shown (only used internally to open the trace
+   flyout), and each row states what went wrong in plain language plus the
+   policy section + verbatim quote it cites, when the check has one
+   (Family 1 always does; Family 3 has a section with no quotable text -
+   the intent catalog doesn't carry policy prose; Family 2 has neither -
+   see eval-engine/CLAUDE.md's Hard Rule 17). ──────────────────────────── */
+
+type PolicySource = { document: string; section: string; page: number | null; text: string };
+
+function parseSource(raw: string): PolicySource | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== "object") return null;
+    return { document: String(p.document || ""), section: String(p.section || ""), page: p.page ?? null, text: String(p.text || "") };
+  } catch { return null; }
+}
+
+// "13.2 Verify Before Quoting / 5.3 KYC Refresh Requirement" -> ["13.2", "5.3"]
+// "11.4, 12.6" -> ["11.4", "12.6"] - the leading numeric token of each
+// slash/comma-separated clause, for filter matching; display uses the full string.
+function policyNumbers(section: string): string[] {
+  if (!section) return [];
+  return section.split(/[/,]/).map((s) => (s.trim().match(/^[\d.]+/) || [])[0]).filter(Boolean) as string[];
+}
+
+const FINDING_RANGES: { label: string; seconds: number | null }[] = [
+  { label: "1h", seconds: 3600 }, { label: "24h", seconds: 86400 }, { label: "7d", seconds: 604800 },
+  { label: "All", seconds: null },
+];
+
+function findingWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function WhatWentWrong({ r }: { r: EvalVerdict }) {
+  const src = parseSource(r.source);
+  return (
+    <div className="pf-find-wrong">
+      <div className="pf-find-detail">{r.detail}</div>
+      {src?.text && (
+        <blockquote className="pf-find-quote">
+          “{src.text.trim()}”
+          <cite>{src.document}{src.section ? ` · §${src.section}` : ""}</cite>
+        </blockquote>
+      )}
+      {!src?.text && src?.section && (
+        <div className="pf-find-cite muted">{src.document} · §{src.section}</div>
+      )}
+    </div>
+  );
+}
+
+function FindingsSection({ onOpenTrace }: { onOpenTrace: (id: string) => void }) {
+  const [rows, setRows] = useState<EvalVerdict[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null } | null>(null);
+
+  // ── Filters, one per displayed column ──
+  const [range, setRange] = useState<number | null>(86400);
+  const [eventId, setEventId] = useState("");
+  const [family, setFamily] = useState("");
+  const [checkId, setCheckId] = useState("");
+  const [effect, setEffect] = useState("");
+  const [policyNum, setPolicyNum] = useState("");
+  const [q, setQ] = useState("");
+
+  const load = useCallback(async () => {
+    setStatus("loading");
+    setError("");
+    try {
+      // The most recent 500 (server-sorted by evaluated_at DESC, the
+      // endpoint's own cap) - filtered further client-side below, same
+      // pattern as the Decisions log above (fetch a recent slice once,
+      // slice-and-dice in the browser rather than a filter param per column).
+      const res = await fetch("/eval/findings?limit=500");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
+      setRows(json.findings || []);
+      setStatus("ready");
+    } catch (e: any) {
+      setError(String(e?.message || e));
+      setStatus("error");
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const families = useMemo(() => uniqueSorted(rows.map((r) => r.family)), [rows]);
+  const checks = useMemo(() => uniqueSorted(rows.map((r) => r.check_id)), [rows]);
+  const effects = useMemo(() => uniqueSorted(rows.map((r) => r.effect)), [rows]);
+  const policies = useMemo(
+    () => Array.from(new Set(rows.flatMap((r) => policyNumbers(parseSource(r.source)?.section || "")))).sort(),
+    [rows],
+  );
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const cutoff = range ? Date.now() - range * 1000 : null;
+    return rows.filter((r) => {
+      if (cutoff && new Date(r.evaluated_at).getTime() < cutoff) return false;
+      if (eventId.trim() && !r.event_id.includes(eventId.trim())) return false;
+      if (family && r.family !== family) return false;
+      if (checkId && r.check_id !== checkId) return false;
+      if (effect && r.effect !== effect) return false;
+      if (policyNum) {
+        const src = parseSource(r.source);
+        if (!policyNumbers(src?.section || "").includes(policyNum)) return false;
+      }
+      if (needle) {
+        const src = parseSource(r.source);
+        const hay = [r.detail, src?.section, src?.text, src?.document, r.check_id].join(" ").toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    });
+  }, [rows, range, eventId, family, checkId, effect, policyNum, q]);
+
+  const activeFilters = (eventId.trim() ? 1 : 0) + (family ? 1 : 0) + (checkId ? 1 : 0) + (effect ? 1 : 0) + (policyNum ? 1 : 0) + (q.trim() ? 1 : 0);
+  const clearAll = () => { setEventId(""); setFamily(""); setCheckId(""); setEffect(""); setPolicyNum(""); setQ(""); };
+
+  return (
+    <>
+      <section className="pf-panel">
+        <div className="pf-dash-panel-head">
+          <h2>Findings</h2>
+          <button className="pf-dash-link" type="button" onClick={load} disabled={status === "loading"}>
+            {status === "loading" ? "Loading…" : "Refresh ↻"}
+          </button>
+        </div>
+        <p className="pf-hint" style={{ marginTop: 0 }}>
+          eval-engine's shadow evaluation of every ingested session — violations only (see
+          eval-engine/CLAUDE.md). Never on the request path; nothing here blocked anything, it's what
+          the checks found after the fact. A clean stack shows none.
+        </p>
+
+        <div className="pf-tr-filters">
+          <div className="pf-tr-chips">
+            {FINDING_RANGES.map((r) => (
+              <button key={r.label} type="button" className={`pf-tr-chip ${range === r.seconds ? "on" : ""}`}
+                     onClick={() => setRange(r.seconds)} aria-pressed={range === r.seconds}>
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <div className="pf-tr-selects">
+            <Select label="Family" value={family} options={families} onChange={setFamily} />
+            <Select label="Check" value={checkId} options={checks} onChange={setCheckId} />
+            <Select label="Effect" value={effect} options={effects} onChange={setEffect} />
+            <Select label="Policy §" value={policyNum} options={policies} onChange={setPolicyNum} />
+            <label className="pf-tr-select">
+              <span>Event</span>
+              <input className="pf-tr-search" style={{ width: 90 }} placeholder="id…" value={eventId}
+                    onChange={(e) => setEventId(e.target.value)} />
+            </label>
+          </div>
+          <input
+            className="pf-tr-search"
+            placeholder="Search detail, policy text…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+
+        <div className="pf-tr-summary">
+          <span className="pf-tr-count">
+            {filtered.length}<span className="muted"> of {rows.length}</span> findings
+          </span>
+          {activeFilters > 0 && (
+            <button className="pf-dash-link" type="button" onClick={clearAll}>
+              Clear filters ✕ ({activeFilters})
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section className="pf-panel" style={{ marginTop: 14 }}>
+        {status === "error" && <div className="pf-dash-feed-status error">Couldn’t load findings ({error}).</div>}
+        {status !== "error" && filtered.length === 0 && (
+          <div className="pf-dash-feed-status">
+            {rows.length === 0 ? "No findings — either nothing violated, or Family 1/3 have no rule_pack/intent_catalog configured." : "No findings match these filters."}
+          </div>
+        )}
+        {filtered.length > 0 && (
+          <table className="pf-dash-table pf-tr-table">
+            <thead>
+              <tr><th>Event</th><th>When</th><th>Family</th><th>Check</th><th>Effect</th><th>Policy</th><th>What went wrong</th></tr>
+            </thead>
+            <tbody>
+              {filtered.map((r, i) => {
+                const src = parseSource(r.source);
+                return (
+                  <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
+                      onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null })}>
+                    <td className="mono">{r.event_id || "—"}</td>
+                    <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
+                    <td className="mono">{r.family}</td>
+                    <td><code className="pf-tr-intent">{r.check_id}</code></td>
+                    <td><span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span></td>
+                    <td>{src?.section ? <code className="pf-tr-policy">§{src.section}</code> : <span className="muted">—</span>}</td>
+                    <td><WhatWentWrong r={r} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {flyout && (
+        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId} refreshKey={0}
+                       onClose={() => setFlyout(null)} onOpenTrace={onOpenTrace} />
+      )}
+    </>
+  );
+}
+
+export default function DecisionTraces({ active = true, demo, onOpenObservability }: { active?: boolean; demo: DemoConfig; onOpenObservability?: () => void }) {
+  const [section, setSection] = useState<"decisions" | "findings">("decisions");
   const roleAgents = demo.roleAgents;
   const [traces, setTraces] = useState<Trace[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -128,6 +354,12 @@ export default function DecisionTraces({ active = true, demo }: { active?: boole
 
   return (
     <main className="pf-tr">
+      <div className="pf-oob-views" style={{ marginBottom: 14 }}>
+        <button className={`pf-oob-view ${section === "decisions" ? "active" : ""}`} onClick={() => setSection("decisions")}>Decisions</button>
+        <button className={`pf-oob-view ${section === "findings" ? "active" : ""}`} onClick={() => setSection("findings")}>Findings</button>
+      </div>
+      {section === "findings" && <FindingsSection onOpenTrace={() => onOpenObservability?.()} />}
+      {section === "decisions" && <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">
           <h2>Decision Trace Log</h2>
@@ -227,6 +459,7 @@ export default function DecisionTraces({ active = true, demo }: { active?: boole
           </table>
         )}
       </section>
+      </>}
     </main>
   );
 }

@@ -249,6 +249,31 @@ def mark_evaluated(session_id: str, version_key: str) -> None:
 
 # --- writing verdicts / conformance tags -----------------------------------
 
+# event_id: a process-local monotonic counter, not a ClickHouse-side
+# auto-increment (this ClickHouse version predates generateSerialID(), and a
+# MergeTree has no native sequence type). Safe against this service's actual
+# concurrency profile: eval-engine is a SINGLE uvicorn process (no
+# --workers, see the Dockerfile) with two callers that can race each
+# other - the background Worker's asyncio task and a manual POST /eval/run,
+# both landing in insert_verdicts via anyio's threadpool - so a plain
+# threading.Lock is sufficient; there is no second process or pod to
+# coordinate with. Seeded lazily from the current max on first use (old rows
+# with a uuid4-shaped event_id parse to 0 via toUInt64OrZero, so they never
+# collide with or influence the new sequence - it just starts at 1).
+_event_seq_lock = threading.Lock()
+_event_seq: Optional[int] = None
+
+
+def _next_event_ids(n: int) -> list[str]:
+    global _event_seq
+    with _event_seq_lock:
+        if _event_seq is None:
+            _event_seq = int(one(f"SELECT max(toUInt64OrZero(event_id)) AS m FROM {config.CLICKHOUSE_DB}.eval_verdicts").get("m") or 0)
+        out = [str(_event_seq + i) for i in range(1, n + 1)]
+        _event_seq += n
+        return out
+
+
 _VERDICT_COLS = [
     "session_id", "check_id", "family", "rule_id", "status", "effect",
     "indeterminate_reason", "detail", "evidence_span_ids", "evidence_excerpt",
@@ -265,8 +290,12 @@ _TAG_COLS = [
 
 
 def insert_verdicts(findings: Iterable) -> int:
+    findings = list(findings)
+    if not findings:
+        return 0
+    event_ids = _next_event_ids(len(findings))
     data = []
-    for f in findings:
+    for f, event_id in zip(findings, event_ids):
         v = f.verdict
         data.append([
             v.session_id, v.check_id, v.family, v.rule_id, v.status, v.effect,
@@ -274,7 +303,7 @@ def insert_verdicts(findings: Iterable) -> int:
             json.dumps(v.source) if v.source else "", f.mode,
             f.versions.engine_version, f.versions.binding_profile_version,
             f.versions.visibility_profile_version, f.versions.rule_pack_version,
-            f.versions.catalog_version, f.evaluated_at, f.event_id,
+            f.versions.catalog_version, f.evaluated_at, event_id,
         ])
     if not data:
         return 0

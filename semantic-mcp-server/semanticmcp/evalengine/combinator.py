@@ -13,8 +13,6 @@ the only place deployment mode changes behavior (Hard Rule 5).
 
 from __future__ import annotations
 
-import uuid
-
 from .contract import EFFECT_PRECEDENCE, ConformanceTag, Effect, Finding, Verdict, VersionStamp
 from .visibility import VisibilityProfile
 
@@ -46,9 +44,12 @@ def combine_oob(verdicts: list[Verdict], visibility: VisibilityProfile, versions
     out: list[Finding] = []
     for v in verdicts:
         reason = _resolve_indeterminate_reason(v, visibility) if v.status == "indeterminate" else None
+        # event_id is deliberately left "" here - assigned at INSERT time
+        # (ch.py's insert_verdicts), not construction time, because it's now
+        # a monotonic serial number: the combinator has no persistent counter
+        # to hand one out from, and shouldn't - Hard Rule 3 wants this pure.
         out.append(Finding(verdict=v, versions=versions, mode="oob",
-                           indeterminate_reason=reason, evaluated_at=evaluated_at,
-                           event_id=str(uuid.uuid4())))
+                           indeterminate_reason=reason, evaluated_at=evaluated_at))
     return out
 
 
