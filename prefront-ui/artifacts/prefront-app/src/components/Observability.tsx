@@ -796,6 +796,7 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   const traces = Array.from(new Set(spans.map((s) => s.trace_id)));
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
   const policy = parseList(root?.attributes["scenario.policy"] ?? "");
+  const violated = verdicts.filter((v) => v.status !== "satisfied");
   const findingSrc = findingSource ? parseSource(findingSource) : null;
   return (
     <section className="pf-panel pf-oob-detail">
@@ -848,20 +849,34 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           session {sessionId}
           {" "}· {root?.user_role || root?.attributes["app.user.role"] || "?"} · user {root?.user_id || root?.attributes["user.id"] || "?"} · {root?.channel || root?.attributes["app.channel"] || "?"}
           {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
-          {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turns · {tools.length} tool calls
+          {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turn{spans.filter((s) => /^turn /.test(s.name)).length === 1 ? "" : "s"}
           {" "}· trace{traces.length === 1 ? "" : "s"} {traces.map(short).join(", ") || "—"}
         </div>
-        {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}{policy.map((c) => <span key={c} className="pf-oob-chip">§{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger and the policy sections they attribute to (from the harness, not a verdict)</span></div>}
-        {(verdicts.length > 0 || tags.length > 0) && (
-          <div style={{ marginTop: 4 }}>
-            {verdicts.filter((v) => v.status !== "satisfied").map((v, i) => (
+        {(checks.length > 0 || violated.length > 0) && (
+          <div className="pf-oob-footer-row">
+            <span className="pf-oob-footer-label" title="What this scenario is built to trigger, and eval-engine's actual verdicts for this session (from the harness / the engine, respectively - not the same thing).">
+              Checks
+            </span>
+            {checks.map((c) => (
+              <span key={c} className="pf-oob-chip amber" title={policy.length ? `expected to attribute to §${policy.join(", ")}` : undefined}>{c}</span>
+            ))}
+            {violated.map((v, i) => (
               <span key={"v" + i} className={`pf-oob-chip ${STATUS_TONE[v.status] || ""}`} title={v.detail}>{v.check_id} · {v.status}</span>
             ))}
-            {tags.map((t, i) => (
-              <span key={"t" + i} className="pf-oob-chip green" title={t.clause_text || t.check_id}>{t.check_id}{t.section ? ` · §${t.section}` : ""} ✓</span>
-            ))}
-            <span className="pf-oob-subtle"> ← eval-engine's actual verdicts for this session (green = satisfied/conformance, red/amber = violated/indeterminate)</span>
           </div>
+        )}
+        {tags.length > 0 && (
+          <details className="pf-oob-footer-collapse">
+            <summary>{tags.length} check{tags.length === 1 ? "" : "s"} satisfied</summary>
+            <div className="pf-oob-footer-row">
+              {tags.map((t, i) => (
+                <span key={"t" + i} className="pf-oob-chip green"
+                     title={`${t.check_id}${t.section ? ` · §${t.section}` : ""}${t.clause_text ? ` — ${t.clause_text}` : ""}`}>
+                  {t.check_id} ✓
+                </span>
+              ))}
+            </div>
+          </details>
         )}
         <div className="pf-oob-actions">
           {traces.map((t) => <button key={t} className="pf-btn sm" onClick={() => onOpenTrace(t)}>trace {short(t)}</button>)}

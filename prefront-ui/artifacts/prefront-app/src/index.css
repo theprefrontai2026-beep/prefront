@@ -1639,8 +1639,27 @@ select { cursor: pointer; }
 
 /* Session/trace ids, role/channel, and the "checks triggered"/"actual
    verdicts" chip rows - secondary context, pushed below the trace. */
-.pf-oob-detail-footer { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.pf-oob-detail-footer { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .pf-oob-detail-footer .pf-oob-actions { margin-top: 6px; }
+
+/* A labelled row of chips (replaces the old inline "← explanation" caption
+   sentences - the explanation is a title tooltip on the label instead, so
+   the row itself stays short and doesn't wrap into a wall of text). */
+.pf-oob-footer-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pf-oob-footer-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-right: 2px; cursor: help;
+}
+/* Satisfied/conformant checks - collapsed by default, same disclosure
+   pattern as the trace. Only the violated/indeterminate ones (in the row
+   above) are worth seeing without an extra click. */
+.pf-oob-footer-collapse summary {
+  font-size: 11px; font-weight: 600; color: var(--muted); cursor: pointer; list-style: none;
+}
+.pf-oob-footer-collapse summary::-webkit-details-marker { display: none; }
+.pf-oob-footer-collapse summary::before { content: "▸ "; }
+.pf-oob-footer-collapse[open] summary::before { content: "▾ "; }
+.pf-oob-footer-collapse .pf-oob-footer-row { margin-top: 6px; }
 
 /* One-liner + policy corroboration at the TOP of a Findings-opened flyout
    (SessionDetail's findingDetail/findingSource props) */

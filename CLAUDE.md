@@ -523,6 +523,31 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   one-liner + verbatim policy quote up top and the collapsed trace/footer
   below, and Observability's Sessions view still renders correctly with
   the same reordered layout, trace collapsed there too.
+- **The footer's "checks triggered"/"actual verdicts" rows were themselves
+  cluttered** - a conformance tag's chip used to inline its FULL
+  comma-separated policy section list (`entitlement · §7.3, 13.2, 13.3, 13.4,
+  13.7, 13.8 ✓`), repeated near-verbatim across every satisfied check tied to
+  the same intent, wrapping into a wall of text (a real session showed 24
+  conformance tags this way). Fixed to match the rest of this file's
+  hover-for-detail convention: every chip is now `check_id ✓` (or
+  `check_id · status` for a violated/indeterminate one), with the full
+  `check_id · §section` (+ clause text, when there is one) moved to its
+  `title`. The satisfied ones (`tags`, always green, often many) are further
+  collapsed behind a `<details>` ("▸ N checks satisfied",
+  `.pf-oob-footer-collapse`, same disclosure pattern as the trace) - the
+  violated/indeterminate ones (`verdicts` filtered to `status !== "satisfied"`,
+  now named `violated` in the component) stay directly visible, since those
+  are the actionable signal; a clean session has nothing to hide behind a
+  toggle. The two long inline "← checks this scenario is built to
+  trigger..." / "← eval-engine's actual verdicts..." caption sentences
+  became a single small `CHECKS` label (`.pf-oob-footer-label`) with the
+  same explanation as its `title`. `tools.length` ("N tool calls") was
+  dropped from the session summary line entirely, per explicit request -
+  redundant with the (collapsible) full trace, which already shows every
+  tool call. Live-verified: the same session that prompted this (24
+  conformance tags, previously several wrapped lines of huge chips) now
+  shows three compact chips + one "▸ 13 checks satisfied" toggle; hovering
+  a collapsed chip still surfaces its full section citation.
 - **"Clear ClickHouse" (Observability's Ingestion view) clears ALL FIVE
   ClickHouse tables, not just oob-ingest's.** `DELETE /oob/spans`
   (`ch.truncate()`, oob-ingest) only ever cleared `spans`/`ingest_state` — it
