@@ -170,7 +170,14 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
       setPii(piiMap);
       onSchema({
         catalog: cat, datasourceId: dsId, suggestedIntents: intents, pii: piiMap,
-        sourceType, ...(sourceType === "mcp" ? { mcpServerUrl: mcpServerUrl.trim() } : {}),
+        sourceType,
+        // The full per-tool records (descriptions, parameter detail, declared
+        // outputs, annotations, raw schemas). The catalog projection is lossy by
+        // design — one table per tool, one column per INPUT property — so Data
+        // Graph renders MCP from these instead.
+        ...(sourceType === "mcp"
+          ? { mcpServerUrl: mcpServerUrl.trim(), mcpTools: result.mcp_tools || [] }
+          : {}),
       });
       setProgress({ phase: "done", tables: tbl, pii: piiCount, unit });
     } catch (e: any) {
@@ -395,7 +402,9 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
             </div>
           )}
           <p className="pf-hint" style={{ marginBottom: 0 }}>
-            View the full schema — {sourceType === "mcp" ? "tools, their parameters" : "tables, relationships, sensitive columns"},
+            View the full schema — {sourceType === "mcp"
+              ? "every tool's parameters, declared outputs, behaviour annotations and raw JSON Schema"
+              : "tables, relationships, sensitive columns"},
             {" "}and applied policies — in the <strong>Data Graph</strong> tab.
           </p>
         </div>

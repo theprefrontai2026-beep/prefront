@@ -157,6 +157,350 @@ function buildFromCatalog(catalog: any, policyIndex: Map<string, AppliedPolicy[]
   return { nodes, edges, defs };
 }
 
+// ── MCP tools -> nodes ───────────────────────────────────────────────────────
+// A connected MCP server is NOT a set of tables: a tool has inputs and outputs
+// rather than columns, no key, and no foreign keys, so there is nothing to draw
+// an edge between. The catalog projection (one table per tool, one column per
+// input property) is what the rest of the pipeline consumes; it is lossy on
+// purpose, and rendering it here would hide everything the server declared
+// about what a tool RETURNS and how it behaves. So MCP gets its own builder,
+// fed by the full `mcp_tools` record the introspect endpoint already returns.
+
+interface ToolField {
+  name: string;
+  type: string;              // as DECLARED by the server; "" when it used $ref/anyOf
+  required: boolean;
+  description: string;
+  enum?: string[] | null;
+  default?: any;
+  format?: string;
+  constraints?: Record<string, any>;
+}
+
+interface ToolAnnotationHints {
+  title?: string;
+  // Tri-state: true/false = the server declared the hint, null/undefined = it
+  // said nothing. "Undeclared" is a fact about the server worth showing, not a
+  // synonym for false.
+  read_only?: boolean | null;
+  destructive?: boolean | null;
+  idempotent?: boolean | null;
+  open_world?: boolean | null;
+}
+
+interface ToolDef {
+  id: string;
+  label: string;
+  title: string;             // server-supplied display name, "" when absent
+  description: string;
+  category: string;
+  icon: string;
+  params: ToolField[];
+  outputs: ToolField[];
+  outputDeclared: boolean;   // false = no outputSchema at all (≠ declared empty)
+  annotations: ToolAnnotationHints;
+  destructive: boolean;
+  inputSchema: any;
+  outputSchema: any;
+  meta: any;
+  policies: AppliedPolicy[];
+  pii: PiiIndex;
+}
+
+const TOOL_NODE_W = 264;
+const TOOL_HEAD_H = 44;
+const TOOL_SECTION_H = 18;   // a section label row ("Parameters" / "Returns")
+const TOOL_FOOT_H = 30;
+const MAX_ROWS = 6;          // per section, on the node; the panel shows all
+
+function toolNodeHeight(t: ToolDef) {
+  const paramRows = Math.min(t.params.length, MAX_ROWS) + (t.params.length > MAX_ROWS ? 1 : 0);
+  const outRows = t.outputDeclared
+    ? Math.min(t.outputs.length, MAX_ROWS) + (t.outputs.length > MAX_ROWS ? 1 : 0)
+    : 1;  // the "not declared" note
+  return TOOL_HEAD_H + TOOL_SECTION_H * 2 + (paramRows + outRows) * ROW_H + TOOL_FOOT_H;
+}
+
+function buildFromMcpTools(tools: any[], policyIndex: Map<string, AppliedPolicy[]>, pii: PiiIndex) {
+  const defs: ToolDef[] = (tools || []).map((t: any) => {
+    const ann: ToolAnnotationHints = t.annotations || {};
+    const { category, icon } = deriveKind(t.name);
+    return {
+      id: t.name,
+      label: t.name,
+      title: t.title || "",
+      description: t.description || "",
+      category,
+      icon,
+      params: (t.parameters || []) as ToolField[],
+      outputs: (t.output_fields || []) as ToolField[],
+      outputDeclared: t.output_schema != null,
+      annotations: ann,
+      destructive: !!t.destructive,
+      inputSchema: t.input_schema,
+      outputSchema: t.output_schema,
+      meta: t.meta,
+      policies: policyIndex.get(t.name) || [],
+      pii,
+    };
+  });
+
+  // Masonry, not dagre: with no edges every node lands in one rank, which
+  // renders a 19-tool server as a single unreadable column. Each card goes to
+  // the shortest column so variable heights never overlap.
+  const cols = Math.max(1, Math.min(4, Math.round(Math.sqrt(defs.length)) || 1));
+  const colY = new Array(cols).fill(24);
+  const nodes = defs.map((t) => {
+    const h = toolNodeHeight(t);
+    const c = colY.indexOf(Math.min(...colY));
+    const position = { x: 24 + c * (TOOL_NODE_W + 44), y: colY[c] };
+    colY[c] += h + 36;
+    return { id: t.id, type: "graphTool", position, data: { tool: t }, selected: false, __h: h };
+  });
+
+  return { nodes, edges: [] as any[], defs };
+}
+
+// ── MCP tool node ────────────────────────────────────────────────────────────
+
+function behaviourBadge(t: ToolDef): { text: string; cls: string } {
+  if (t.destructive) return { text: "destructive", cls: "destructive" };
+  if (t.annotations?.read_only === true) return { text: "read-only", cls: "readonly" };
+  return { text: "unannotated", cls: "unknown" };
+}
+
+function GraphToolNode({ data, selected }: { data: any; selected?: boolean }) {
+  const t: ToolDef = data.tool;
+  const color = CATEGORY_COLOR[t.category] || CATEGORY_COLOR._default;
+  const badge = behaviourBadge(t);
+
+  const fieldRow = (f: ToolField, kind: string) => {
+    const p = t.pii.get(`${t.id}.${f.name}`);
+    return (
+      <div key={`${kind}-${f.name}`} className={`dg-col ${p ? "sensitive" : ""}`}>
+        <span className="dg-col-icon">{f.required ? "•" : "○"}</span>
+        <span className="dg-col-name">{f.name}</span>
+        {p && <span className="dg-col-pii" title={`PII: ${p.label}`}>PII</span>}
+        <span className="dg-col-type">{f.type || "—"}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="dg-node dg-tool-node"
+      style={{ "--node-color": color, boxShadow: selected ? `0 0 0 2px ${color}` : undefined } as any}>
+      {/* Handles kept so React Flow selection/behaviour matches the table node,
+          even though an MCP graph never has edges to attach to them. */}
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+
+      <div className="dg-node-head" style={{ background: color }}>
+        <span className="dg-node-icon">{t.icon}</span>
+        {/* Ellipsized at this width, so the full name has to be reachable on hover. */}
+        <span className="dg-node-title" title={t.title ? `${t.label} — ${t.title}` : t.label}>{t.label}</span>
+        <div className="dg-node-tags">
+          <span className={`dg-tag dg-behaviour ${badge.cls}`}
+            title={badge.cls === "unknown"
+              ? "This server declares no readOnly/destructive hint for this tool"
+              : undefined}>{badge.text}</span>
+        </div>
+      </div>
+
+      <div className="dg-node-cols">
+        <div className="dg-tool-section">Parameters ({t.params.length})</div>
+        {t.params.slice(0, MAX_ROWS).map((f) => fieldRow(f, "in"))}
+        {t.params.length === 0 && <div className="dg-col-more">takes no parameters</div>}
+        {t.params.length > MAX_ROWS && (
+          <div className="dg-col-more">+{t.params.length - MAX_ROWS} more</div>
+        )}
+
+        <div className="dg-tool-section">Returns{t.outputDeclared ? ` (${t.outputs.length})` : ""}</div>
+        {!t.outputDeclared && <div className="dg-col-undeclared">no output schema declared</div>}
+        {t.outputDeclared && t.outputs.length === 0 && (
+          <div className="dg-col-more">declared, no fields</div>
+        )}
+        {t.outputDeclared && t.outputs.slice(0, MAX_ROWS).map((f) => fieldRow(f, "out"))}
+        {t.outputDeclared && t.outputs.length > MAX_ROWS && (
+          <div className="dg-col-more">+{t.outputs.length - MAX_ROWS} more</div>
+        )}
+      </div>
+
+      <div className="dg-node-foot">
+        <span className="dg-stat" title="Applied policy rules">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          {t.policies.length} rule{t.policies.length !== 1 ? "s" : ""}
+        </span>
+        <span className="dg-stat rows">{t.params.length} in · {t.outputDeclared ? t.outputs.length : "?"} out</span>
+      </div>
+    </div>
+  );
+}
+
+// ── MCP tool detail panel ────────────────────────────────────────────────────
+
+function HintChips({ ann }: { ann: ToolAnnotationHints }) {
+  const HINTS: [keyof ToolAnnotationHints, string, string][] = [
+    ["read_only", "read-only", "not read-only"],
+    ["destructive", "destructive", "not destructive"],
+    ["idempotent", "idempotent", "not idempotent"],
+    ["open_world", "open-world", "closed-world"],
+  ];
+  const declared = HINTS.filter(([k]) => ann?.[k] === true || ann?.[k] === false);
+  const undeclared = HINTS.filter(([k]) => !(ann?.[k] === true || ann?.[k] === false));
+  return (
+    <div className="dg-detail-section">
+      <div className="dg-detail-section-title">Behaviour annotations</div>
+      {declared.length === 0 ? (
+        <div className="dg-policy-empty">
+          This server declares no behaviour annotations for this tool. Prefront treats an
+          undeclared tool as not destructive rather than guessing — so its default governance
+          is <code>allow</code>, and a write it performs would not be gated by annotation alone.
+        </div>
+      ) : (
+        <div className="dg-detail-tags">
+          {declared.map(([k, on, off]) => (
+            <span key={String(k)} className={`dg-ann ${ann[k] === true ? "on" : "off"}`}>
+              {ann[k] === true ? on : off}
+            </span>
+          ))}
+        </div>
+      )}
+      {declared.length > 0 && undeclared.length > 0 && (
+        <div className="dg-detail-note">
+          not declared: {undeclared.map(([, on]) => on).join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FieldTable({ fields, pii, toolId }: { fields: ToolField[]; pii: PiiIndex; toolId: string }) {
+  return (
+    <table className="dg-col-table">
+      <thead>
+        <tr><th>Name</th><th>Type</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {fields.map((f) => {
+          const p = pii.get(`${toolId}.${f.name}`);
+          return (
+            <tr key={f.name} className={p ? "sensitive-row" : ""}>
+              <td className="dg-col-table-name">
+                {f.required && <span className="dg-flag pk">REQ</span>}
+                {f.name}
+              </td>
+              <td className="dg-col-table-type">
+                {f.type || <span title="the server declared the type via $ref/anyOf">—</span>}
+                {f.format ? ` · ${f.format}` : ""}
+              </td>
+              <td className="dg-flags-cell">
+                {p && <span className="dg-flag pii" title={`${p.label} · ${Math.round(p.score * 100)}% confidence`}>PII: {p.label}</span>}
+                {f.default !== undefined && f.default !== null && (
+                  <span className="dg-flag gov">default {JSON.stringify(f.default)}</span>
+                )}
+                {f.enum && f.enum.length > 0 && (
+                  <span className="dg-flag fk" title={f.enum.join(", ")}>enum: {f.enum.slice(0, 4).join(" | ")}{f.enum.length > 4 ? " …" : ""}</span>
+                )}
+                {f.constraints && Object.keys(f.constraints).length > 0 && (
+                  <span className="dg-flag sens">{Object.entries(f.constraints).map(([k, v]) => `${k} ${v}`).join(" · ")}</span>
+                )}
+                {f.description && <div className="dg-field-desc">{f.description}</div>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function ToolDetailPanel({ tool, onClose }: { tool: ToolDef; onClose: () => void }) {
+  const color = CATEGORY_COLOR[tool.category] || CATEGORY_COLOR._default;
+  const badge = behaviourBadge(tool);
+
+  return (
+    <div className="dg-detail">
+      <div className="dg-detail-head" style={{ borderColor: color }}>
+        <div>
+          <div className="dg-detail-title" style={{ color }}>{tool.icon} {tool.label}</div>
+          <div className="dg-detail-sub">
+            {tool.title && tool.title !== tool.label ? <>“{tool.title}” · </> : null}
+            {tool.params.length} parameter{tool.params.length !== 1 ? "s" : ""} ·{" "}
+            {tool.outputDeclared ? `${tool.outputs.length} output field${tool.outputs.length !== 1 ? "s" : ""}` : "outputs undeclared"} ·{" "}
+            {tool.policies.length} polic{tool.policies.length !== 1 ? "ies" : "y"}
+          </div>
+        </div>
+        <button className="dg-detail-close" onClick={onClose}>×</button>
+      </div>
+
+      <div className="dg-detail-tags">
+        <span className={`dg-detail-tag dg-behaviour ${badge.cls}`}>{badge.text}</span>
+      </div>
+
+      {tool.description ? (
+        <div className="dg-detail-section">
+          <div className="dg-detail-section-title">Description</div>
+          <div className="dg-tool-desc">{tool.description}</div>
+        </div>
+      ) : (
+        <div className="dg-detail-section">
+          <div className="dg-detail-section-title">Description</div>
+          <div className="dg-policy-empty">The server supplies no description for this tool.</div>
+        </div>
+      )}
+
+      <div className="dg-detail-section">
+        <div className="dg-detail-section-title">Parameters ({tool.params.length})</div>
+        {tool.params.length === 0
+          ? <div className="dg-policy-empty">This tool takes no parameters.</div>
+          : <FieldTable fields={tool.params} pii={tool.pii} toolId={tool.id} />}
+      </div>
+
+      <div className="dg-detail-section">
+        <div className="dg-detail-section-title">Returns</div>
+        {!tool.outputDeclared ? (
+          // The distinction that matters: silence from the server, not an empty
+          // result. Prefront cannot know this tool's output fields, which is why
+          // an intent's `fields:` has to be transcribed by hand for servers
+          // like this one.
+          <div className="dg-policy-empty">
+            This server declares no <code>outputSchema</code> for this tool, so what it returns
+            is undeclared — not empty. Nothing here is inferred from observed responses.
+          </div>
+        ) : tool.outputs.length === 0 ? (
+          <div className="dg-policy-empty">Declares an output schema with no fields.</div>
+        ) : (
+          <FieldTable fields={tool.outputs} pii={tool.pii} toolId={tool.id} />
+        )}
+      </div>
+
+      <HintChips ann={tool.annotations} />
+
+      <div className="dg-detail-section">
+        <div className="dg-detail-section-title">Declared JSON Schema</div>
+        <details className="dg-schema">
+          <summary>inputSchema</summary>
+          <pre>{JSON.stringify(tool.inputSchema ?? {}, null, 2)}</pre>
+        </details>
+        <details className="dg-schema">
+          <summary>outputSchema{tool.outputDeclared ? "" : " — not declared"}</summary>
+          <pre>{tool.outputDeclared ? JSON.stringify(tool.outputSchema, null, 2) : "(the server declared none)"}</pre>
+        </details>
+        {tool.meta && (
+          <details className="dg-schema">
+            <summary>_meta</summary>
+            <pre>{JSON.stringify(tool.meta, null, 2)}</pre>
+          </details>
+        )}
+      </div>
+
+      <PolicySection policies={tool.policies} subject="tool" />
+    </div>
+  );
+}
+
 // ── Graph node component ──────────────────────────────────────────────────────
 
 function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
@@ -223,7 +567,7 @@ function GraphTableNode({ data, selected }: { data: any; selected?: boolean }) {
   );
 }
 
-const NODE_TYPES = { graphTable: GraphTableNode };
+const NODE_TYPES = { graphTable: GraphTableNode, graphTool: GraphToolNode };
 
 // ── Detail panel ──────────────────────────────────────────────────────────────
 
@@ -325,18 +669,27 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
         </div>
       )}
 
-      {/* Applied policy rules */}
+      <PolicySection policies={table.policies} subject="table" />
+    </div>
+  );
+}
+
+// Shared by the table detail panel and the MCP tool detail panel — the policy
+// index is keyed by name, and an MCP tool's name IS its catalog table name, so
+// both subjects resolve their rules the same way.
+function PolicySection({ policies, subject }: { policies: AppliedPolicy[]; subject: string }) {
+  return (
       <div className="dg-detail-section">
         <div className="dg-detail-section-title">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
           </svg>
-          Applied Policies ({table.policies.length})
+          Applied Policies ({policies.length})
         </div>
-        {table.policies.length === 0 && (
-          <div className="dg-policy-empty">No policy rules reference this table yet. Approve rules in Policy Studio.</div>
+        {policies.length === 0 && (
+          <div className="dg-policy-empty">No policy rules reference this {subject} yet. Approve rules in Policy Studio.</div>
         )}
-        {table.policies.map((p) => {
+        {policies.map((p) => {
           const sev = DECISION_SEV[p.decision || ""] || "low";
           const pending = p.status !== "approved" && p.status !== "published";
           return (
@@ -363,7 +716,6 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
           );
         })}
       </div>
-    </div>
   );
 }
 
@@ -396,6 +748,41 @@ function StatsBar({ defs, datasourceId, piiScanned }:
   );
 }
 
+function McpStatsBar({ defs, datasourceId, serverUrl }:
+  { defs: ToolDef[]; datasourceId?: string; serverUrl?: string }) {
+  const params = defs.reduce((s, t) => s + t.params.length, 0);
+  const outputs = defs.reduce((s, t) => s + (t.outputDeclared ? t.outputs.length : 0), 0);
+  const undeclared = defs.filter((t) => !t.outputDeclared).length;
+  const destructive = defs.filter((t) => t.destructive).length;
+  const policies = new Set(defs.flatMap((t) => t.policies.map((p) => p.rule_key))).size;
+
+  return (
+    <div className="dg-stats-bar">
+      <div className="dg-stat-item"><span className="dg-stat-value">{defs.length}</span><span className="dg-stat-label">Tools</span></div>
+      <div className="dg-stat-sep" />
+      <div className="dg-stat-item"><span className="dg-stat-value">{params}</span><span className="dg-stat-label">Parameters</span></div>
+      <div className="dg-stat-sep" />
+      <div className="dg-stat-item"><span className="dg-stat-value">{outputs}</span><span className="dg-stat-label">Output fields</span></div>
+      {/* Surfaced as a first-class number: how much of this server is undeclared
+          is the single most useful thing to know when reviewing an unfamiliar one. */}
+      {undeclared > 0 && (<>
+        <div className="dg-stat-sep" />
+        <div className="dg-stat-item" title="Tools whose server declares no outputSchema — what they return is unknown to Prefront">
+          <span className="dg-stat-value" style={{ color: "var(--muted)" }}>{undeclared}</span>
+          <span className="dg-stat-label">Undeclared out</span>
+        </div>
+      </>)}
+      <div className="dg-stat-sep" />
+      <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: destructive ? "var(--red)" : undefined }}>{destructive}</span><span className="dg-stat-label">Destructive</span></div>
+      <div className="dg-stat-sep" />
+      <div className="dg-stat-item"><span className="dg-stat-value" style={{ color: "var(--blue)" }}>{policies}</span><span className="dg-stat-label">Policy Rules</span></div>
+      <div style={{ flex: 1 }} />
+      {serverUrl && <span className="dg-source-badge" title={serverUrl}>{serverUrl}</span>}
+      {datasourceId && <span className="dg-source-badge">{datasourceId}</span>}
+    </div>
+  );
+}
+
 // ── Legend ────────────────────────────────────────────────────────────────────
 
 function Legend() {
@@ -409,6 +796,17 @@ function Legend() {
   );
 }
 
+function McpLegend() {
+  return (
+    <div className="dg-legend">
+      <div className="dg-legend-item"><span className="dg-legend-icon">•</span> Required</div>
+      <div className="dg-legend-item"><span className="dg-legend-icon">○</span> Optional</div>
+      <div className="dg-legend-item"><span className="dg-legend-icon sens">⚠</span> PII guess</div>
+      <div className="dg-legend-item">No edges — MCP tools aren’t joinable</div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -416,9 +814,11 @@ interface Props {
   datasourceId?: string;
   rules?: any[];
   pii?: Record<string, { label: string; score: number }>;  // computed at connect (DataConnector)
+  sourceType?: string;    // "mcp" | "postgres" — set by DataConnector at connect
+  mcpTools?: any[];       // the full `mcp_tools` record from /design/semantic/mcp/introspect
 }
 
-export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Props) {
+export default function DataGraph({ catalog, datasourceId, rules = [], pii, sourceType, mcpTools }: Props) {
   const [bound, setBound] = useState<any>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const piiMap = useMemo<PiiIndex>(() => new Map(Object.entries(pii || {})), [pii]);
@@ -435,6 +835,11 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Pr
   }, [datasourceId]);
 
   const hasCatalog = !!(catalog && (catalog.tables?.length ?? 0) > 0);
+  // An MCP datasource renders from the full tool records, not the lossy
+  // table/column projection. Falls back to the table view if a connection
+  // predates this (localStorage holds no `mcpTools`), so an old cached schema
+  // still renders rather than showing an empty graph.
+  const isMcp = sourceType === "mcp" && (mcpTools?.length ?? 0) > 0;
 
   const policyIndex = useMemo(
     () => buildPolicyIndex(catalog, rules, bound),
@@ -442,21 +847,26 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Pr
   );
 
   const built = useMemo(
-    () => (hasCatalog ? buildFromCatalog(catalog, policyIndex, piiMap) : { nodes: [], edges: [], defs: [] as TableDef[] }),
-    [catalog, policyIndex, piiMap, hasCatalog]
+    () => (isMcp ? buildFromMcpTools(mcpTools!, policyIndex, piiMap)
+         : hasCatalog ? buildFromCatalog(catalog, policyIndex, piiMap)
+         : { nodes: [], edges: [], defs: [] as (TableDef | ToolDef)[] }),
+    [catalog, mcpTools, isMcp, policyIndex, piiMap, hasCatalog]
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
+  // `any` node data: the two graph modes carry different payloads
+  // ({ table } vs { tool }), and React Flow infers the state's type from the
+  // first value it sees rather than from the union.
+  const [nodes, setNodes, onNodesChange] = useNodesState<any>(built.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
 
   useEffect(() => {
     setNodes(built.nodes);
     setEdges(built.edges);
-    setSelectedId((prev) => (prev && built.defs.some((t) => t.id === prev) ? prev : null));
+    setSelectedId((prev) => (prev && built.defs.some((t: any) => t.id === prev) ? prev : null));
   }, [built, setNodes, setEdges]);
 
-  const selectedTable = useMemo(
-    () => (selectedId ? built.defs.find((t) => t.id === selectedId) ?? null : null),
+  const selected = useMemo(
+    () => (selectedId ? built.defs.find((t: any) => t.id === selectedId) ?? null : null),
     [selectedId, built]
   );
 
@@ -469,7 +879,7 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Pr
     [nodes, selectedId]
   );
 
-  if (!hasCatalog) {
+  if (!hasCatalog && !isMcp) {
     return (
       <div className="dg-shell">
         <div className="dg-empty-state">
@@ -490,7 +900,9 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Pr
 
   return (
     <div className="dg-shell">
-      <StatsBar defs={built.defs} datasourceId={datasourceId} piiScanned={pii != null} />
+      {isMcp
+        ? <McpStatsBar defs={built.defs as ToolDef[]} datasourceId={datasourceId} serverUrl={catalog?.mcp_server_url} />
+        : <StatsBar defs={built.defs as TableDef[]} datasourceId={datasourceId} piiScanned={pii != null} />}
 
       <div className="dg-workspace">
         <div className="dg-canvas">
@@ -510,11 +922,13 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Pr
             <Background color="#e4e7ed" gap={24} size={1} />
             <Controls showInteractive={false} />
           </ReactFlow>
-          <Legend />
+          {isMcp ? <McpLegend /> : <Legend />}
         </div>
 
-        {selectedTable ? (
-          <DetailPanel table={selectedTable} onClose={() => setSelectedId(null)} />
+        {selected ? (
+          isMcp
+            ? <ToolDetailPanel tool={selected as ToolDef} onClose={() => setSelectedId(null)} />
+            : <DetailPanel table={selected as TableDef} onClose={() => setSelectedId(null)} />
         ) : (
           <div className="dg-empty-detail">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: "var(--muted)", marginBottom: 10 }}>
@@ -523,9 +937,13 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii }: Pr
               <rect x="14" y="14" width="7" height="7" rx="1"/>
               <rect x="3" y="14" width="7" height="7" rx="1"/>
             </svg>
-            <div style={{ fontWeight: 500, color: "var(--ink-soft)", marginBottom: 4 }}>Select a table</div>
-            <div style={{ color: "var(--muted)", fontSize: 12, textAlign: "center", maxWidth: 160 }}>
-              Click any node in the graph to see columns, relationships, and applied policies.
+            <div style={{ fontWeight: 500, color: "var(--ink-soft)", marginBottom: 4 }}>
+              Select a {isMcp ? "tool" : "table"}
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: 12, textAlign: "center", maxWidth: 170 }}>
+              {isMcp
+                ? "Click any tool to see its parameters, declared outputs, behaviour annotations and raw JSON Schema."
+                : "Click any node in the graph to see columns, relationships, and applied policies."}
             </div>
           </div>
         )}

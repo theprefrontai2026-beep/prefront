@@ -239,6 +239,31 @@ Template kinds: `read` (execute SELECT, then mask restricted fields), `precheck`
 A second connector alongside Postgres: point the Data Connector tab's **MCP Server** tab at any API-based MCP server's SSE URL and Prefront learns its tools the same way it learns a Postgres schema — `semantic-layer/semanticlayer/mcp_connect.py` connects (`mcp.client.sse`, imported as a **module** — see the tracing gotcha below), lists tools, and represents **each tool as a `PhysicalTable`, each input-schema property as a `PhysicalColumn`** (`build_catalog_from_mcp`). That one representational trick is what lets ~90% of the existing pipeline — `bindings.py`, the LLM entity mapper, `validate.py`'s catalog checks, `mcptools.build_tools` — run **completely unmodified** against an MCP-sourced catalog; no parallel pipeline was built.
 
 - **Design time**: `POST /design/semantic/mcp/introspect` (`{server_url, headers, datasource_id}`) is the MCP analog of `/catalog/introspect`; it persists the source in the `datasources` SQLite table (`source_type='mcp'`, `config_json={server_url, headers}`) so `/build`, `/import/dbt` and `/publish-policy` can re-derive the catalog from just a `datasource_id` afterwards — see `api.py:_resolve_catalog`, which now backs **all three** of those endpoints (fixing, as a side effect, the pre-existing bug where they only worked with a raw `ddl`/`dsn` string and `Semantic.tsx` never actually had one).
+- **The catalog projection is lossy; the `mcp_tools` payload is not.** One table
+  per tool / one column per INPUT property is what the deterministic pipeline
+  consumes, and it necessarily drops everything about what a tool RETURNS and
+  how it behaves. So `mcp_connect.tool_record` returns the COMPLETE record
+  alongside it — `{name, title, description, input_schema, output_schema,
+  parameters, output_fields, annotations, destructive, meta}` — which
+  `/mcp/introspect` returns as `payload["mcp_tools"]`, `DataConnector.tsx`
+  carries into `schema.mcpTools`, and the **Data Graph** renders for an MCP
+  source instead of the table view (`buildFromMcpTools` / `GraphToolNode` /
+  `ToolDetailPanel`; masonry layout, no edges — tools aren't joinable).
+  Two distinctions the shape preserves on purpose, because both are findings
+  about the upstream server rather than presentation details: `output_schema is
+  None` (declared nothing) is **not** `{}` (declared an empty one), and every
+  annotation hint is **tri-state** — `True`/`False`/`None` for undeclared.
+  Nothing is ever inferred from observed responses. LoanPro's own app-mcp
+  declares neither, so it renders as 19 tools / 19 "no output schema declared" —
+  which is exactly why an intent's `fields:` still has to be hand-transcribed
+  (see the `field_scope` findings in `eval-engine/CLAUDE.md`).
+- **A missing hint is not a `false` hint.** `destructive` was computed as
+  `destructiveHint or not readOnlyHint` with a default of `True` for a missing
+  `readOnlyHint`, so a server that set an annotations object at all — even just
+  a display `title` — had EVERY tool read as destructive, flipping its default
+  governance from `allow` to `approval_required` in `policy_hints_from_mcp`.
+  `_is_destructive` now marks a tool destructive only on a POSITIVE declaration;
+  silence never does, which is what the module always claimed.
 - **No LLM entity-guessing for MCP tools** (`api.py:build_interfaces`): a tool already IS the operation 1:1, so building a candidate model runs the same trivial "1 table = 1 entity" construction `_build_functions` already used, never `mapper.suggest()` — merging unrelated tools into a fictitious entity would be actively wrong, not just wasteful.
 - **Default governance from MCP tool annotations, not skill-builder rules**: `policy.py:policy_hints_from_mcp` reads each tool's `destructiveHint`/`readOnlyHint` (when the upstream server sets them — absent is treated as "not destructive", never guessed) and synthesizes one rule per tool (`approval_required` vs `allow`). Used only when the caller supplies no rules of its own — a human can still override with curated Policy Studio rules, same as any source.
 - **`querygen._compose_mcp`** builds a `QueryTemplate(kind="mcp", sql="", mcp_server_url=..., mcp_tool_name=..., mcp_destructive=...)` directly from the table's columns — no join/SQL synthesis, since there's nothing to join (MCP tools aren't joinable; no PK/FK is ever invented for one). `sqlcheck.py` skips AST parsing entirely for `kind="mcp"` and instead checks the declared parameters are a subset of the tool's own columns (a construction-consistency check, since `_compose_mcp` built `parameters` from those same columns).

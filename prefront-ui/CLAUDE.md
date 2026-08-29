@@ -18,6 +18,29 @@ Package/workspace shape (pnpm workspace, the `verdict` second app, the shared
 **`Overview.tsx` (the "dashboard" tab) is a buyer-facing dashboard with five plain-titled sections** — Decisions before execution / Rules applied / Business-context controls / Decision context / Decision evidence (copy in its `SECTIONS` const). Each maps to one buyer concern from the positioning doc (Head of AI "is this another layer?", CIO "too many governance tools", CISO "IAM already answers who can access what", Data Governance "we already have catalogs", Compliance "evidence gathering is manual") but reads as a dashboard, not a pitch — a first cut used the quoted objections as headings and was rejected for reading like a sales script. Each section is backed by **live data only** from `hooks/useOverviewData.ts`: eval-engine's shadow evaluation (`/eval/status` for the hero totals and rule-pack/catalog coverage, `/eval/findings?limit=500` grouped by effect/rule/family, and the new `GET /eval/conformance` for cross-session positive evidence) plus oob-ingest (`/oob/overview`, `/oob/sessions` for off-catalog calls and distinct intents). It replaced `Dashboard.tsx`, which read only the `decision_*` store (`useDecisionFeed`, `/api/*`) — **structurally empty for LoanPro**, since `api-server`'s `toInsert` (`routes/decisions.ts`) requires a `governed` key LoanPro's ungoverned orchestrator never emits, so every panel showed zeros and the "populate from the demo" button both timed out (115 s abort, 34 live-LLM scenarios) and inserted nothing. That store now backs only Decision Traces › Decisions and a conditional "Governed runtime" section at the bottom of the Overview, rendered **only when `/api/stats.total > 0`** — never a zero-panel implying inline enforcement that didn't happen; the populate button is gone from the UI (`populate()` stays in the hook for API completeness). Truthfulness rule the page is built on: LoanPro is ungoverned, so every finding is labelled shadow evaluation — "what Prefront would have decided before execution" — and nothing is ever called "blocked". Drill-ins: the hero Findings counter and the effect tiles open Decision Traces › Findings (the effect tiles prefiltered — `App.tsx` lifts `tracesSection`/`findingsEffect` state and `DecisionTraces` takes `section`/`onSection`/`findingsEffect` props, `FindingsSection` an `initialEffect`); evidence rows open the same `SessionFlyout` the Findings table uses. The one check-vocabulary special case (`entitlement` = the only role-only check, everything else "business context IAM has no concept of") is flagged in `useOverviewData.ts`; sensitive-field names come from `demos.ts`, never the component — `grep -in "loan\|applicant\|underwrit"` over `Overview.tsx`/`useOverviewData.ts` must stay empty. `Observability.tsx` now exports its formatters (`num`/`ms`/`pct`/`ago`), `getJSON`/`qs`, `Kpi`/`Bars`/`Empty`, and the `Overview`/`Status`/`SessionRow`/`PopulationRow`/`EvalStatus` types for it. Caveat: `/oob/*` and `/eval/*` are not demo-scoped, so re-enabling SecureBank alongside LoanPro would mix demos on this page (out of scope). `DecisionTraces.tsx` is the filterable decision log (Decisions | Findings sub-nav).
 
 
+**`DataGraph.tsx` renders two different things**, branching on
+`sourceType === "mcp" && mcpTools.length > 0`. A Postgres source gets the
+original table/relationship map (`buildFromCatalog` → `GraphTableNode` →
+`DetailPanel`, dagre LR layout, FK edges). An **MCP** source gets a tool view
+(`buildFromMcpTools` → `GraphToolNode` → `ToolDetailPanel`, plus `McpStatsBar`
+and `McpLegend`) fed by `schema.mcpTools` — the full `mcp_tools` record from
+`/design/semantic/mcp/introspect`, NOT `schema.catalog`, whose one-table-per-tool
+projection carries only input properties. Three things to keep in mind:
+
+- **Layout is masonry, not dagre.** MCP tools aren't joinable, so the graph has
+  no edges, and dagre puts every edgeless node in one rank — a 19-tool server
+  renders as a single unreadable column. Each card goes to the shortest column.
+- **"Undeclared" must never render like "empty".** Most MCP servers declare no
+  `outputSchema`; the node shows a hatched *no output schema declared* note and
+  the panel says so in words, and `McpStatsBar` surfaces the count as a
+  first-class "Undeclared out" stat. Behaviour annotations are tri-state the
+  same way — `HintChips` lists which hints the server actually declared and
+  names the ones it didn't.
+- `PolicySection` is shared by both detail panels: the policy index is keyed by
+  name and an MCP tool's name IS its catalog table name, so both resolve rules
+  identically. `App.tsx` swaps the Data Graph subtitle for MCP sources, since
+  one constant would describe the wrong view half the time.
+
 ## Observability & Findings (the `/oob/*` + `/eval/*` surfaces)
 
 The ingestion pipeline itself (two sources/one table, `FINAL`, the exclusion

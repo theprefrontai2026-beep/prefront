@@ -247,7 +247,13 @@ export default function App() {
   if (rules.some(r => r.review_status === "approved")) completedTabs.add("policy");
 
   const others = reviewers.filter(r => r.id !== myId);
-  const meta = PAGE_META[tab];
+  // The Data Graph renders two different things depending on what's connected —
+  // a table/relationship map, or an MCP server's tools — so its subtitle can't
+  // be a constant without describing the wrong one half the time.
+  const baseMeta = PAGE_META[tab];
+  const meta = (tab === "graph" && schema?.sourceType === "mcp")
+    ? { ...baseMeta, desc: "Every tool this MCP server declares — parameters, declared outputs, behaviour annotations, and applied governance policies." }
+    : baseMeta;
 
   return (
     <>
@@ -352,7 +358,8 @@ export default function App() {
           </div>
           {graphMounted && (
             <div className={tab === "graph" ? "" : "tab-hidden"}>
-              <DataGraph catalog={schema?.catalog} datasourceId={schema?.datasourceId} rules={rules} pii={schema?.pii} />
+              <DataGraph catalog={schema?.catalog} datasourceId={schema?.datasourceId} rules={rules}
+                pii={schema?.pii} sourceType={schema?.sourceType} mcpTools={schema?.mcpTools} />
             </div>
           )}
           {bizGraphMounted && (

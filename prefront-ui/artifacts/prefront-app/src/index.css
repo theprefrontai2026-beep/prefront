@@ -997,6 +997,57 @@ select { cursor: pointer; }
 .dg-flag.pii  { background: var(--amber-light); color: var(--amber); }
 .dg-restriction { font-size: 10px; color: var(--amber); white-space: normal; }
 
+/* ── MCP tool view (Data Graph, sourceType === "mcp") ──────────────────────
+   A tool node reuses .dg-node / .dg-col so the two graph modes stay visually
+   one component; only what a tool HAS and a table doesn't needs new rules. */
+.dg-tool-node { width: 264px; }
+/* A behaviour badge must never be clipped or overlapped — it is the one thing
+   on the card that says whether this tool writes. Long tool names ellipsize
+   instead. `flex: 1` alone is not enough twice over: it keeps min-width:auto
+   (so the title refuses to shrink), and .dg-node-title carries no overflow
+   rules of its own (unlike .dg-col-name). */
+.dg-tool-node .dg-node-title {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dg-tool-node .dg-node-tags { flex-shrink: 0; }
+.dg-tool-node .dg-behaviour { white-space: nowrap; font-size: 8px; padding: 1px 4px; }
+.dg-tool-section {
+  padding: 3px 12px; font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+  background: var(--surface-alt); border-bottom: 1px solid var(--line-soft);
+}
+/* "The server said nothing" — deliberately muted and italic so it never reads
+   as a value the tool returns. */
+.dg-col-undeclared {
+  padding: 5px 12px; font-size: 11px; font-style: italic;
+  color: var(--muted); background: repeating-linear-gradient(
+    45deg, transparent, transparent 5px, var(--surface-alt) 5px, var(--surface-alt) 10px);
+}
+.dg-behaviour.destructive { background: var(--red-light); color: var(--red); }
+.dg-behaviour.readonly    { background: var(--teal-light); color: var(--teal); }
+.dg-behaviour.unknown     { background: var(--surface-alt); color: var(--muted); }
+.dg-node-head .dg-behaviour { background: rgba(255,255,255,0.22); color: white; }
+.dg-ann {
+  font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 500;
+  background: var(--teal-light); color: var(--teal);
+}
+.dg-ann.off { background: var(--surface-alt); color: var(--muted); }
+.dg-detail-note { font-size: 11px; color: var(--muted); margin-top: 8px; font-style: italic; }
+.dg-tool-desc { font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
+.dg-field-desc { font-size: 11px; color: var(--muted); line-height: 1.4; flex-basis: 100%; margin-top: 2px; }
+.dg-schema { margin-top: 6px; font-size: 11px; }
+.dg-schema summary {
+  cursor: pointer; color: var(--muted); font-family: var(--app-font-mono);
+  padding: 3px 0; user-select: none;
+}
+.dg-schema summary:hover { color: var(--blue); }
+.dg-schema pre {
+  margin: 4px 0 0; padding: 8px 10px; max-height: 260px; overflow: auto;
+  background: var(--surface-alt); border: 1px solid var(--line); border-radius: 5px;
+  font-size: 10.5px; line-height: 1.45; font-family: var(--app-font-mono);
+  color: var(--ink-soft); white-space: pre;
+}
+
 /* PII micro-badge on a node column row */
 .dg-col-pii {
   font-size: 8px; font-weight: 700; letter-spacing: 0.04em;

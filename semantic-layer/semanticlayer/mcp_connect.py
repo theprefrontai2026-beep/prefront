@@ -30,43 +30,180 @@ log = get_logger(__name__)
 
 _JSON_SCHEMA_TYPES = {"string", "integer", "number", "boolean", "array", "object"}
 
+# JSON Schema keywords worth showing an operator verbatim. Kept as a list rather
+# than dumping the whole spec dict so the display carries the constraints that
+# describe a value's SHAPE, not schema plumbing ($schema, $id, title).
+_CONSTRAINT_KEYS = (
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems",
+)
+
 
 def _param_type(spec: dict) -> str:
     """An MCP tool's inputSchema property is already JSON Schema — unlike a SQL
     column type, its ``type`` needs no translation, just a safe fallback for the
     shapes Prefront's coarse type vocabulary doesn't model (enum-only, $ref,
-    anyOf/oneOf, a type array with 'null')."""
+    anyOf/oneOf, a type array with 'null').
+
+    Coarsening is for the CATALOG, which has one type vocabulary. For display,
+    ``_declared_type`` reports what the server actually said.
+    """
     t = spec.get("type")
     if isinstance(t, list):
         t = next((x for x in t if x != "null"), None)
     return t if t in _JSON_SCHEMA_TYPES else "string"
 
 
-async def list_mcp_tools(server_url: str, headers: Optional[dict[str, str]] = None) -> list[dict]:
-    """Connect to ``server_url`` and return each tool as a plain dict:
-    ``{name, description, input_schema, destructive}``.
+def _declared_type(spec: dict) -> str:
+    """The type as the SERVER declared it, for display - never coarsened and
+    never guessed. ``array<string>`` for a typed array, ``string|null`` for a
+    union, ``""`` when the schema expresses its type some other way ($ref,
+    anyOf/oneOf, enum-only). An empty string is honest: the raw schema travels
+    alongside, so a caller that needs the exotic shape still has it.
+    """
+    t = spec.get("type")
+    if isinstance(t, list):
+        return "|".join(str(x) for x in t) if t else ""
+    if t == "array":
+        items = spec.get("items")
+        inner = _declared_type(items) if isinstance(items, dict) else ""
+        return f"array<{inner}>" if inner else "array"
+    return str(t) if t else ""
 
-    ``destructive`` reflects the tool's own MCP annotations (``destructiveHint`` /
-    ``readOnlyHint``) when the upstream server sets them; absent annotations are
-    treated as "unknown, assume not destructive" rather than guessed.
+
+def _field(name: str, spec: dict, *, required: bool) -> dict:
+    """One input parameter or one output field, flattened for display.
+
+    Everything here is DECLARED by the upstream server - nothing is inferred.
+    An absent key becomes an empty value, never a guess, so a sparse schema
+    reads as sparse rather than as a schema Prefront filled in.
+    """
+    spec = spec or {}
+    constraints = {k: spec[k] for k in _CONSTRAINT_KEYS if k in spec}
+    return {
+        "name": name,
+        "type": _declared_type(spec),
+        "required": required,
+        "description": str(spec.get("description") or "").strip(),
+        "enum": list(spec["enum"]) if isinstance(spec.get("enum"), list) else None,
+        "default": spec.get("default"),
+        "format": str(spec.get("format") or ""),
+        "constraints": constraints,
+    }
+
+
+def _fields(schema: Optional[dict]) -> list[dict]:
+    """Top-level properties of an object schema, in declaration order.
+
+    Only the top level is flattened. A nested object/array-of-object keeps its
+    structure in the raw schema that travels with the tool - flattening deeper
+    would invent a dotted field vocabulary the server never declared.
+    """
+    if not isinstance(schema, dict):
+        return []
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return []
+    required = set(schema.get("required") or [])
+    return [_field(n, s if isinstance(s, dict) else {}, required=n in required)
+            for n, s in props.items()]
+
+
+def _annotations(tool) -> dict:
+    """The tool's four MCP annotation hints, TRI-STATE.
+
+    ``True``/``False`` mean the server declared the hint; ``None`` means it said
+    nothing. Collapsing "unset" into False is what made the old destructive
+    formula wrong (see ``_is_destructive``) and it also loses the one thing an
+    operator most wants to know about an unfamiliar server: how much of this did
+    the author actually declare?
+    """
+    a = getattr(tool, "annotations", None)
+
+    def hint(attr: str) -> Optional[bool]:
+        v = getattr(a, attr, None) if a is not None else None
+        return v if isinstance(v, bool) else None
+
+    return {
+        "title": str(getattr(a, "title", "") or "") if a is not None else "",
+        "read_only": hint("readOnlyHint"),
+        "destructive": hint("destructiveHint"),
+        "idempotent": hint("idempotentHint"),
+        "open_world": hint("openWorldHint"),
+    }
+
+
+def _is_destructive(ann: dict) -> bool:
+    """Only a POSITIVE declaration marks a tool destructive; silence never does.
+
+    The previous formula was ``destructiveHint or not readOnlyHint`` with a
+    default of True for a missing ``readOnlyHint`` - so a server that set an
+    annotations object at all (even just a display ``title``) had EVERY one of
+    its tools read as destructive, flipping their default governance from
+    ``allow`` to ``approval_required`` in ``policy.policy_hints_from_mcp``. The
+    module always claimed absent annotations are "assume not destructive"; this
+    is that claim actually holding when the object exists but the hint doesn't.
+    """
+    if ann["destructive"] is not None:
+        return bool(ann["destructive"])
+    if ann["read_only"] is not None:
+        return not bool(ann["read_only"])
+    return False
+
+
+async def list_mcp_tools(server_url: str, headers: Optional[dict[str, str]] = None) -> list[dict]:
+    """Connect to ``server_url`` and return the COMPLETE record for each tool.
+
+    ``{name, title, description, input_schema, output_schema, parameters,
+    output_fields, annotations, destructive, meta}`` - everything the MCP
+    protocol exposes about a tool, so nothing is silently dropped between the
+    server and the operator reviewing it.
+
+    Two distinctions the shape preserves deliberately, because both are real
+    findings about an upstream server rather than presentation details:
+
+    * ``output_schema is None`` means the server declared NO output schema (most
+      don't yet); ``{}`` with no properties means it declared one that is empty.
+      "We don't know what this tool returns" and "it returns nothing" are
+      different facts and must not render the same.
+    * every ``annotations`` hint is tri-state - see ``_annotations``.
+
+    ``destructive`` keeps its original meaning and stays the key the catalog and
+    ``policy.policy_hints_from_mcp`` read; only its edge-case handling changed
+    (see ``_is_destructive``).
     """
     async with mcp_sse.sse_client(server_url, headers=headers or {}) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             listing = await session.list_tools()
-    tools: list[dict] = []
-    for t in listing.tools:
-        annotations = getattr(t, "annotations", None)
-        destructive = bool(getattr(annotations, "destructiveHint", False)) or not bool(
-            getattr(annotations, "readOnlyHint", True) if annotations else True
-        )
-        tools.append({
-            "name": t.name,
-            "description": (t.description or "").strip(),
-            "input_schema": t.inputSchema or {"type": "object", "properties": {}},
-            "destructive": destructive,
-        })
-    return tools
+    return [tool_record(t) for t in listing.tools]
+
+
+def tool_record(t) -> dict:
+    """One MCP ``Tool`` -> the complete plain-dict record described above.
+
+    Split out of ``list_mcp_tools`` so it can be exercised against synthetic
+    ``mcp.types.Tool`` objects without standing up a server - the transport is
+    the only part of that function that needs one.
+    """
+    input_schema = t.inputSchema or {"type": "object", "properties": {}}
+    output_schema = getattr(t, "outputSchema", None)
+    ann = _annotations(t)
+    meta = getattr(t, "meta", None)
+    return {
+        "name": t.name,
+        # MCP's display-name precedence: an explicit `title`, else the
+        # annotations' title, else nothing (the UI falls back to `name`).
+        "title": str(getattr(t, "title", "") or "") or ann["title"],
+        "description": (t.description or "").strip(),
+        "input_schema": input_schema,
+        "output_schema": output_schema if isinstance(output_schema, dict) else None,
+        "parameters": _fields(input_schema),
+        "output_fields": _fields(output_schema),
+        "annotations": ann,
+        "destructive": _is_destructive(ann),
+        "meta": meta if isinstance(meta, dict) else None,
+    }
 
 
 def list_mcp_tools_sync(server_url: str, headers: Optional[dict[str, str]] = None) -> list[dict]:
