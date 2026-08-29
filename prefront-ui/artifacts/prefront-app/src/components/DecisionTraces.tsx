@@ -34,6 +34,12 @@ function argSummary(args: Record<string, any> | null): string {
   return parts.length ? `(${parts.join(", ")})` : "";
 }
 
+/** The family's display name, as stamped by eval-engine. Falls back to the raw
+ *  stored value so a row from an older response never renders blank. */
+function famOf(r: { family: string; family_label?: string }): string {
+  return r.family_label || r.family;
+}
+
 function uniqueSorted(vals: (string | null | undefined)[]): string[] {
   return Array.from(new Set(vals.filter((v): v is string => !!v))).sort();
 }
@@ -133,7 +139,10 @@ function FindingsSection({ initialEffect = "" }: { initialEffect?: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const families = useMemo(() => uniqueSorted(rows.map((r) => r.family)), [rows]);
+  // Filter and display on eval-engine's family display name (Policy /
+  // Integrity / Conformance), falling back to the raw family1|2|3 for a row
+  // served before the label existed.
+  const families = useMemo(() => uniqueSorted(rows.map((r) => famOf(r))), [rows]);
   const checks = useMemo(() => uniqueSorted(rows.map((r) => r.check_id)), [rows]);
   const effects = useMemo(() => uniqueSorted(rows.map((r) => r.effect)), [rows]);
   const policies = useMemo(
@@ -147,7 +156,7 @@ function FindingsSection({ initialEffect = "" }: { initialEffect?: string }) {
     return rows.filter((r) => {
       if (cutoff && new Date(r.evaluated_at).getTime() < cutoff) return false;
       if (eventId.trim() && !r.event_id.includes(eventId.trim())) return false;
-      if (family && r.family !== family) return false;
+      if (family && famOf(r) !== family) return false;
       if (checkId && r.check_id !== checkId) return false;
       if (effect && r.effect !== effect) return false;
       if (policyNum) {
@@ -244,7 +253,7 @@ function FindingsSection({ initialEffect = "" }: { initialEffect?: string }) {
                     onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source })}>
                   <td className="mono pf-tr-truncate narrow" title={r.event_id || undefined}>{r.event_id || "—"}</td>
                   <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
-                  <td className="mono pf-tr-truncate narrow" title={r.family}>{r.family}</td>
+                  <td className="pf-tr-truncate" title={famOf(r)}>{famOf(r)}</td>
                   <td><span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span></td>
                   <td className="pf-tr-truncate" title={r.user_query || undefined}>{r.user_query || <span className="muted">—</span>}</td>
                   <td><WhatWentWrong r={r} /></td>

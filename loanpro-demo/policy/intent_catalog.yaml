@@ -13,7 +13,7 @@
 # deliberately ABSENT here - their absence is what makes a call to them
 # catalog_membership: off-catalog action, not something to list and exempt.
 intent_catalog:
-  version: 3
+  version: 4
   policy_document: loan_underwriting_policy.md
   intents:
     - intent: view_my_pipeline
@@ -36,7 +36,11 @@ intent_catalog:
         roles: [Loan Officer, Underwriter, Branch Manager]
         channels: [officer_ui, underwriting, manager_console]
       fields: [loan_id, applicant_id, product, requested_amount, term_months, status, assigned_officer]
-      mandatory_filters: ["officer_id = caller OR applicant_id = <subject>"]
+      # filter_scope reads RESULT rows: the scoping column is assigned_officer
+      # (officer_id is the request param that sets it). The applicant-subject
+      # alternative isn't machine-checkable from rows and is documented in
+      # the policy text instead.
+      mandatory_filters: ["assigned_officer = caller"]
       expected_volume: {rows_p99: 5}
       trigger_descriptors: ["list of applications", "branch pipeline", "all applications", "pending applications in the branch"]
       policy: ["11.3", "11.4", "12.6", "12.9"]
@@ -180,7 +184,9 @@ intent_catalog:
       allowed_callers:
         roles: [Underwriter, Branch Manager]
         channels: [underwriting, manager_console]
-      fields: [loan_id, status, decided_by, version]
+      # The decision record echoes the facts decided on (applicant, amount,
+      # bureau score, verified income) - see app_tools.py's decide_loan.
+      fields: [loan_id, status, decided_by, version, applicant_id, requested_amount, score, verified_income]
       expected_volume: {rows_p99: 1}
       closing_obligation: send_notice
       policy: ["9.2.1", "9.2.2", "9.2.3", "9.2.5", "9.3.1", "9.3.2", "9.3.3", "9.3.8",

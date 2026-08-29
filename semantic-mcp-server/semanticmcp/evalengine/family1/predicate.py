@@ -103,6 +103,17 @@ def _approval_backed(session: Session, up_to_turn: Optional[int]) -> bool:
     return False
 
 
+def _captures_approvals(ctx: CheckContext) -> bool:
+    """Whether this trace source declares approval events captured (visibility
+    profile). When it does, an approval-gated action with no approval event
+    is a VIOLATION, not an open question; when it doesn't (or there is no
+    profile at all - the inline reuse path), the check stays indeterminate
+    and the combinator labels it a visibility gap (Hard Rule 7)."""
+    vp = ctx.visibility_profile
+    captured = getattr(vp, "captured", None)
+    return bool(captured("approval_events")) if callable(captured) else False
+
+
 def evaluate(session: Session, rule_pack: RulePack, ctx: CheckContext) -> list[Verdict]:
     out: list[Verdict] = []
     for rule in rule_pack.by_engine("predicate"):
@@ -132,6 +143,16 @@ def evaluate(session: Session, rule_pack: RulePack, ctx: CheckContext) -> list[V
                         check_id=rule.check_id(), family="family1", status="satisfied", effect="allow",
                         session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
                         detail=f"rule {rule.rule_id} fired on {step.tool_name} and is approval-backed",
+                        source=rule.source or None,
+                    ))
+                elif _captures_approvals(ctx):
+                    # The trace source declares it captures approval events, so
+                    # "none in the trace" is conclusive: the gated action ran
+                    # without the approval the rule requires.
+                    out.append(Verdict(
+                        check_id=rule.check_id(), family="family1", status="violated", effect=rule.effect,
+                        session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
+                        detail=f"rule {rule.rule_id} fired on {step.tool_name} with no approval event before it",
                         source=rule.source or None,
                     ))
                 else:

@@ -74,21 +74,29 @@ def invocation_drift(scenario_id: str, rows: list[dict], baseline_variant: str, 
     cmp_freq = _intent_frequency(cmp_rows)
     tools = set(base_freq) | set(cmp_freq)
     tv_distance = sum(abs(base_freq.get(t, 0) - cmp_freq.get(t, 0)) for t in tools) / 2
+    # A normalized mix is blind to VOLUME: one call per session vs four calls
+    # per session of the same tool is 0% mix shift, yet an obvious behavior
+    # change (caught live: a "proactive" prompt variant quadrupling calls read
+    # as "stable"). Compare calls-per-session too.
+    base_vol = sum(len([t for t in (r.get("shape") or "").split(",") if t]) for r in base_rows) / len(base_rows)
+    cmp_vol = sum(len([t for t in (r.get("shape") or "").split(",") if t]) for r in cmp_rows) / len(cmp_rows)
+    vol_shift = abs(cmp_vol - base_vol) / max(base_vol, cmp_vol, 1.0)
     key = f"population:{scenario_id}:{baseline_variant}-vs-{compare_variant}"
     evidence = Evidence(span_ids=(), excerpt=f"{scenario_id} {baseline_variant} vs {compare_variant}")
-    if tv_distance > threshold:
+    if tv_distance > threshold or vol_shift > threshold:
         return Verdict(
             check_id=CHECK_DRIFT, family="family3", status="violated", effect="flag",
             session_id=key, evidence=evidence,
-            detail=(f"intent mix for {scenario_id} shifted {tv_distance:.0%} between "
+            detail=(f"intent mix for {scenario_id} shifted {tv_distance:.0%} and calls/session "
+                    f"{base_vol:.1f} -> {cmp_vol:.1f} ({vol_shift:.0%}) between "
                     f"{baseline_variant} ({len(base_rows)} sessions) and "
                     f"{compare_variant} ({len(cmp_rows)} sessions)"),
         )
     return Verdict(
         check_id=CHECK_DRIFT, family="family3", status="satisfied", effect="allow",
         session_id=key, evidence=evidence,
-        detail=(f"intent mix for {scenario_id} stable ({tv_distance:.0%} shift) between "
-                f"{baseline_variant} and {compare_variant}"),
+        detail=(f"intent mix for {scenario_id} stable ({tv_distance:.0%} mix shift, "
+                f"{vol_shift:.0%} volume shift) between {baseline_variant} and {compare_variant}"),
     )
 
 

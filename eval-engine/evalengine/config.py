@@ -25,7 +25,7 @@ EVAL_POLL_SECONDS = float(_env("EVAL_POLL_SECONDS", "10"))
 # A session with no new spans for this long is considered closed. Sessions
 # still receiving spans are left alone - re-running mid-session would emit
 # verdicts against a partial trace that get contradicted a moment later.
-EVAL_QUIET_SECONDS = float(_env("EVAL_QUIET_SECONDS", "30"))
+EVAL_QUIET_SECONDS = float(_env("EVAL_QUIET_SECONDS", "10"))
 
 # Path to the trace_binding.yaml this deployment uses. Empty = the bundled
 # default profile (matches prefront_tracing.py's own conventions).

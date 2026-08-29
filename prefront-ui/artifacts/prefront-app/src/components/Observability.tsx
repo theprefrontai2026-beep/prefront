@@ -95,7 +95,11 @@ type Scenario = { scenario_id: string; runs: number; capability: string; role: s
 // Exported: DecisionTraces.tsx's Findings section (moved there from this
 // file - see the VIEWS comment above) reads the same /eval/* shapes.
 export type EvalVerdict = {
-  session_id: string; check_id: string; family: string; rule_id: string;
+  // `family` is the stored family1|2|3; `family_label` is eval-engine's
+  // display name for it (Policy / Integrity / Conformance), stamped at read
+  // time. Not to be confused with SessionRow.family above, which is the demo
+  // SCENARIO group (F1/F2/F3/POP/BASE) - a different vocabulary.
+  session_id: string; check_id: string; family: string; family_label?: string; rule_id: string;
   status: "satisfied" | "violated" | "indeterminate"; effect: string;
   indeterminate_reason: string; detail: string; evidence_span_ids: string[];
   evidence_excerpt: string; source: string; mode: string; engine_version: string;

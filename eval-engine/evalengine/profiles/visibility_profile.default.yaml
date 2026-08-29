@@ -1,13 +1,18 @@
 # Default visibility profile: assumes a trace that captures tool args/results
-# and LLM messages but no explicit approval events and no raw SQL - a common
-# shape for a harness that logs application-level spans without an approval
-# workflow of its own. A deployment whose harness captures more (or less)
-# ships its own and points EVAL_VISIBILITY_PROFILE_PATH at it.
+# and LLM messages but no raw SQL - a common shape for a harness that logs
+# application-level spans. approval_events is TRUE by default because the
+# default trace binding treats approval-shaped tool calls (any tool named
+# *approv*) AS the approval events, and tool calls are captured - so "no
+# approval call in the trace" is conclusive and approval_gate /
+# approval_evidence report violated, not indeterminate. A deployment whose
+# approvals happen out-of-band (a ticketing system the trace never sees)
+# sets this false and points EVAL_VISIBILITY_PROFILE_PATH at its own copy;
+# those checks then stay indeterminate -> visibility_gap (Hard Rule 7).
 visibility_profile:
-  version: 1
+  version: 2
   captures:
     tool_args: true
     tool_results: true
     llm_messages: true
-    approval_events: false
+    approval_events: true
     sql: false

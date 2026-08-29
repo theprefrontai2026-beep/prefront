@@ -18,6 +18,7 @@ from typing import Any, Iterable, Optional
 import clickhouse_connect
 
 from . import config
+from .contract import family_label
 
 _client = None
 _lock = threading.Lock()
@@ -146,6 +147,13 @@ def rows(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]
             if isinstance(v, datetime):
                 v = v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.isoformat()
             d[k] = v
+        # Every verdict/tag read funnels through here, so stamping the display
+        # name once covers /eval/findings, /eval/verdicts, /eval/conformance and
+        # the per-session reads without each one remembering to do it. Derived
+        # at READ time, never stored - see contract.FAMILY_LABELS for why the
+        # `family` column itself must never be renamed.
+        if "family" in d and "family_label" not in d:
+            d["family_label"] = family_label(str(d["family"]))
         out.append(d)
     return out
 
@@ -185,7 +193,14 @@ def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
                countIf(kind = 'TOOL' AND attributes['app.side_effect'] = 'write') AS writes,
                countIf(status = 'ERROR') AS errors,
                min(start_time) AS t_start
-        FROM {SPANS_T} WHERE scenario_id = %(sid)s AND session_id != ''
+        FROM {SPANS_T}
+        WHERE session_id != ''
+          -- scenario_id is stamped on the session ROOT span only (a harness
+          -- attribute, not per-tool), so filter by session membership - a
+          -- direct `WHERE scenario_id = X` keeps only the root and yields an
+          -- empty shape for every session (caught live: every population
+          -- check read one empty shape and reported "consistent").
+          AND session_id IN (SELECT DISTINCT session_id FROM {SPANS_T} WHERE scenario_id = %(sid)s)
         GROUP BY session_id ORDER BY t_start
         """,
         {"sid": scenario_id},

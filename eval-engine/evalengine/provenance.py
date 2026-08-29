@@ -133,12 +133,24 @@ def _candidates_before(session: Session, step: Step) -> list[Candidate]:
             break
         if t.user_message:
             out.append(Candidate(value=t.user_message, origin="user_message", trust=SEMI, turn_seq=t.seq))
+            # Every number the user typed is its own candidate, so a numeric
+            # arg is compared against each one - not just the FIRST number in
+            # the message, which is what _numeric(whole message) yielded (a
+            # message "change 7001 to $30,500" only ever offered 7001 as the
+            # origin for an amount arg; caught live on a distorted-amount
+            # scenario that could therefore never be a near-miss of 30500).
+            for i, tok in enumerate(_NUM_RE.finditer(t.user_message.replace(",", ""))):
+                try:
+                    out.append(Candidate(value=float(tok.group(0)), origin="user_number", trust=SEMI,
+                                         turn_seq=t.seq, path=f"message#{i}"))
+                except ValueError:
+                    continue
     return out
 
 
 def _find_exact(value: Any, candidates: list[Candidate]) -> Optional[Candidate]:
     for c in candidates:
-        if c.origin == "tool_result" and c.value == value:
+        if c.origin in ("tool_result", "user_number") and c.value == value:
             return c
         if c.origin == "user_message" and isinstance(value, str) and value and value in c.value:
             return c
@@ -148,7 +160,7 @@ def _find_exact(value: Any, candidates: list[Candidate]) -> Optional[Candidate]:
 def _find_normalized(value: Any, candidates: list[Candidate]) -> Optional[Candidate]:
     nv = _normalize(value)
     for c in candidates:
-        if c.origin == "tool_result" and _normalize(c.value) == nv:
+        if c.origin in ("tool_result", "user_number") and _normalize(c.value) == nv:
             return c
         if c.origin == "user_message":
             if isinstance(nv, str) and nv and nv in _normalize(c.value):
@@ -193,16 +205,17 @@ def _find_transform(value: Any, candidates: list[Candidate], abs_tol: float,
     fabricated numeric identifier matched an UNRELATED identifier from
     earlier in the session as a "mutated round()" origin, purely because they
     happened to be the same order of magnitude, masking param_provenance's
-    fabrication finding entirely). 20x rel_tol keeps the near-miss window
+    fabrication finding entirely). 40x rel_tol keeps the near-miss window
     meaningfully tighter than "same ballpark" while still wide enough to
-    catch a real rounding/unit-conversion slip (rel_tol's default of 0.005 ->
-    a 10% near-miss window), floored at 5% so a very tight configured rel_tol
-    doesn't make near-miss reporting useless.
+    catch a real typo-class slip (rel_tol's default of 0.005 -> a 20%
+    near-miss window: 35,000 typed for 30,500 is 12.9% off and must be
+    caught, an unrelated id ~30% away must not), floored at 5% so a very
+    tight configured rel_tol doesn't make near-miss reporting useless.
     """
     target = _numeric(value)
     if target is None:
         return None, "", None
-    near_miss_limit = max(rel_tol * 20, 0.05)
+    near_miss_limit = max(rel_tol * 40, 0.05)
     best_miss: tuple[Optional[Candidate], str, Optional[float]] = (None, "", None)
     for c in candidates:
         base = _numeric(c.value)

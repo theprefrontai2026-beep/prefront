@@ -32,7 +32,15 @@ def _field_in_result(result, field_name: str) -> bool:
 def _field_in_text(text: str, field_name: str) -> bool:
     if not text:
         return False
-    pattern = re.escape(field_name).replace(r"\_", r"[\s_-]?").replace(r"\-", r"[\s_-]?")
+    # "credit_score" must also match "credit score" / "credit-score" in prose.
+    # Built from the name's own word parts - NOT via re.escape().replace(r"\_",
+    # ...): re.escape stopped escaping "_" in Python 3.7, so that rewrite
+    # silently never matched and a final answer saying "credit score of 700"
+    # sailed past a credit_score detector (caught live on a scripted scenario).
+    parts = [re.escape(p) for p in re.split(r"[\s_-]+", field_name.strip()) if p]
+    if not parts:
+        return False
+    pattern = r"\b" + r"[\s_-]?".join(parts) + r"\b"
     return re.search(pattern, text, re.IGNORECASE) is not None
 
 

@@ -17,6 +17,29 @@ Family = Literal["family1", "family2", "family3"]
 Mode = Literal["inline", "oob"]
 IndeterminateReason = Literal["missing_precondition", "visibility_gap"]
 
+# Human-readable name per family, for any surface that shows a verdict to a
+# person (the UIs' Findings table, an API consumer). DISPLAY ONLY - the stored
+# `family` value stays `family1|2|3` forever: it is a persisted column in
+# `eval_verdicts`, and renaming a persisted field orphans the old rows under a
+# ReplacingMergeTree instead of replacing them (the same trap documented for
+# `check_id` renames in CLAUDE.md's "Two staleness traps").
+#
+# Deliberately a CATEGORY noun, never an outcome word ("Policy", not "Policy
+# Violations"): the same label rides on `satisfied` verdicts and conformance
+# tags via /eval/sessions/{id}/verdicts and /eval/conformance, where an
+# outcome word would contradict the status next to it.
+FAMILY_LABELS: dict[str, str] = {
+    "family1": "Policy",        # the customer's own extracted, approved rules
+    "family2": "Integrity",     # built-in invariants (provenance, taint, fidelity...)
+    "family3": "Conformance",   # behaviour vs the approved intent catalog
+}
+
+
+def family_label(family: str) -> str:
+    """Display name for a family; unknown/empty values pass through unchanged
+    so a future family never renders as a blank cell."""
+    return FAMILY_LABELS.get(family, family)
+
 # block > approval_required > flag > allow. The ONLY place this ordering is
 # defined (Hard Rule 5) - combinator.py is the only module allowed to read it.
 EFFECT_PRECEDENCE: dict[Effect, int] = {"block": 3, "approval_required": 2, "flag": 1, "allow": 0}

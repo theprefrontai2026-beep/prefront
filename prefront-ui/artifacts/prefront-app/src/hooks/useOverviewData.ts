@@ -108,9 +108,16 @@ export function byRule(findings: EvalVerdict[], top = 8): RuleRow[] {
     .slice(0, top);
 }
 
+// Keyed by eval-engine's family display name (Policy / Integrity /
+// Conformance), falling back to the raw family1|2|3 for a row served before
+// the label existed - this feeds a user-facing breakdown, so it groups on
+// what the reader sees.
 export function byFamily(findings: EvalVerdict[]): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const f of findings) out[f.family] = (out[f.family] ?? 0) + 1;
+  for (const f of findings) {
+    const key = f.family_label || f.family;
+    out[key] = (out[key] ?? 0) + 1;
+  }
   return out;
 }
 

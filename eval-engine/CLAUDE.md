@@ -48,6 +48,18 @@ is a separate, on-demand path - `evaluate.evaluate_population()`, called via
 `POST /eval/population`, not part of the per-session pipeline above (there
 is no single session these checks are "about").
 
+**Latency from session end to finding** is the sum of the OOB pipeline's
+polls: Phoenix export batch (~1-5 s) + oob-ingest's `PHOENIX_POLL_SECONDS`
+(5) + the worker's `EVAL_POLL_SECONDS` (10) + `EVAL_QUIET_SECONDS` - the
+session must have had no new span for that long before it's a candidate
+(the debounce against evaluating a half-ingested trace, see "Two staleness
+traps" below). The quiet window defaults to **10 s** (was 30 s; lowered per
+request once the debounce had proven itself - findings now land ~20-30 s
+after a session ends instead of ~45-60 s). The grading harness's readiness
+polling (`GET /oob/sessions/<id>` once a second until the session exists)
+is what the 404s in oob-ingest's log during a run are - expected, not an
+error.
+
 `evaluate.py` is the ONLY place that wires these together - both `worker.py`
 (the poll loop) and `api.py`'s `POST /eval/run` call `evaluate_and_persist`,
 never their own copy of the pipeline (Hard Rule 12 needs one code path).
@@ -98,6 +110,43 @@ to decide the reason itself. `combinator.combine_oob` does that lookup (Hard
 Rule 7): `visibility.captured(missing_capture) == False` -> `visibility_gap`,
 otherwise `missing_precondition`. Keep new indeterminate-capable checks to
 this same split of responsibility.
+
+## Family display names (Policy / Integrity / Conformance)
+
+`contract.FAMILY_LABELS` + `family_label()` map the stored family to a
+human-readable name for any surface that shows a verdict to a person:
+
+| stored | label | what it is |
+|---|---|---|
+| `family1` | **Policy** | the customer's own extracted, approved rules |
+| `family2` | **Integrity** | built-in invariants (provenance, taint, fidelity, …) |
+| `family3` | **Conformance** | behaviour vs the approved intent catalog |
+
+Two rules this mapping must keep:
+
+1. **The stored `family` value never changes.** It is a persisted column in
+   `eval_verdicts`; renaming it would orphan every existing row under the
+   ReplacingMergeTree rather than replacing it - the same trap documented for
+   `check_id` renames in "Two staleness traps" below. The label is derived at
+   READ time, in `ch.rows()` (the single funnel every verdict/tag read goes
+   through), so all of `/eval/findings`, `/eval/verdicts`,
+   `/eval/sessions/{id}/verdicts` and `/eval/conformance` carry
+   `family_label` without each endpoint remembering to add it. A row with no
+   `family` column is left alone (`eval_conformance_tags` genuinely has no
+   such column - it is denormalized around `check_id` + policy citation), and
+   an unknown family passes through unchanged rather than rendering blank.
+2. **The label is a CATEGORY noun, never an outcome word.** "Policy", not
+   "Policy Violations": the same label rides on `satisfied` verdicts (a clean
+   session shows `Policy · satisfied`, `Integrity · satisfied`) and an outcome
+   word would contradict the status beside it. Verified live on a baseline
+   session: 10 Policy / 28 Integrity / 24 Conformance, all satisfied.
+
+Population checks (`outcome_consistency`, `invocation_drift`,
+`verdict_trend`) are stored as `family3` and therefore label as
+**Conformance** - deliberately, so one label maps to one stored value; their
+`check_id` is what distinguishes them. NB this is a different vocabulary from
+the demo's SCENARIO groups (`F1/F2/F3/POP/BASE`, `loanpro-demo/scenarios.py`'s
+`FAMILIES`, rendered by Verdict's `SessionRunner`) - do not conflate the two.
 
 ## Verdicts vs findings vs conformance tags
 
@@ -324,15 +373,43 @@ skill-builder rule-pack compiler, `family3/` (call/scope/session checks),
 LoanPro's hand-authored `policy/rule_pack.yaml` + `policy/intent_catalog.yaml`,
 and the `intent_catalog.yaml` schema/generator (semantic-layer).
 
-## Step 15 (grading harness): run live, real bugs found and fixed - now 8/8
+## Step 15 (grading harness): run live, real bugs found and fixed - now 37/37 (full catalogue)
 
-`loanpro-demo/grading_harness.py` has now actually run against the live
-stack (8 scenarios: 4 baselines + F2-01/F2-05/F3-03/F3-11) - **8/8 PASS**,
-report at `loanpro-demo/docs/eval-coverage.md`. Full 30-scenario catalogue
-run is still future work (this pass was deliberately scoped: mostly
-`mode: "replay"` scenarios plus a couple of `llm` ones, to keep the metered
-LLM cost small) - `make grade-loanpro` runs everything once someone's ready
-to spend that.
+`loanpro-demo/grading_harness.py` has now run the **FULL 37-scenario
+catalogue** against the live stack - **37/37 PASS**, report at
+`loanpro-demo/docs/eval-coverage.md`. An earlier pass was deliberately
+scoped to 8 (4 baselines + F2-01/F2-05/F3-03/F3-11) to keep the metered LLM
+cost small; the full run (`make grade-loanpro`) has since been done. That
+full run surfaced a second wave of check bugs - the six shapes several
+scenarios needed to fire but never did - documented as bugs 7-12 in "Two
+staleness traps"/below and regression-tested in
+`tests/test_full_catalogue_fixes.py` (14 cases, one synthetic session per
+missed shape). The three families of failure the full run exposed and fixed:
+(a) checks whose real-session shape the synthetic unit tests never
+exercised - `content` prose matching (`_field_in_text` `re.escape`
+gotcha), `entity_consistency` reading a subject from a single-row RESULT
+(`decide_loan`'s applicant), `param_discard` on a SINGLE over-broad call,
+`invocation_drift` on call VOLUME with an identical tool mix, provenance
+matching ANY number in a user message; (b) two scenario definitions
+expecting a check that structurally cannot fire on their session
+(`F1-03` `prohibition`->`field_restriction` since LoanPro is policy-blind
+and only the final answer leaks; `F3-04` `side_effect_class`->`entitlement`
+since `apply_discount` IS a catalog-approved write, so the finding is the
+caller's ROLE, not a read-intent-turned-write) and one (`F2-03`) switched
+to `mode: "replay"` because a well-behaved LLM run sometimes passes the
+filters and drops nothing; (c) two INFRASTRUCTURE causes masquerading as
+check bugs - `ch.session_shapes` filtering by `scenario_id` (root-span-only,
+so population shapes came back empty) and, most subtly, a browser tab left
+open on the UI firing "Clear all trace data" (`DELETE /oob/phoenix` +
+`/oob/spans` + `/eval/verdicts`) periodically, which wiped sessions
+mid-grade and produced spurious "never showed up in OOB ingestion"
+failures for PF-02 and the POP scenarios until it was spotted in the nginx
+log. The `EVAL_QUIET_SECONDS` window was also lowered 30->10 s in this pass
+(see "Latency" above). The BASE-03 false positive that the `param_discard`
+single-call shape introduced (a parameterless identity-scoped
+`get_my_applications()` has no filter to drop) was caught by the same full
+run and gated: shape 2 now requires the call to have carried at least one
+argument.
 
 Four real bugs the live run found and fixed, in order of discovery:
 
@@ -418,8 +495,59 @@ the way):
    the old 50% window) - masking the true finding completely, invisibly,
    because the OLD bug's false positive happened to cover for it. Fixed:
    the near-miss window now scales off the caller's own `rel_tol`
-   (`max(rel_tol * 20, 0.05)` - 10% at the production default of
-   `rel_tol=0.005`, floored at 5%) instead of a fixed 50%.
+   (`max(rel_tol * 40, 0.05)` - 20% at the production default of
+   `rel_tol=0.005`, floored at 5%) instead of a fixed 50%. It was first set
+   to 20x (10%), then widened to 40x when the full-catalogue run showed a
+   distorted amount 12.9% off its origin (35,000 typed for 30,500) falling
+   OUTSIDE the window and going undetected; 20% still keeps the two
+   unrelated ~30%-apart identifiers from bug 6 out.
+7. **`_candidates_before` only offered the FIRST number in a user message as
+   an origin.** `_numeric(whole message)` returns one float, so "change 7001
+   to $30,500" offered only 7001 - an amount arg could never be an exact
+   match OR a near-miss of 30,500. Fixed: every numeric token in a user
+   message is its own `origin="user_number"` candidate (same `SEMI` trust
+   as the message), matched like a tool-result value.
+8. **`approval_gate` / `approval_evidence` could never be `violated`.** Both
+   emitted `indeterminate` + `missing_capture="approval_events"` whenever no
+   approval-shaped tool call backed the claim - correct when the deployment
+   genuinely cannot see approvals, but the bundled visibility profile
+   declared `approval_events: false` for a subject whose approvals ARE
+   tool calls in the same trace (`request_*_approval`), so every gate
+   bypass graded as a visibility gap. Now the profile says
+   `approval_events: true` (v2) and both checks read
+   `ctx.visibility_profile.captured("approval_events")` - captured ⇒ a
+   missing event is `violated`; not captured (or no profile) ⇒ the old
+   `indeterminate`, still resolved by the combinator.
+9. **`entity_consistency` compared identifier slots across ARGS only.**
+   The classic confusion - look up applicant A, then decide a loan that
+   belongs to applicant B - never compares `applicant_id` with `loan_id`,
+   so it was invisible. Subjects are now also read from a SINGLE-ROW
+   result (a listing's many subjects are the point of a list, not a
+   contradiction); the detail says "resolves to" for the result side.
+   LoanPro's `decide_loan` now RETURNs `applicant_id`/`requested_amount`/
+   `score`/`verified_income` so its result names the subject (and so a
+   session that calls only `decide_loan` still supplies the facts the
+   predicate rules key on).
+10. **`param_discard` needed two calls to the same tool.** The dropped-
+    constraint scenario is one call: the user says "pending personal", the
+    call passes neither, the rows mix statuses and products. Added shape 2
+    (`_dropped_user_constraints`): a result column absent from the args,
+    ≥2 distinct string values in the rows, one of which appears verbatim in
+    the turn's user message ⇒ `violated`. Vocabulary comes from the tool's
+    own result, never from this file.
+11. **`ch.session_shapes` returned nothing for population checks.** It
+    filtered every span by `scenario_id`, which only the `session` root
+    span carries - the TOOL spans it aggregates never matched, so
+    `outcome_consistency`/`invocation_drift` always saw zero sessions and
+    graded "consistent". Now resolves the scenario's session ids first.
+    `invocation_drift` also gained a volume term (calls per session) so
+    v2's "proactive" over-calling registers even when the tool MIX is the
+    same.
+12. **`content._field_in_text` never matched prose.** `re.escape` leaves
+    `_` unescaped (py3.7+), so the regex built for `credit_score` was
+    `credit_score` literally and "credit score is 700" in an answer never
+    matched. The field is now split on `[\s_-]` and re-joined with
+    `[\s_-]?`, so `credit_score`, `credit score` and `credit-score` all hit.
 
 Also a real, reproducible harness-side (not engine-side) race, found the
 same way - re-running the full 8-scenario set live, twice in a row, and

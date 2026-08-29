@@ -36,7 +36,7 @@ This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml`
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
-| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 (built-in integrity invariants, `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (`evalengine/family1/` — temporal/predicate/content engines over a `rule_pack.yaml` compiled by `skill-builder/skillbuilder/rulepack.py` at publish time, `EVAL_RULE_PACK_PATH`) and Family 3 (`evalengine/family3/` — call/scope/session **and population** checks over an `intent_catalog.yaml`, schema+generator in `semantic-layer/semanticlayer/intent_catalog.py`, `EVAL_INTENT_CATALOG_PATH`; LoanPro's hand-authored one is `loanpro-demo/policy/intent_catalog.yaml`) are both wired in, plus population checks (`family3/population.py`, `POST /eval/population`) and a Preflight-generated-and-approved scenario loop (`loanpro-demo/preflight_import.py`; see step 19 below). The LoanPro grading harness (`loanpro-demo/grading_harness.py`, `make grade-loanpro`) has been run live end-to-end against the real stack — `loanpro-demo/docs/eval-coverage.md` is 8/8 PASS. See `eval-engine/CLAUDE.md`. |
+| eval-engine | `eval-engine/evalengine` | 8120 | **evaluation engine** (FastAPI + background worker): reads the shared `spans` table (read-only), reconstructs each session, runs it through the check families, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 (built-in integrity invariants, `evalengine/family2/`) runs against every session with zero policy onboarding; Family 1 (`evalengine/family1/` — temporal/predicate/content engines over a `rule_pack.yaml` compiled by `skill-builder/skillbuilder/rulepack.py` at publish time, `EVAL_RULE_PACK_PATH`) and Family 3 (`evalengine/family3/` — call/scope/session **and population** checks over an `intent_catalog.yaml`, schema+generator in `semantic-layer/semanticlayer/intent_catalog.py`, `EVAL_INTENT_CATALOG_PATH`; LoanPro's hand-authored one is `loanpro-demo/policy/intent_catalog.yaml`) are both wired in, plus population checks (`family3/population.py`, `POST /eval/population`) and a Preflight-generated-and-approved scenario loop (`loanpro-demo/preflight_import.py`; see step 19 below). The LoanPro grading harness (`loanpro-demo/grading_harness.py`, `make grade-loanpro`) has been run live end-to-end against the real stack for the **full 37-scenario catalogue** — `loanpro-demo/docs/eval-coverage.md` is 37/37 PASS. See `eval-engine/CLAUDE.md`. |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
@@ -461,6 +461,17 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   findings once (server-sorted, the endpoint's own cap) and filters/
   paginates entirely client-side, same pattern the Decisions log above it
   already used, rather than a filter query param per column.
+- **Findings show family display names, not `family1/2/3`** - eval-engine
+  stamps a `family_label` on every verdict/finding read (`contract.FAMILY_LABELS`,
+  applied in `ch.rows()`): `family1` → **Policy**, `family2` → **Integrity**,
+  `family3` → **Conformance**. The stored `family` value is unchanged (renaming
+  a persisted column orphans ReplacingMergeTree rows); the label is derived at
+  read time and is a category noun rather than an outcome word, because the
+  same label appears next to `satisfied` verdicts. `DecisionTraces.tsx`'s
+  `famOf()` renders and filters on it (falling back to the raw value), and
+  `useOverviewData.ts`'s `byFamily` groups on it. Not to be confused with the
+  demo's SCENARIO families (`F1/F2/F3/POP/BASE`) that Verdict's `SessionRunner`
+  and OOB's `SessionRow.family` use - a separate vocabulary.
 - **"User query" is the session's first user turn** - joined in from the
   shared `spans` table at READ time, not a stored `eval_verdicts` column:
   `ch.py`'s `_first_user_messages(session_ids)` (eval-engine) runs one extra
