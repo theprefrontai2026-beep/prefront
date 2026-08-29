@@ -1,5 +1,8 @@
 # Learned intents: mining an intent catalog from observed behaviour
 
+> **Status: PLANNED, not built.** Tracked as Phase E (steps 21-25) in
+> `autonomous_build.md` §6. Nothing described here exists in the codebase yet.
+
 Companion to `autonomous_build.md` (phased build order) and
 `prefront-check-families.md` (what the checks are). This document plans the
 **policy-less onboarding path**: what to do for a customer who has no business

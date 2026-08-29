@@ -625,7 +625,7 @@ Top-level design docs, each answering a different question:
 | `prefront_semantic_layer_design.md` | the semantic-contract artifact set |
 | `prefront-check-families.md` | the three OOB check families (learnt rules / integrity invariants / intent conformance) — the WHAT |
 | `autonomous_build.md` | the phased build order for the eval engine — the HOW |
-| `intent_learning_design.md` | mining an intent catalog from observed traces, for customers with no policy document to compile |
+| `intent_learning_design.md` | **PLANNED, not built** (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog from observed traces, for customers with no policy document to compile |
 | `loanpro-demo/docs/check-coverage.md` | generated contract: check → session → the span attributes that detect it |
 | `loanpro-demo/docs/eval-coverage.md` | generated grading report for the scenario catalogue |
 

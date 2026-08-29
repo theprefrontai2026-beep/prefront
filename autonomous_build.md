@@ -342,6 +342,49 @@ Phase D — inline reuse + Preflight
 20. Docs: update CLAUDE.md service table (:8120), add
     eval-engine/CLAUDE.md (sub-doc), record the two staleness traps
     pattern for the new tables.
+
+Phase E — learned intents (TODO, not started; plan in intent_learning_design.md)
+    Closes the policy-less onboarding gap: Families 1 and 3 both need a
+    design-time artifact compiled from a business policy document, so a
+    customer without one gets Family 2 only. Their traces already carry
+    most of an intent catalog. Mining is DESIGN TIME and emits candidates
+    only — no new runtime path, output is the same intent_catalog.yaml
+    Family 3 already loads.
+21. evalengine/behavior/: aggregation only, no synthesis, no LLM.
+    GET /eval/behavior/tools      per-tool profile (roles, channels, params,
+                                  fields, side_effect, row-count dist, support)
+    GET /eval/behavior/sequences  frequent ordered pairs/n-grams per session
+    GET /eval/behavior/invariants args that always equal a caller attribute
+    Every response carries the Family 2 verdict overlay for its supporting
+    sessions — frequency is not legitimacy, and Family 2 is the only honest
+    signal available in a policy-less deployment (see the design doc §2).
+22. semanticlayer/intent_mining.py: CandidateIntent (mirrors
+    CandidateScenario), validate_candidate_intent (real tool names, known
+    fields), POST /design/semantic/intents/mine. Structure is deterministic
+    counting; an LLM names/describes ONLY, advisory. review_status=pending
+    always. Honour the design doc's field-by-field learnability table —
+    allowed_roles is emitted as OBSERVED, never as permitted; toxic_with and
+    restricted_fields are not learnable positively and must not be invented.
+23. Review + approve UI over candidates: support counts, evidence sessions,
+    the Family 2 overlay, and the sensitive fields a candidate would bless.
+    Approve/edit/reject per candidate (mirror skill-builder's candidate-rule
+    flow, do not invent a second one) → build_intent_catalog → publish.
+24. Impact preview: before publishing, shadow-run the proposed catalog over
+    historical sessions and show "if approved, this would have produced N
+    findings on the last 30 days, here they are". eval-engine can already
+    re-evaluate history (POST /eval/run?force=true; the version key already
+    forces re-evaluation when catalog version changes), so this is mostly
+    wiring — and it is what makes approval informed rather than a guess.
+    Prioritize over 25.
+25. Drift watch: behaviour diverging from an approved catalog proposes an
+    amendment. family3/population.py's invocation_drift is already this
+    computation; it needs a proposal surface, not new maths.
+
+    Validation gate for the whole phase: LoanPro is a holdout — hide its
+    hand-authored intent_catalog.yaml, mine one from its traces, diff per
+    field, then re-run the 37-scenario harness against the MINED catalog and
+    compare to the 37/37 baseline. Because that corpus is deliberately full
+    of violations, it also directly tests the §2 guardrail.
 ```
 
 ---

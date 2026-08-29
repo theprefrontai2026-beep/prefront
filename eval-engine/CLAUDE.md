@@ -366,12 +366,33 @@ curl ':8120/eval/sessions/<id>/verdicts'
 curl ':8120/eval/sessions/<id>/conformance'
 ```
 
-## What's still missing (see `../autonomous_build.md`)
+## Status: what's done and what's open (see `../autonomous_build.md` §6)
 
-Phase B (steps 9-14) is DONE: `family1/` (temporal/predicate/content), the
-skill-builder rule-pack compiler, `family3/` (call/scope/session checks),
-LoanPro's hand-authored `policy/rule_pack.yaml` + `policy/intent_catalog.yaml`,
-and the `intent_catalog.yaml` schema/generator (semantic-layer).
+**Phases A-D (steps 1-20) are DONE** — Family 2 built in, Family 1 + Family 3
+wired over their published artifacts, population checks, the grading harness
+(37/37 on the full catalogue), the Findings UI, Preflight, and inline reuse in
+`semantic-mcp-server`.
+
+**Phase E (steps 21-25) — learned intents — is TODO, not started.** Plan in
+`../intent_learning_design.md`. It closes the policy-less onboarding gap: both
+artifact-backed families need a document the customer may not have, leaving
+them with Family 2 alone, while their traces already carry most of an intent
+catalog. Mining is design-time and emits candidates only; the output is the
+same `intent_catalog.yaml` Family 3 already loads, so there is no new runtime
+path and this service needs no new check.
+
+Two constraints from that plan bear directly on code here, if you pick it up:
+
+- **Frequency is not legitimacy.** Mining learns what the agent DID, not what
+  it should do. Family 2 is the only family that needs no policy and runs over
+  exactly the corpus being mined, so it is the honesty check: a candidate whose
+  supporting sessions carry integrity violations must be surfaced as contested,
+  never as clean observed practice.
+- **Most of `IntentEntry` is not learnable.** `expected_rows_p99` and the
+  `<field> = caller` mandatory_filter shape are genuine wins; `allowed_roles`
+  is observed-not-permitted; `toxic_with` and `restricted_fields` cannot be
+  learned positively at all, since frequency learns what co-occurs as normal.
+  The design doc has the field-by-field table — do not widen it by guessing.
 
 ## Live-run status and the bugs those runs found
 
