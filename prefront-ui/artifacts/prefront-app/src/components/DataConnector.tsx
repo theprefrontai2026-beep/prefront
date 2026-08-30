@@ -42,6 +42,18 @@ interface Props {
 
 const DSN_PLACEHOLDER = "postgresql://user:pass@host:5432/db";
 
+// For an MCP source the Datasource ID defaults to the server's host:port (e.g.
+// `http://localhost:8102/sse` → `localhost:8102`) so the operator doesn't have
+// to invent one — it stays in sync with the URL until they edit it by hand.
+function mcpDatasourceId(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    return u.port ? `${u.hostname}:${u.port}` : u.hostname;
+  } catch {
+    return "";
+  }
+}
+
 export default function DataConnector({ demo, onSchema, onDisconnect, restored }: Props) {
   const [sourceType, setSourceType] = useState<"postgres" | "mcp">(
     restored?.sourceType === "mcp" ? "mcp" : "postgres"
@@ -54,7 +66,14 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
   const [mode, setMode] = useState<"dsn" | "ddl" | "catalog">("dsn");
   const [dsn, setDsn] = useState("");
   const [dbSchema, setDbSchema] = useState("public");
-  const [datasourceId, setDatasourceId] = useState(restored?.datasourceId || demo.datasourceId);
+  const [datasourceId, setDatasourceId] = useState(
+    restored?.datasourceId ||
+      (restored?.sourceType === "mcp" && mcpServerUrl ? mcpDatasourceId(mcpServerUrl) : "") ||
+      demo.datasourceId
+  );
+  // Once the operator edits the Datasource ID by hand, stop auto-deriving it
+  // from the MCP URL. A restored session is treated as already user-set.
+  const [datasourceIdEdited, setDatasourceIdEdited] = useState(!!restored?.datasourceId);
   const [ddl, setDdl] = useState("");
   const [ddlFileName, setDdlFileName] = useState("");
   const [catalogJson, setCatalogJson] = useState("");
@@ -201,7 +220,10 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
         {/* Source-type tabs */}
         <div className="pf-tabs">
           <button className={`pf-tab ${sourceType === "postgres" ? "active" : ""}`} onClick={() => setSourceType("postgres")}>Postgres</button>
-          <button className={`pf-tab ${sourceType === "mcp" ? "active" : ""}`} onClick={() => setSourceType("mcp")}>MCP Server</button>
+          <button className={`pf-tab ${sourceType === "mcp" ? "active" : ""}`} onClick={() => {
+            setSourceType("mcp");
+            if (!datasourceIdEdited && mcpServerUrl) setDatasourceId(mcpDatasourceId(mcpServerUrl));
+          }}>MCP Server</button>
         </div>
 
         {sourceType === "mcp" && (
@@ -210,7 +232,10 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
               MCP server URL
               <input
                 value={mcpServerUrl}
-                onChange={(e) => setMcpServerUrl(e.target.value)}
+                onChange={(e) => {
+                  setMcpServerUrl(e.target.value);
+                  if (!datasourceIdEdited) setDatasourceId(mcpDatasourceId(e.target.value));
+                }}
                 placeholder="http://localhost:8102/sse"
                 type="text"
               />
@@ -226,7 +251,10 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
             </label>
             <label>
               Datasource ID
-              <input value={datasourceId} onChange={(e) => setDatasourceId(e.target.value)} />
+              <input
+                value={datasourceId}
+                onChange={(e) => { setDatasourceId(e.target.value); setDatasourceIdEdited(true); }}
+              />
             </label>
           </div>
         )}

@@ -42,7 +42,9 @@ const TABS = [
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
-  { id: "semantic", label: "Semantic Layer",  sub: "Build governed interfaces",icon: IconLayers },
+  // Semantic Layer hidden for now — its tab body stays mounted below (never
+  // shown, since `tab` can no longer become "semantic") so re-enabling it is a
+  // one-line restore here.
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
   { id: "oob",      label: "Observability",   sub: "Traces, LLM, cost (OOB)",   icon: IconPulse },

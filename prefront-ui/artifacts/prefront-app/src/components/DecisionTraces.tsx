@@ -364,6 +364,7 @@ export default function DecisionTraces({ active = true, demo, section: controlle
   // decisions markup below is retained but never rendered.
   const section = "findings" as TracesSection;
   void rawSection;
+  void setSection;
   const roleAgents = demo.roleAgents;
   const { rules: severityRules } = useSeverityRules(demo.id, active);
   const [traces, setTraces] = useState<Trace[]>([]);
@@ -441,10 +442,9 @@ export default function DecisionTraces({ active = true, demo, section: controlle
 
   return (
     <main className="pf-tr">
-      <div className="pf-oob-views" style={{ marginBottom: 14 }}>
-        <button className="pf-oob-view" disabled title="Disabled — Decision Traces shows Findings" style={{ opacity: 0.4, cursor: "not-allowed" }}>Decisions</button>
-        <button className="pf-oob-view active" onClick={() => setSection("findings")}>Findings</button>
-      </div>
+      {/* Decisions sub-tab hidden for now — this tab shows Findings only, so the
+          single-button sub-nav is dropped. `setSection` stays wired below for
+          when it's restored. */}
       {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} />}
       {section === "decisions" && <>
       <section className="pf-panel">
