@@ -71,11 +71,12 @@ function Spark({ bars, peak }: { bars: { label: string; count: number; today: bo
   );
 }
 
-// A stacked histogram of findings per time bucket, split by severity. The
-// bucket size follows the window (4h ×6 for 24h, 1 day ×7 for 7d). Pure SVG-free
-// flex bars; severity colours match the badges elsewhere.
+// A grouped histogram of findings per time bucket: within each bucket the four
+// severities are drawn as separate bars SIDE BY SIDE (not stacked), each scaled
+// to the max single-severity count across the window. Bucket size follows the
+// window (4h ×6 for 24h, 1 day ×7 for 7d). Severity colours match the badges.
 function SeverityHistogram({ data }: { data: SeverityBucket[] }) {
-  const max = data.reduce((m, b) => Math.max(m, b.total), 0) || 1;
+  const max = data.reduce((m, b) => Math.max(m, b.critical, b.high, b.medium, b.low), 0) || 1;
   const empty = data.every((b) => b.total === 0);
   return (
     <section className="pf-ov2-panel">
@@ -94,14 +95,13 @@ function SeverityHistogram({ data }: { data: SeverityBucket[] }) {
         <div className="pf-ov2-hist">
           {data.map((b, i) => (
             <div key={i} className="pf-ov2-hist-col" title={`${b.label} · ${b.total} findings`}>
-              <div className="pf-ov2-hist-bar">
-                <div className="pf-ov2-hist-stack" style={{ height: `${(b.total / max) * 100}%` }}>
-                  {SEVERITY_ORDER.map((s: SeverityLevel) => b[s] > 0 && (
-                    <div key={s} className={`pf-ov2-hist-seg sev-${SEVERITY_META[s].tone}`} style={{ flexGrow: b[s] }} title={`${SEVERITY_META[s].label}: ${b[s]}`} />
-                  ))}
-                </div>
+              <div className="pf-ov2-hist-group">
+                {SEVERITY_ORDER.map((s: SeverityLevel) => (
+                  <div key={s} className="pf-ov2-hist-gbar" title={`${SEVERITY_META[s].label}: ${b[s]}`}>
+                    {b[s] > 0 && <div className={`pf-ov2-hist-gfill sev-${SEVERITY_META[s].tone}`} style={{ height: `${(b[s] / max) * 100}%` }} />}
+                  </div>
+                ))}
               </div>
-              <div className="pf-ov2-hist-count">{b.total || ""}</div>
               <div className="pf-ov2-hist-x">{b.label}</div>
             </div>
           ))}
@@ -316,9 +316,6 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
           </div>
         </section>
 
-        {/* Severity distribution over time */}
-        <SeverityHistogram data={hist} />
-
         {/* Latest findings */}
         <section className="pf-ov2-panel">
           <div className="pf-ov2-panel-head">
@@ -353,6 +350,11 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
             <span className="pf-ov2-kpi-sub">Evidence attached to every row — conversation, clause, trace.</span>
           </div>
         </section>
+      </div>
+
+      {/* ── severity distribution over time ── */}
+      <div style={{ marginTop: 28 }}>
+        <SeverityHistogram data={hist} />
       </div>
 
       {/* ── Foot ── */}

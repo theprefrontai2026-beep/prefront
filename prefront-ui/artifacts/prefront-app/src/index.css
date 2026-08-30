@@ -1426,7 +1426,7 @@ select { cursor: pointer; }
 .pf-ov2-swatch.s2 { background: #cdb8a6; }
 
 /* ── two panels ── */
-.pf-ov2-cols { display: grid; grid-template-columns: 0.95fr 1fr 1.2fr; gap: 24px; margin-top: 30px; align-items: start; }
+.pf-ov2-cols { display: grid; grid-template-columns: 1.12fr 1fr; gap: 28px; margin-top: 30px; align-items: start; }
 .pf-ov2-panel { background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 12px; padding: 22px 24px; }
 .pf-ov2-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
 .pf-ov2-panel-head h2 { font-family: var(--w-serif); font-size: 19px; color: var(--w-ink); font-weight: 500; margin: 0 0 3px; white-space: nowrap; }
@@ -1479,17 +1479,17 @@ select { cursor: pointer; }
 .pf-ov2-swatch.sev-amber { background: #cf8a5b; }
 .pf-ov2-swatch.sev-gold { background: #cbb75f; }
 .pf-ov2-swatch.sev-slate { background: #b3a99b; }
-.pf-ov2-hist { display: flex; align-items: stretch; gap: 12px; height: 190px; margin-top: 14px; }
+.pf-ov2-hist { display: flex; align-items: stretch; gap: 18px; height: 200px; margin-top: 14px; }
 .pf-ov2-hist-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; min-width: 0; }
-.pf-ov2-hist-bar { flex: 1; width: 100%; max-width: 54px; margin: 0 auto; display: flex; align-items: flex-end; }
-.pf-ov2-hist-stack { width: 100%; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 0 0; overflow: hidden; min-height: 3px; }
-.pf-ov2-hist-seg { width: 100%; min-height: 2px; }
-.pf-ov2-hist-seg.sev-crit { background: var(--w-accent); }
-.pf-ov2-hist-seg.sev-amber { background: #cf8a5b; }
-.pf-ov2-hist-seg.sev-gold { background: #cbb75f; }
-.pf-ov2-hist-seg.sev-slate { background: #b3a99b; }
-.pf-ov2-hist-count { font-size: 11px; color: var(--w-ink-soft); margin-top: 5px; font-variant-numeric: tabular-nums; }
-.pf-ov2-hist-x { font-size: 10.5px; color: var(--w-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* grouped: the four severity bars sit side by side within the bucket */
+.pf-ov2-hist-group { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; }
+.pf-ov2-hist-gbar { flex: 1; max-width: 20px; height: 100%; display: flex; align-items: flex-end; }
+.pf-ov2-hist-gfill { width: 100%; border-radius: 3px 3px 0 0; min-height: 2px; }
+.pf-ov2-hist-gfill.sev-crit { background: var(--w-accent); }
+.pf-ov2-hist-gfill.sev-amber { background: #cf8a5b; }
+.pf-ov2-hist-gfill.sev-gold { background: #cbb75f; }
+.pf-ov2-hist-gfill.sev-slate { background: #b3a99b; }
+.pf-ov2-hist-x { font-size: 10.5px; color: var(--w-muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
 .pf-ov2-foot { margin-top: 26px; font-size: 12.5px; color: var(--w-muted); }
 
