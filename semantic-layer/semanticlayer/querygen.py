@@ -188,11 +188,22 @@ def _compose_mcp(b, table, model, hints, server_url: str) -> QueryTemplate:
     """An MCP-sourced 'table' IS the tool: no SQL is generated or validated as
     SQL — the runtime calls the upstream tool directly (semantic-mcp-server's
     mcp_proxy). Parameters come 1:1 from the tool's input schema, already
-    captured as this table's columns by build_catalog_from_mcp."""
+    captured as this table's columns by build_catalog_from_mcp.
+
+    `result_columns` likewise come 1:1 from the tool's DECLARED outputSchema.
+    A server that declares none leaves this empty — the honest state, since
+    nothing here may be inferred from an observed response. Note the SQL path
+    derives result_columns from the binding's allowed_attributes, which for an
+    MCP table would be its INPUT properties: exactly the confusion this avoids.
+    """
     params = [
         TemplateParameter(name=c.name, type=c.type, required=not c.nullable)
         for c in table.columns
     ]
+    # Sensitivity stays "normal": it has no upstream source here. The sensitivity
+    # map is built over the CATALOG's columns (DDL markers, policy hints), and an
+    # MCP tool's declared outputs are in neither. Review-and-fill, not guessed.
+    result_cols = [ResultColumn(name=c.name) for c in table.mcp_output_columns]
     required_policies = [hints.skill_id] + [r.rule_key for r in hints.rules_for_intent(b.intent_id)]
     return QueryTemplate(
         template_id=f"tmpl_{b.intent_id}_mcp_v1",
@@ -209,7 +220,7 @@ def _compose_mcp(b, table, model, hints, server_url: str) -> QueryTemplate:
         mcp_tool_name=table.name,
         mcp_destructive=table.mcp_destructive,
         parameters=params,
-        result_columns=[],
+        result_columns=result_cols,
         required_policies=required_policies,
     )
 

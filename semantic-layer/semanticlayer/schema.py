@@ -81,7 +81,17 @@ class PhysicalTable(BaseModel):
     # applies to it the same way it applies to a local SQL write.
     mcp_destructive: bool = False
     primary_key: list[str] = Field(default_factory=list)
+    # For an MCP-sourced table, `columns` are the tool's INPUT properties — the
+    # projection that lets the SQL pipeline run unmodified. A SQL table's columns
+    # are both what you filter on and what you get back; a tool's are not, so its
+    # declared outputs need somewhere separate to live.
     columns: list[PhysicalColumn] = Field(default_factory=list)
+    # MCP only: the tool's declared `outputSchema`, flattened. `mcp_output_declared`
+    # distinguishes "the server declared no output schema" (False — we do not know
+    # what this tool returns) from "it declared one with no fields" (True, empty).
+    # Nothing here is ever inferred from an observed response.
+    mcp_output_columns: list[PhysicalColumn] = Field(default_factory=list)
+    mcp_output_declared: bool = False
     foreign_keys: list[ForeignKey] = Field(default_factory=list)
 
     def column(self, name: str) -> Optional[PhysicalColumn]:

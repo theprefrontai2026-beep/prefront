@@ -257,6 +257,30 @@ A second connector alongside Postgres: point the Data Connector tab's **MCP Serv
   declares neither, so it renders as 19 tools / 19 "no output schema declared" —
   which is exactly why an intent's `fields:` still has to be hand-transcribed
   (see the `field_scope` findings in `eval-engine/CLAUDE.md`).
+- **An MCP intent DECLARES both directions; a SQL one has them derived.** The
+  catalog projection makes a tool's columns its INPUT properties, so deriving
+  either direction from `allowed_attributes` answers the output question with
+  the input list. Both halves were wrong and are now taken from the tool itself:
+  - `mcptools._mcp_input_schema` reads the tool's own `inputSchema`. The generic
+    `_input_schema` INFERS request inputs, and its central move is "a
+    single-record intent takes the root entity's primary key" — but
+    `build_catalog_from_mcp` deliberately invents no primary key, so the
+    inference found nothing and **every MCP tool published an empty input
+    schema** (`apply_discount` declared neither `loan_id` nor `bps`).
+  - `intent_catalog._fields_for` takes an MCP intent's `fields` (what the tool
+    RETURNS — Family 3's `field_scope` approved set) from the declared
+    `outputSchema`, carried `mcp_connect` → `PhysicalTable.mcp_output_columns` →
+    `querygen._compose_mcp` → `template.result_columns`. Previously it was
+    `allowed_attributes`, so `apply_discount` published `fields: [loan_id, bps]`
+    — naming its discount *argument* as a returned field while omitting the
+    `apr` it actually returns.
+
+  When a server declares no `outputSchema`, `fields` is **empty and stays
+  empty** — review-and-fill, never invented, and it degrades safely:
+  `family3/scope.py:_field_scope` opens with `if not entry.fields: return None`,
+  so an empty approved set emits no verdict rather than flagging every returned
+  field. LoanPro's `policy/intent_catalog.yaml` is hand-authored and does NOT
+  come through this path, so nothing about its existing findings changes.
 - **A missing hint is not a `false` hint.** `destructive` was computed as
   `destructiveHint or not readOnlyHint` with a default of `True` for a missing
   `readOnlyHint`, so a server that set an annotations object at all — even just

@@ -99,6 +99,34 @@ def validate_intent_catalog(catalog: IntentCatalog) -> list[str]:
     return errors
 
 
+def _fields_for(b: IntentBinding, template: Optional[QueryTemplate]) -> list[str]:
+    """`fields` = what this intent's tool RETURNS — Family 3's `field_scope`
+    check reads it as the approved output set.
+
+    For a SQL intent that is the binding's allowed attributes: the template
+    SELECTs exactly those, so filterable and returned are the same list.
+
+    For an **MCP** intent it is not, and the old shared answer was actively
+    wrong. `build_catalog_from_mcp` projects each tool's INPUT properties as its
+    columns, so `allowed_attributes` are the tool's arguments — `apply_discount`
+    published `fields: [loan_id, bps]`, naming its discount argument as a
+    returned field and omitting the `apr` it actually returns. An MCP intent
+    therefore takes its fields from the tool's declared `outputSchema`, carried
+    to `template.result_columns` by `querygen._compose_mcp`.
+
+    When the server declares no output schema, that list is EMPTY and stays
+    empty — the module's review-and-fill posture (see the header): a blank a
+    human fills in is recoverable, a confidently wrong list is not, and there is
+    no third source to consult. That degrades safely downstream: eval-engine's
+    `family3/scope.py:_field_scope` opens with `if not entry.fields: return None`,
+    so an empty approved set emits NO verdict rather than flagging every returned
+    field as out of scope (applicability = absence, Hard Rule 16).
+    """
+    if template is not None and template.kind == "mcp":
+        return [c.name for c in template.result_columns]
+    return list(b.allowed_attributes)
+
+
 def build_intent_catalog(
     bindings: list[IntentBinding],
     tools: list[McpTool],
@@ -123,7 +151,7 @@ def build_intent_catalog(
             params=params,
             side_effect=side_effect,
             allowed_callers=AllowedCallers(roles=list(roles), channels=[]),
-            fields=list(b.allowed_attributes),
+            fields=_fields_for(b, template),
             restricted_fields=list(b.restricted_attributes),
             mandatory_filters=[mf.expression for mf in b.mandatory_filters],
             policy=list(b.policies),

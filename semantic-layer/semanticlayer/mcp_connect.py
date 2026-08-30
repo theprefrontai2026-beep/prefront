@@ -213,30 +213,56 @@ def list_mcp_tools_sync(server_url: str, headers: Optional[dict[str, str]] = Non
     return asyncio.run(list_mcp_tools(server_url, headers))
 
 
+def _column(name: str, spec: dict, *, required: bool) -> PhysicalColumn:
+    """One JSON Schema property -> one PhysicalColumn.
+
+    `enum_values` is carried across because `PhysicalColumn` already models it
+    and a declared enum is a real constraint on the value — dropping it made the
+    catalog claim less than the server actually told us.
+    """
+    enum = spec.get("enum")
+    return PhysicalColumn(
+        name=name,
+        type=_param_type(spec),
+        nullable=not required,
+        enum_values=[str(v) for v in enum] if isinstance(enum, list) and enum else None,
+    )
+
+
 def build_catalog_from_mcp(
     server_url: str, tools: list[dict], *, datasource_id: str
 ) -> PhysicalCatalog:
     """One ``PhysicalTable`` per tool, one ``PhysicalColumn`` per input-schema
     property. No primary key / foreign keys — tools aren't joinable; the rest of
-    the pipeline already tolerates a table with no key (``querygen._pk_bare``)."""
+    the pipeline already tolerates a table with no key (``querygen._pk_bare``).
+
+    The tool's DECLARED OUTPUT fields ride along in ``mcp_output_columns`` rather
+    than in ``columns``: they are not filterable inputs, and folding them in would
+    make them look like request parameters to every downstream consumer. Kept
+    separate, they are what an intent catalog's ``fields`` (what the tool returns)
+    can finally be derived from instead of transcribed by hand.
+    """
     tables: list[PhysicalTable] = []
     for t in tools:
         schema = t.get("input_schema") or {}
         props: dict[str, Any] = schema.get("properties") or {}
         required = set(schema.get("required") or [])
-        columns = [
-            PhysicalColumn(
-                name=name,
-                type=_param_type(spec or {}),
-                nullable=name not in required,
-            )
-            for name, spec in props.items()
-        ]
+        columns = [_column(name, spec or {}, required=name in required)
+                   for name, spec in props.items()]
+
+        out_schema = t.get("output_schema")
+        out_props: dict[str, Any] = (out_schema or {}).get("properties") or {}
+        out_required = set((out_schema or {}).get("required") or [])
+        out_columns = [_column(name, spec or {}, required=name in out_required)
+                       for name, spec in out_props.items()]
+
         tables.append(PhysicalTable(
             name=t["name"],
             description=t.get("description", ""),
             mcp_destructive=bool(t.get("destructive")),
             columns=columns,
+            mcp_output_columns=out_columns,
+            mcp_output_declared=out_schema is not None,
         ))
     log.debug("build_catalog_from_mcp: server=%s tools=%d", server_url, len(tables))
     return PhysicalCatalog(

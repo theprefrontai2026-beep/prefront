@@ -48,7 +48,17 @@ def build_tools(
     tools: list[McpTool] = []
     for b in bindings:
         approval = hints.approval_for_intent(b.intent_id)
-        result_fields = [a for a in b.allowed_attributes if a not in restricted_attrs]
+        # An MCP-sourced intent DECLARES both directions; a SQL one has to have
+        # them derived. Getting this wrong is not a cosmetic difference: the
+        # catalog projection makes a tool's "columns" its INPUT properties, so
+        # the derived path answers the output question with the input list —
+        # `apply_discount` came out claiming it RETURNS `bps`, its discount
+        # argument, while missing the `apr` it actually returns.
+        mcp_table = catalog.table(b.intent_id) if catalog.type == "mcp" else None
+        if mcp_table is not None:
+            result_fields = [c.name for c in mcp_table.mcp_output_columns]
+        else:
+            result_fields = [a for a in b.allowed_attributes if a not in restricted_attrs]
         tools.append(
             McpTool(
                 tool_name=b.intent_id,
@@ -57,7 +67,8 @@ def build_tools(
                 semantic_model_version=model.version,
                 description=b.description,
                 allowed_roles=hints.allowed_roles_for_intent(b.intent_id),
-                input_schema=_input_schema(b, model, hints, catalog, metric_names),
+                input_schema=(_mcp_input_schema(mcp_table) if mcp_table is not None
+                              else _input_schema(b, model, hints, catalog, metric_names)),
                 output_schema=_OUTPUT_SCHEMA,
                 result_shape={"fields": result_fields},
                 template_ids=b.template_ids,
@@ -78,6 +89,27 @@ _OUTPUT_SCHEMA = {
         "rows": {"type": "array"},
     },
 }
+
+
+def _mcp_input_schema(table) -> dict:
+    """An MCP tool's request inputs are its own declared inputSchema.
+
+    `_input_schema` below INFERS inputs, and its central move is "a single-record
+    intent takes the root entity's primary key" — but `build_catalog_from_mcp`
+    deliberately invents no primary key, since tools aren't joinable. So the
+    inference found nothing and every MCP tool published an EMPTY input schema:
+    `apply_discount` declared no `loan_id` and no `bps`. Nothing to infer here
+    anyway — the server already said exactly what it takes.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            c.name: ({"type": c.type} if not c.enum_values
+                     else {"type": c.type, "enum": list(c.enum_values)})
+            for c in table.columns
+        },
+        "required": [c.name for c in table.columns if not c.nullable],
+    }
 
 
 def _input_schema(b: IntentBinding, model: SemanticModel, hints: PolicyHints,
