@@ -674,6 +674,7 @@ Top-level design docs, each answering a different question:
 
 | doc | what it covers |
 |---|---|
+| `TODO.md` | open work not carried by a design doc's own status marker — an index, not a second plan (deep plans stay where they are; entries carry file:line evidence) |
 | `design.md` | positioning + the LLM-at-design-time-only principle |
 | `prefront_semantic_layer_design.md` | the semantic-contract artifact set |
 | `prefront-check-families.md` | the three OOB check families (learnt rules / integrity invariants / intent conformance) — the WHAT |
