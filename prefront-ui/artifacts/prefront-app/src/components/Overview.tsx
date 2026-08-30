@@ -187,7 +187,11 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
             {num(rp?.rule_count)} live rules
             {cov?.configured && <>
               {" · "}{cov.fired}/{cov.total} hit
-              {cov.never_fired > 0 && <> · <b className="pf-ov2-accent" title={`Never hit: ${cov.never_fired_ids.join(", ")}`}>{cov.never_fired} never hit</b></>}
+              {" · "}
+              <b className={cov.never_fired > 0 ? "pf-ov2-accent" : ""}
+                 title={cov.never_fired > 0 ? `Never hit: ${cov.never_fired_ids.join(", ")}` : "Every rule has fired at least once"}>
+                {cov.never_fired} never hit
+              </b>
             </>}
           </div>
         </div>
