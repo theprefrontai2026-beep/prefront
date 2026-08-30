@@ -52,7 +52,28 @@ Anything an LLM emits is a **candidate** that must pass schema validation + huma
 
 ## Domain independence (this repo's defining principle)
 
-The engine names **no table, column, policy, or tenant** — it is pure mechanism (README §"domain independence"). All application vocabulary lives in the published artifacts/config, not in code: `grep -rin securebank` over the Python/JS finds hits only in `docker-compose.yaml` (one DSN default — see below) and the demo's OWN `securebank-demo/` directory (its `docker-compose.yml`, code, and published `policy/` artifacts), never in engine code proper. Keep it that way — do not hardcode a domain's tables, roles, or thresholds into any service.
+The engine names **no table, column, policy, or tenant** — it is pure mechanism (README §"domain independence"). All application vocabulary lives in the published artifacts/config, not in code. Do not hardcode a domain's tables, roles, or thresholds into any service.
+
+**Where that holds, measured — it is a gradient, not a blanket property.** An
+earlier version of this section claimed a `grep -rin securebank` over the
+Python/JS was clean outside the demo directories; it is not, so here is the
+real map:
+
+| package | demo names in code | enforced? |
+|---|---|---|
+| `eval-engine/evalengine` | **none, anywhere** — not even a comment | **yes**, `tests/test_domain_independence.py` (deployment names on every line, plus domain NOUNS on executable tokens) |
+| `oob-ingest/oobingest` | **none** | no test |
+| `semantic-mcp-server/semanticmcp` | one comment (`mcp_proxy.py`, a cross-reference) | no test |
+| `semantic-layer/semanticlayer` | module docstrings, LLM few-shot prompt examples, and **one executable default**: `api.py`'s `SEMANTICLAYER_KEEP_DATASOURCES` = `"securebank-demo"` | no |
+| `skill-builder/skillbuilder` | comments + `domain_packs/securebank.yaml`, config that labels itself as such on line 1 | no |
+| `prefront-ui` | `demos.ts` (the demo registry — by design), `sampleFlows.ts` fixtures, `routes/decisions.ts`'s demo fallback, and `lib/db`'s `demo` column defaulting to `"securebank"` | no |
+| `artifacts/verdict` | it IS the LoanPro runner | n/a |
+
+So the invariant that actually holds without exception is: **the OOB evaluation
+engine names no demo, and that one is tested.** Everywhere else the names are
+config defaults, prompt few-shot examples, or a UI demo registry — deliberate,
+but not the same guarantee. Widening the guard needs those exemptions designed
+first, not a wider `rglob`; tracked as `TODO.md` entry 5.
 
 This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml` defines no demo's Postgres, agent, or orchestrator — LoanPro and SecureBank each have their own compose file (`loanpro-demo/docker-compose.yml`, `securebank-demo/docker-compose.yml`), separate Compose projects that attach to the engine's network + `artifacts` volume as `external: true` (see either file's header, or "Active demo: LoanPro" below). The one remaining demo-shaped default left IN the engine file is `semantic-mcp-server`'s `DATABASE_URL`/artifact paths, which still point at SecureBank by default (see that service's own comment for why this one is a deliberate exception) — it is a URL/path *string*, not demo code, and resolves to nothing until you've also brought `securebank-demo/docker-compose.yml` up.
 

@@ -84,10 +84,11 @@ demo agents; the runtime and the OOB/eval services do not.
 
 ## Domain independence (multi-tenant)
 
-The same Prefront runs across any customer or domain with zero code edits. The
-engine code (semantic-layer, skill-builder, semantic-mcp-server, prefront-ui) is
-pure mechanism — it names no table, column, policy, or tenant. All
-tenant-specific content lives in three planes OUTSIDE the code:
+The same Prefront runs across any customer or domain with zero code edits. No
+tenant's tables, columns, roles or thresholds drive any engine BEHAVIOUR — every
+decision is made from published artifacts and deployment config, so onboarding a
+tenant is a config exercise. All tenant-specific content lives in three planes
+OUTSIDE the code:
 
   1. Database + schema — a datasource. Each demo ships its own Postgres in its
      OWN compose file (SecureBank on host :5434 with schema/seed in-repo at
@@ -112,10 +113,24 @@ Onboard a new tenant — no code changes:
   - set their deployment env (IDENTITY_QUERY, ACT_AS, DATABASE_URL, ...).
 
 Conventions that keep it independent:
-  - Engine code never contains table / column / policy / tenant literals. Code
-    defaults use a neutral `example` slug.
+  - Engine code never branches on a table / column / policy / tenant literal.
+    Code defaults prefer a neutral `example` slug.
   - Tenant specifics belong in deployment config (docker-compose.yaml,
     .env.example) — the demo wires SecureBank there, not in the packages.
+
+Where that holds, measured — it is a gradient, not a blanket property, and an
+earlier version of this section overstated it:
+  - eval-engine/evalengine names no demo ANYWHERE, not even in a comment, and
+    that is the one package with a test enforcing it
+    (tests/test_domain_independence.py, which also bars domain nouns like
+    "loan" or "credit_score" from executable code). oob-ingest is clean too.
+  - Elsewhere demo names DO appear, as config defaults rather than logic:
+    semantic-layer's SEMANTICLAYER_KEEP_DATASOURCES ("securebank-demo"),
+    lib/db's `demo` column default ("securebank"), skill-builder's
+    domain_packs/securebank.yaml, and the UI's demos.ts registry. All are
+    overridable; none changes how a decision is made. Widening the guard to
+    those packages needs the exemptions designed first (LLM prompts carry
+    domain nouns deliberately, as few-shot examples) — see TODO.md entry 5.
 
 ## Tracing (Arize Phoenix)
 
