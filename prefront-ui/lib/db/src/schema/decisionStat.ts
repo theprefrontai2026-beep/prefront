@@ -11,7 +11,7 @@ import { pgTable, varchar, bigint, text, timestamp, primaryKey } from "drizzle-o
  * bundled demo keeps its own independent running totals.
  */
 export const decisionStat = pgTable("decision_stat", {
-  demo:  varchar("demo", { length: 32 }).notNull().default("securebank"),
+  demo:  varchar("demo", { length: 32 }).notNull(),
   key:   varchar("key", { length: 64 }).notNull(),
   count: bigint("count", { mode: "number" }).notNull().default(0),
 }, (t) => ({ pk: primaryKey({ columns: [t.demo, t.key] }) }));
@@ -21,7 +21,7 @@ export const decisionStat = pgTable("decision_stat", {
  * Upserted (do-nothing on conflict) per decision; count(*) scoped to the demo.
  */
 export const decisionAgent = pgTable("decision_agent", {
-  demo:      varchar("demo", { length: 32 }).notNull().default("securebank"),
+  demo:      varchar("demo", { length: 32 }).notNull(),
   agent:     varchar("agent", { length: 128 }).notNull(),
   firstSeen: timestamp("first_seen", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ pk: primaryKey({ columns: [t.demo, t.agent] }) }));
@@ -34,7 +34,7 @@ export const decisionAgent = pgTable("decision_agent", {
  * representative human explanation (latest wins).
  */
 export const decisionPolicy = pgTable("decision_policy", {
-  demo:     varchar("demo", { length: 32 }).notNull().default("securebank"),
+  demo:     varchar("demo", { length: 32 }).notNull(),
   policy:   varchar("policy", { length: 128 }).notNull(),
   count:    bigint("count", { mode: "number" }).notNull().default(0),
   effect:   varchar("effect", { length: 16 }),
@@ -50,7 +50,7 @@ export const decisionPolicy = pgTable("decision_policy", {
  * per (demo, intent).
  */
 export const decisionIntent = pgTable("decision_intent", {
-  demo:     varchar("demo", { length: 32 }).notNull().default("securebank"),
+  demo:     varchar("demo", { length: 32 }).notNull(),
   intent:   varchar("intent", { length: 128 }).notNull(),
   count:    bigint("count", { mode: "number" }).notNull().default(0),
   allowed:  bigint("allowed", { mode: "number" }).notNull().default(0),

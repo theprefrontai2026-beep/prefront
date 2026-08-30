@@ -15,7 +15,7 @@ import { z } from "zod/v4";
  */
 export const decisionTrace = pgTable("decision_trace", {
   id:            serial("id").primaryKey(),
-  demo:          varchar("demo", { length: 32 }).notNull().default("securebank"), // which bundled demo produced this
+  demo:          varchar("demo", { length: 32 }).notNull(), // which bundled demo produced this
   sessionId:     varchar("session_id", { length: 64 }),             // one per Run-all / refresh batch (nullable for legacy rows)
   scenarioId:    varchar("scenario_id", { length: 32 }).notNull(),  // e.g. "B4"
   caller:        varchar("caller", { length: 128 }).notNull(),      // identity the agent acted as

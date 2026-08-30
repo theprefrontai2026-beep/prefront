@@ -64,9 +64,9 @@ real map:
 | `eval-engine/evalengine` | **none, anywhere** — not even a comment | **yes**, `tests/test_domain_independence.py` (deployment names on every line, plus domain NOUNS on executable tokens) |
 | `oob-ingest/oobingest` | **none** | no test |
 | `semantic-mcp-server/semanticmcp` | one comment (`mcp_proxy.py`, a cross-reference) | no test |
-| `semantic-layer/semanticlayer` | module docstrings, LLM few-shot prompt examples, and **one executable default**: `api.py`'s `SEMANTICLAYER_KEEP_DATASOURCES` = `"securebank-demo"` | no |
+| `semantic-layer/semanticlayer` | module docstrings and LLM few-shot prompt examples only — no executable default any more (`api.py`'s `SEMANTICLAYER_KEEP_DATASOURCES` now defaults to `""`; the old `"securebank-demo"` literal was dead since the demo/engine compose split and was removed) | no |
 | `skill-builder/skillbuilder` | comments + `domain_packs/securebank.yaml`, config that labels itself as such on line 1 | no |
-| `prefront-ui` | `demos.ts` (the demo registry — by design), `sampleFlows.ts` fixtures, `routes/decisions.ts`'s demo fallback, and `lib/db`'s `demo` column defaulting to `"securebank"` | no |
+| `prefront-ui` | `demos.ts` (the demo registry — by design), `sampleFlows.ts` fixtures, and `routes/decisions.ts`'s demo fallback (`lib/db`'s `demo` column no longer carries a `"securebank"` default — it is now a required, non-defaulted column, so every writer must set it explicitly) | no |
 | `artifacts/verdict` | it IS the LoanPro runner | n/a |
 
 So the invariant that actually holds without exception is: **the OOB evaluation

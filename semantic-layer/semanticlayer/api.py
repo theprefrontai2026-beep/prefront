@@ -51,15 +51,19 @@ _ARTIFACTS_ROOT = os.environ.get("SEMANTICLAYER_ARTIFACTS_ROOT") or str(
 )
 _store: Optional[Store] = None
 
-# Demo baseline artifact dirs kept on reset, so a UI "disconnect / forget
-# everything" leaves the bundled demo working. This is the dir the demo MCP
-# server actually serves (securebank-mcp -> /artifacts/securebank-demo). NB: the
-# default datasource id "securebank" writes to /artifacts/securebank — a USER
-# connection, not a baseline, so it is intentionally NOT kept. Override with a
-# comma- or space-separated env list; empty wipes the baselines too.
+# Datasource ids whose artifact dirs a reset must NOT wipe, so a UI "disconnect
+# / forget everything" can leave a bundled baseline working. Comma- or
+# space-separated; EMPTY (the default) keeps nothing.
+#
+# Deliberately no default value: which datasources are baselines is a property
+# of a deployment, not of the engine, so the list belongs in compose/.env
+# (Hard Rule 1). It used to default to "securebank-demo" here, which was already
+# dead — 3de7147 split the demos out of the engine compose and set this env var
+# to empty for every deployed service, so the literal only ever applied to a
+# bare venv, where it named a demo the engine has no business knowing.
 _KEEP_DATASOURCES = [
     s for s in re.split(r"[,\s]+", os.environ.get(
-        "SEMANTICLAYER_KEEP_DATASOURCES", "securebank-demo"
+        "SEMANTICLAYER_KEEP_DATASOURCES", ""
     )) if s
 ]
 
@@ -817,7 +821,7 @@ def introspect_mcp(body: McpIntrospectBody):
 
 
 class ResetBody(BaseModel):
-    # Keep the demo baseline (securebank-demo) by default.
+    # Honour SEMANTICLAYER_KEEP_DATASOURCES (empty unless a deployment sets it).
     keep_baselines: bool = True
     # Explicit override of which datasource ids to preserve (wins over keep_baselines).
     keep_datasource_ids: Optional[list[str]] = None
@@ -826,8 +830,9 @@ class ResetBody(BaseModel):
 @app.post("/design/semantic/reset")
 def reset(body: Optional[ResetBody] = None):
     """Forget connected datasources: clear the datasource/function/query-template
-    store and remove published per-datasource artifact dirs. The demo baseline
-    (securebank-demo) is preserved unless ``keep_baselines`` is false."""
+    store and remove published per-datasource artifact dirs. Any datasource id
+    in SEMANTICLAYER_KEEP_DATASOURCES is preserved unless ``keep_baselines`` is
+    false; that list is empty unless a deployment sets it."""
     body = body or ResetBody()
     keep = (body.keep_datasource_ids if body.keep_datasource_ids is not None
             else (_KEEP_DATASOURCES if body.keep_baselines else []))
