@@ -477,3 +477,21 @@ retention has to be coordinated — see "Clearing ClickHouse alone is only a
 pause") and with the version key (a re-evaluation must not resurrect
 aged-out verdicts). Ties into entries 10 and 13 (ingestion scalability), where
 unbounded growth is the underlying pressure.
+
+---
+
+## 19. Dashboard settings page: retention config + storage metrics
+
+Not started. The UI companion to entry 18. Add a settings page in the dashboard
+that (a) lets an operator configure the retention policy from entry 18 (TTL /
+cap / window, per-application if that lands) instead of it being env-var-only,
+and (b) surfaces storage metrics — span and verdict counts and on-disk size
+across the stores (ClickHouse `spans`, eval-engine's `eval_*` tables, the
+`decision_*` tables) so growth is visible before it becomes a problem.
+
+To work through: which service exposes the size/count metrics (oob-ingest
+already has `/oob/status` with source counts; eval-engine would need a
+storage-stats endpoint) and whether the settings write goes to a config
+artifact vs. a live-tunable store; keep any application/tenant vocabulary in the
+artifact, not engine code (Hard Rule 1). Depends on entry 18 for the policy it
+configures.
