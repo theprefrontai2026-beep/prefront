@@ -28,6 +28,17 @@ import { severityOf, type SeverityLevel, type SeverityRule } from "../severity";
 const SINCE = 86400;
 const FINDINGS_LIMIT = 500;
 
+// Rule-pack coverage from /eval/coverage: which Family-1 rules have ever fired
+// vs. never had matching traffic ("never hit"). Authoritative, server-side.
+export type Coverage = {
+  clickhouse_ok: boolean;
+  rule_pack: {
+    configured: boolean; source_skill: string; source_skill_version: string;
+    total: number; fired: number; never_fired: number; never_fired_ids: string[];
+    rules: { rule_id: string; check_id: string; engine: string; fired: number }[];
+  };
+};
+
 export type OverviewData = {
   evalStatus: EvalStatus | null;
   oobStatus: OobStatus | null;
@@ -36,6 +47,7 @@ export type OverviewData = {
   conformance: ConformanceTag[];
   sessions: SessionRow[];
   governed: AgentStats | null;
+  coverage: Coverage | null;
   errors: Record<string, string>;
   loading: boolean;
   reload: () => void;
@@ -49,6 +61,7 @@ export function useOverviewData(demo: DemoConfig, active: boolean): OverviewData
   const [conformance, setConformance] = useState<ConformanceTag[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [governed, setGoverned] = useState<AgentStats | null>(null);
+  const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
@@ -65,6 +78,7 @@ export function useOverviewData(demo: DemoConfig, active: boolean): OverviewData
       one<{ conformance_tags: ConformanceTag[] }>("conformance", `/eval/conformance${qs({ limit: 100 })}`, (d) => setConformance(d.conformance_tags || [])),
       one<{ sessions: SessionRow[] }>("sessions", `/oob/sessions${qs({ since: SINCE, limit: 200 })}`, (d) => setSessions(d.sessions || [])),
       one<AgentStats>("governed", `/api/stats${qs({ demo: demo.id })}`, setGoverned),
+      one<Coverage>("coverage", "/eval/coverage", setCoverage),
     ]).finally(() => { setErrors(errs); setLoading(false); });
   }, [demo.id]);
 
@@ -72,7 +86,7 @@ export function useOverviewData(demo: DemoConfig, active: boolean): OverviewData
   // Refetch on tab activation — a scenario run elsewhere shows up on return.
   useEffect(() => { if (active) load(); }, [active, load]);
 
-  return { evalStatus, oobStatus, overview, findings, conformance, sessions, governed, errors, loading, reload: load };
+  return { evalStatus, oobStatus, overview, findings, conformance, sessions, governed, coverage, errors, loading, reload: load };
 }
 
 /* ── pure derivations ───────────────────────────────────────────────────── */

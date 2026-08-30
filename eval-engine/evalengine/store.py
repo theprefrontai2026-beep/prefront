@@ -47,6 +47,10 @@ def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> 
     return ch.verdict_history(rule_id=rule_id, check_id=check_id, limit=limit)
 
 
+def rule_fire_counts(family: str = "family1") -> dict[str, int]:
+    return ch.rule_fire_counts(family)
+
+
 def list_verdicts(**kwargs) -> dict[str, Any]:
     return ch.list_verdicts(**kwargs)
 

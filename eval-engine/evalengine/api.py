@@ -82,6 +82,35 @@ async def status():
     }
 
 
+@app.get("/eval/coverage")
+async def coverage():
+    """Rule-pack coverage: which Family-1 rules have ever produced a verdict vs.
+    which have never had matching traffic ("never hit"). Authoritative — counts
+    over all verdicts server-side, not the capped UI slice. Degrades to
+    configured=false / zero rules when no rule pack is loaded (Hard Rule 9)."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    counts = await asyncio.to_thread(store.rule_fire_counts, "family1") if ok else {}
+    rules = [
+        {"rule_id": r.rule_id, "check_id": r.check_id(), "engine": r.engine, "fired": counts.get(r.rule_id, 0)}
+        for r in _rule_pack.rules
+    ]
+    fired = [r for r in rules if r["fired"] > 0]
+    never = [r for r in rules if r["fired"] == 0]
+    return {
+        "clickhouse_ok": ok,
+        "rule_pack": {
+            "configured": bool(_rule_pack.rules),
+            "source_skill": _rule_pack.source_skill,
+            "source_skill_version": _rule_pack.source_skill_version,
+            "total": len(rules),
+            "fired": len(fired),
+            "never_fired": len(never),
+            "never_fired_ids": [r["rule_id"] for r in never],
+            "rules": rules,
+        },
+    }
+
+
 @app.post("/eval/sync")
 async def sync_now():
     try:

@@ -226,6 +226,20 @@ def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> 
     )
 
 
+def rule_fire_counts(family: str = "family1") -> dict[str, int]:
+    """How many verdicts (any status) each rule_id has produced, for one family.
+    A rule declared in the pack but absent from this map has never had matching
+    traffic - "never hit". Reads all verdicts (satisfied included), not the
+    violated-only findings slice, so the coverage answer is authoritative."""
+    where = "rule_id != ''"
+    params: dict[str, Any] = {}
+    if family:
+        where += " AND family = %(f)s"
+        params["f"] = family
+    result = rows(f"SELECT rule_id, count() AS n FROM {VERDICTS_T} WHERE {where} GROUP BY rule_id", params)
+    return {str(r["rule_id"]): int(r["n"]) for r in result}
+
+
 def candidate_sessions(quiet_seconds: float, limit: int = 200) -> list[dict[str, Any]]:
     """session_ids with at least one span, whose most recent span is older
     than `quiet_seconds` ago - i.e. the session looks closed."""

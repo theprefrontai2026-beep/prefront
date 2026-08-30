@@ -96,6 +96,7 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
   const turnsEvaluated = d.sessions.reduce((n, s) => n + (s.turns || 0), 0);
   const toolCallsEvaluated = d.sessions.reduce((n, s) => n + (s.tool_calls || 0), 0);
+  const cov = d.coverage?.rule_pack;
   const latest = findings.slice(0, 5);
 
   // Sub-detail for the "would have blocked" card: the policy § most block
@@ -182,7 +183,13 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         <div className="pf-ov2-band-lead">
           <div className="pf-ov2-eyebrow">Rule evaluations</div>
           <div className="pf-ov2-band-value">{num(ch?.verdicts)}</div>
-          <div className="pf-ov2-kpi-sub">{num(rp?.rule_count)} live rules · every check, incl. satisfied</div>
+          <div className="pf-ov2-kpi-sub">
+            {num(rp?.rule_count)} live rules
+            {cov?.configured && <>
+              {" · "}{cov.fired}/{cov.total} hit
+              {cov.never_fired > 0 && <> · <b className="pf-ov2-accent" title={`Never hit: ${cov.never_fired_ids.join(", ")}`}>{cov.never_fired} never hit</b></>}
+            </>}
+          </div>
         </div>
         <div className="pf-ov2-band-mid">
           <div className="pf-ov2-band-head">
