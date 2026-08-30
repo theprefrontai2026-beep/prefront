@@ -8,24 +8,14 @@
  * concepts only.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DemoConfig } from "../demos";
 import { getSeverityRules, saveSeverityRules, resetSeverityRules } from "../api";
 import {
   DEFAULT_SEVERITY_RULES, SEVERITY_META, SEVERITY_ORDER,
-  FAMILY_OPTIONS, EFFECT_OPTIONS, severityOf,
+  FAMILY_OPTIONS, EFFECT_OPTIONS,
   type SeverityLevel, type SeverityRule,
 } from "../severity";
-
-// A tiny worked example so an editor can see how the current ordering resolves
-// the cases the mapping is really about — mirrors the demo's real finding shapes.
-const PREVIEW: { label: string; family: string; effect: string }[] = [
-  { label: "Blocking policy violation (F1 · block)",     family: "family1", effect: "block" },
-  { label: "Approval-gated action (F1 · approval)",       family: "family1", effect: "approval_required" },
-  { label: "Integrity invariant, blocking (F2 · block)",  family: "family2", effect: "block" },
-  { label: "Integrity invariant, flagged (F2 · flag)",    family: "family2", effect: "flag" },
-  { label: "Conformance drift (F3 · flag)",               family: "family3", effect: "flag" },
-];
 
 function Pick({ value, options, onChange }: {
   value: string; options: { value: string; label: string }[]; onChange: (v: string) => void;
@@ -87,11 +77,6 @@ export default function Settings({ demo, active = true, onSaved }: {
     finally { setSaving(false); }
   };
 
-  const preview = useMemo(
-    () => PREVIEW.map((p) => ({ ...p, sev: severityOf(p, rules) })),
-    [rules],
-  );
-
   return (
     <main className="pf-tr">
       <section className="pf-panel">
@@ -150,21 +135,6 @@ export default function Settings({ demo, active = true, onSaved }: {
         </div>
       </section>
 
-      <section className="pf-panel" style={{ marginTop: 14 }}>
-        <div className="pf-dash-panel-head"><h2>Preview</h2></div>
-        <p className="pf-hint" style={{ marginTop: 0 }}>How the current ordering rates representative findings.</p>
-        <table className="pf-dash-table pf-set-table">
-          <thead><tr><th>Example finding</th><th style={{ width: 120 }}>Severity</th></tr></thead>
-          <tbody>
-            {preview.map((p, i) => (
-              <tr key={i}>
-                <td>{p.label}</td>
-                <td><span className={`pf-dash-chip ${SEVERITY_META[p.sev].tone}`}>{SEVERITY_META[p.sev].label}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
     </main>
   );
 }

@@ -307,9 +307,14 @@ export type TracesSection = "decisions" | "findings";
 export default function DecisionTraces({ active = true, demo, section: controlled, onSection, findingsEffect, findingsSeverity }: {
   active?: boolean; demo: DemoConfig; section?: TracesSection; onSection?: (s: TracesSection) => void; findingsEffect?: string; findingsSeverity?: string;
 }) {
-  const [internal, setInternal] = useState<TracesSection>("decisions");
-  const section = controlled ?? internal;
+  const [internal, setInternal] = useState<TracesSection>("findings");
+  const rawSection = controlled ?? internal;
   const setSection = (s: TracesSection) => { setInternal(s); onSection?.(s); };
+  // The Decisions view is disabled: the /api/decisions store is empty for the
+  // active (ungoverned) demo, so Decision Traces shows Findings only. The
+  // decisions markup below is retained but never rendered.
+  const section = "findings" as TracesSection;
+  void rawSection;
   const roleAgents = demo.roleAgents;
   const { rules: severityRules } = useSeverityRules(demo.id, active);
   const [traces, setTraces] = useState<Trace[]>([]);
@@ -388,8 +393,8 @@ export default function DecisionTraces({ active = true, demo, section: controlle
   return (
     <main className="pf-tr">
       <div className="pf-oob-views" style={{ marginBottom: 14 }}>
-        <button className={`pf-oob-view ${section === "decisions" ? "active" : ""}`} onClick={() => setSection("decisions")}>Decisions</button>
-        <button className={`pf-oob-view ${section === "findings" ? "active" : ""}`} onClick={() => setSection("findings")}>Findings</button>
+        <button className="pf-oob-view" disabled title="Disabled — Decision Traces shows Findings" style={{ opacity: 0.4, cursor: "not-allowed" }}>Decisions</button>
+        <button className="pf-oob-view active" onClick={() => setSection("findings")}>Findings</button>
       </div>
       {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} />}
       {section === "decisions" && <>

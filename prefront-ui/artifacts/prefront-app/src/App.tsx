@@ -312,10 +312,14 @@ export default function App() {
       <div className="pf-content">
         {/* Page header */}
         <header className="pf-page-header">
-          <div>
-            <div className="pf-page-title">{meta.title}</div>
-            <div className="pf-page-desc">{meta.desc}</div>
-          </div>
+          {/* The Overview has its own editorial hero, so the app title/desc
+              would just duplicate it — hide the text there, keep presence. */}
+          {tab === "dashboard" ? <div /> : (
+            <div>
+              <div className="pf-page-title">{meta.title}</div>
+              <div className="pf-page-desc">{meta.desc}</div>
+            </div>
+          )}
 
           <div className="pf-page-actions">
             {/* Live presence */}
