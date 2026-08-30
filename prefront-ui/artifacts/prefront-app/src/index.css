@@ -1693,14 +1693,31 @@ select { cursor: pointer; }
 /* ── Observability: sessions ────────────────────────────────────────────── */
 .pf-oob-sessions td.dim { color: var(--muted); }
 .pf-oob-steps { display: flex; flex-direction: column; gap: 8px; }
-.pf-oob-step { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; font-size: 12px; cursor: pointer; }
-.pf-oob-step:hover { background: var(--surface-alt); }
-.pf-oob-step.selected { background: var(--blue-light); }
+/* A step is a collapsed row that opens IN PLACE — the head is the toggle, the
+   detail (full body + span inspector) renders underneath it. There is no
+   separate inspector panel below the list. */
+.pf-oob-step { border: 1px solid var(--color-border); border-radius: 8px; font-size: 12px; overflow: hidden; }
+.pf-oob-step-head {
+  display: grid; grid-template-columns: 14px 90px minmax(0, 1fr); gap: 10px;
+  width: 100%; padding: 8px 10px; text-align: left;
+  background: transparent; border: none; font: inherit; color: inherit; cursor: pointer;
+}
+.pf-oob-step-head:hover { background: var(--surface-alt); }
+.pf-oob-step.open > .pf-oob-step-head { background: var(--surface-alt); }
 .pf-oob-step.error { border-left: 3px solid var(--red); }
+.pf-oob-step-caret { color: var(--muted); font-size: 10px; line-height: 1.6; }
 .pf-oob-step-kind { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .pf-oob-step-body { min-width: 0; }
-.pf-oob-step-title { font-weight: 600; margin-bottom: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.pf-oob-step-text { color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; }
+.pf-oob-step-title { font-weight: 600; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* Collapsed: exactly one line, ellipsized — never wraps, or the row grows back. */
+.pf-oob-step-preview {
+  color: var(--muted); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pf-oob-step-preview.mono { font-family: var(--app-font-mono); font-size: 11px; }
+.pf-oob-step-detail { padding: 0 10px 10px; border-top: 1px solid var(--line-soft); }
+.pf-oob-step-detail .pf-oob-inspector { border: none; padding: 0; margin-top: 8px; }
+.pf-oob-step-text { color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; margin: 8px 0 0; }
 .pf-oob-step-text.mono { font-family: var(--app-font-mono); font-size: 11px; }
 .pf-oob-turn-sep { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 0; }
 

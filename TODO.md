@@ -340,3 +340,25 @@ the semantic overlay. Capture it as part of the accepted-schema artifact so it
 flows into the same `build_bindings → build_query_templates → publish-policy`
 tail. Keep the vocabulary (column names, sensitivity tags) in the artifact, not
 engine code (Hard Rule 1).
+
+---
+
+## 13. Performance scaling: streaming ingestion (agent → Kafka → evaluator)
+
+Not started — architecture sketch, related to entry 10. Instead of eval-engine
+polling Phoenix/ClickHouse and re-reading the full `spans` table, move to a
+streaming pipeline: the agent (or the OTLP tap) publishes spans/sessions onto a
+**Kafka** topic, and one or more **evaluator instances** consume from it and
+evaluate incrementally as sessions complete.
+
+Why it helps scaling: decouples span production from evaluation (backpressure
+via the topic rather than dropped/late polls), lets evaluator instances scale
+horizontally by partition (e.g. keyed on `session.id` so a session's spans land
+on one consumer), and replaces full-table re-evaluation with per-session
+consume-and-evaluate.
+
+To work through: partition key and ordering guarantees (a session's spans must
+not be split across partitions out of order), where ClickHouse sits (still the
+store of record, or downstream of the same topic), how the existing degrade-to-
+zero and version-key discipline carry over, and whether this replaces or
+augments the current poll/OTLP paths.

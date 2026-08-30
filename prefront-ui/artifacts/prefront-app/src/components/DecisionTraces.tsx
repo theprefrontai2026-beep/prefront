@@ -102,7 +102,7 @@ function WhatWentWrong({ r }: { r: EvalVerdict }) {
 // `initialEffect` lets the Overview's effect tiles deep-link here prefiltered
 // (block / approval_required / flag); it re-applies whenever it changes so a
 // second click from the Overview isn't ignored.
-function FindingsSection({ initialEffect = "" }: { initialEffect?: string }) {
+function FindingsSection({ initialEffect = "", active = true }: { initialEffect?: string; active?: boolean }) {
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -137,7 +137,13 @@ function FindingsSection({ initialEffect = "" }: { initialEffect?: string }) {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Re-fetch whenever the tab becomes visible again, not just on mount.
+  // App.tsx keeps every tab MOUNTED and toggles `tab-hidden` (so tab state
+  // survives navigation), which means coming back to Findings runs no effect
+  // at all — it kept showing whatever it fetched the first time, while
+  // eval-engine had since evaluated more sessions. The Decisions section
+  // beside it already reloads on `active`; this is the same wiring.
+  useEffect(() => { if (active) load(); }, [active, load]);
 
   // Filter and display on eval-engine's family display name (Policy /
   // Integrity / Conformance), falling back to the raw family1|2|3 for a row
@@ -364,7 +370,7 @@ export default function DecisionTraces({ active = true, demo, section: controlle
         <button className={`pf-oob-view ${section === "decisions" ? "active" : ""}`} onClick={() => setSection("decisions")}>Decisions</button>
         <button className={`pf-oob-view ${section === "findings" ? "active" : ""}`} onClick={() => setSection("findings")}>Findings</button>
       </div>
-      {section === "findings" && <FindingsSection initialEffect={findingsEffect} />}
+      {section === "findings" && <FindingsSection initialEffect={findingsEffect} active={active} />}
       {section === "decisions" && <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">

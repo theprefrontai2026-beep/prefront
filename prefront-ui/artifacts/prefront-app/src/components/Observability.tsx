@@ -745,6 +745,14 @@ function SessionsView({ since, project, facets, refreshKey, initialSession, onOp
 
 type Step = { span: Span; turn: number; kind: "turn" | "llm" | "tool" | "answer" | "other"; title: string; text: string; mono: boolean };
 
+/** One-line summary for a COLLAPSED step - enough to recognise the call
+ *  without reading it. Newlines collapse to spaces so a multi-line args/result
+ *  body can't push the row to three lines and undo the collapsing. */
+function preview(text: string, max = 120): string {
+  const one = text.replace(/\s+/g, " ").trim();
+  return one.length > max ? one.slice(0, max) + "…" : one;
+}
+
 function stepsOf(spans: Span[]): Step[] {
   // Order the session as an evaluator reads it: each turn's user message,
   // then its LLM calls and tool calls in time order, then the answer.
@@ -767,8 +775,10 @@ function stepsOf(spans: Span[]): Step[] {
           text: tc ? `→ ${tc} ${s.attributes["llm.output_messages.0.message.tool_calls.0.tool_call.function.arguments"] || ""}` : (content || s.output_value), mono: !!tc });
       } else if (s.kind === "TOOL") {
         const intent = s.intent_name || s.attributes["app.intent"];
+        // Full output, not a 400-char slice: a step's body is only rendered
+        // once the reader expands that step, so there is nothing to keep short.
         out.push({ span: s, turn: n, kind: "tool", title: `${s.tool_name || s.name}${intent ? ` · ${intent}` : " · OFF-CATALOG"}${s.attributes["app.side_effect"] === "write" ? " · write" : ""}`,
-          text: `args ${s.input_value}\n→ ${s.output_value.length > 400 ? s.output_value.slice(0, 400) + "…" : s.output_value}`, mono: true });
+          text: `args ${s.input_value}\n→ ${s.output_value}`, mono: true });
       }
     }
     if (t.output_value) out.push({ span: t, turn: n, kind: "answer", title: "agent", text: t.output_value, mono: false });
@@ -789,11 +799,20 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
 }) {
   const [spans, setSpans] = useState<Span[]>([]);
   const [err, setErr] = useState("");
-  const [selected, setSelected] = useState<string | null>(initialSpanId ?? null);
+  // Which trace steps are expanded. Every step is COLLAPSED by default and
+  // opens in place — there is no separate inspector panel below the list any
+  // more. One span can appear as two steps (a turn span is both the "user
+  // asked" and the "agent answered" step), so the key is per step, not per
+  // span id.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [traceOpen, setTraceOpen] = useState(!!initialSpanId);
   const [verdicts, setVerdicts] = useState<EvalVerdict[]>([]);
   const [tags, setTags] = useState<ConformanceTag[]>([]);
 
-  useEffect(() => { setSpans([]); setSelected(initialSpanId ?? null); setErr(""); setVerdicts([]); setTags([]); }, [sessionId, initialSpanId]);
+  useEffect(() => {
+    setSpans([]); setErr(""); setVerdicts([]); setTags([]);
+    setExpanded(new Set()); setTraceOpen(!!initialSpanId);
+  }, [sessionId, initialSpanId]);
   // A session just run (e.g. via Verdict) may not be ingested yet (the OTLP
   // tap batches for a few seconds; the orchestrator's root arrives via the
   // Phoenix poll). Re-fetch on every refresh tick until it lands.
@@ -822,8 +841,23 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
     }
     return out;
   }, [steps]);
+  const stepKey = (st: Step, i: number) => `${st.span.span_id}-${st.kind}-${i}`;
+  // Opened from a Findings row: auto-expand the step the finding points at, so
+  // the deep-link still lands on its evidence now that the separate inspector
+  // panel is gone. Runs when the steps arrive, not on mount.
+  //
+  // Exactly ONE step, the last match: a turn span yields two steps ("user
+  // asked" and "agent answered"), and expanding both renders the same span
+  // inspector twice — on top of a conversation block that already shows both
+  // messages. The last match is also the more useful half for an
+  // answer-scoped finding.
+  useEffect(() => {
+    if (!initialSpanId || !steps.length) return;
+    const hits = steps.map(stepKey).filter((_, i) => steps[i].span.span_id === initialSpanId);
+    if (hits.length) setExpanded(new Set([hits[hits.length - 1]]));
+  }, [initialSpanId, steps]);
+
   const root = spans.find((s) => s.name.startsWith("session ")) ?? spans.find((s) => /^turn /.test(s.name)) ?? spans[0];
-  const sel = spans.find((s) => s.span_id === selected) ?? null;
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
   const policy = parseList(root?.attributes["scenario.policy"] ?? "");
   const violated = verdicts.filter((v) => v.status !== "satisfied");
@@ -871,28 +905,49 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
         </div>
       )}
       <div className="pf-oob-detail-body">
-        <details className="pf-oob-steps-collapse">
+        <details className="pf-oob-steps-collapse" open={traceOpen}
+                 onToggle={(e) => setTraceOpen((e.currentTarget as HTMLDetailsElement).open)}>
           <summary>Full trace ({steps.length || "…"} steps)</summary>
           <div className="pf-oob-steps">
-            {steps.map((st, i) => (
-              <div key={st.span.span_id + st.kind + i}>
-                {st.kind === "turn" && <div className="pf-oob-turn-sep">turn {st.turn}</div>}
-                <div className={`pf-oob-step ${selected === st.span.span_id ? "selected" : ""} ${st.span.status === "ERROR" && st.kind === "tool" ? "error" : ""}`} onClick={() => setSelected(st.span.span_id)}>
-                  <div className="pf-oob-step-kind">
-                    <KindBadge kind={st.kind === "turn" || st.kind === "answer" ? "AGENT" : st.span.kind} />
-                    <span className="pf-oob-subtle">{ms(st.span.duration_ms)}</span>
-                  </div>
-                  <div className="pf-oob-step-body">
-                    <div className="pf-oob-step-title">{st.title}{st.span.status === "ERROR" && st.kind === "tool" && <span className="pf-oob-chip red">error</span>}</div>
-                    <div className={`pf-oob-step-text ${st.mono ? "mono" : ""}`}>{st.text}</div>
+            {steps.map((st, i) => {
+              const key = stepKey(st, i);
+              const open = expanded.has(key);
+              const failed = st.span.status === "ERROR" && st.kind === "tool";
+              return (
+                <div key={key}>
+                  {st.kind === "turn" && <div className="pf-oob-turn-sep">turn {st.turn}</div>}
+                  <div className={`pf-oob-step ${open ? "open" : ""} ${failed ? "error" : ""}`}>
+                    <button type="button" className="pf-oob-step-head" aria-expanded={open}
+                            onClick={() => setExpanded((prev) => {
+                              const next = new Set(prev);
+                              next.has(key) ? next.delete(key) : next.add(key);
+                              return next;
+                            })}>
+                      <span className="pf-oob-step-caret" aria-hidden>{open ? "▾" : "▸"}</span>
+                      <div className="pf-oob-step-kind">
+                        <KindBadge kind={st.kind === "turn" || st.kind === "answer" ? "AGENT" : st.span.kind} />
+                        <span className="pf-oob-subtle">{ms(st.span.duration_ms)}</span>
+                      </div>
+                      <div className="pf-oob-step-body">
+                        <div className="pf-oob-step-title">{st.title}{failed && <span className="pf-oob-chip red">error</span>}</div>
+                        {!open && st.text && (
+                          <div className={`pf-oob-step-preview ${st.mono ? "mono" : ""}`}>{preview(st.text)}</div>
+                        )}
+                      </div>
+                    </button>
+                    {open && (
+                      <div className="pf-oob-step-detail">
+                        {st.text && <pre className={`pf-oob-step-text ${st.mono ? "mono" : ""}`}>{st.text}</pre>}
+                        <SpanInspector span={st.span} />
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {!steps.length && !err && <Empty text="Loading…" />}
           </div>
         </details>
-        {sel && <SpanInspector span={sel} />}
       </div>
       <div className="pf-oob-detail-footer">
         <div className="pf-oob-subtle mono">
