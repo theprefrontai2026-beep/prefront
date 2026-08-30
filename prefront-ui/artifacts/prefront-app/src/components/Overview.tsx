@@ -71,12 +71,27 @@ function Spark({ bars, peak }: { bars: { label: string; count: number; today: bo
   );
 }
 
+// "Nice" round y-axis ticks from 0 up to (or just past) max — for the reference
+// lines behind the bars. Integer steps (finding counts are whole numbers).
+function niceTicks(max: number): number[] {
+  const m = Math.max(1, max);
+  const rawStep = m / 4;
+  const mag = 10 ** Math.floor(Math.log10(rawStep));
+  const norm = rawStep / mag;
+  const step = Math.max(1, Math.round((norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag));
+  const ticks: number[] = [];
+  for (let v = 0; v < m + step; v += step) ticks.push(v);
+  return ticks;
+}
+
 // A grouped histogram of findings per time bucket: within each bucket the four
-// severities are drawn as separate bars SIDE BY SIDE (not stacked), each scaled
-// to the max single-severity count across the window. Bucket size follows the
-// window (4h ×6 for 24h, 1 day ×7 for 7d). Severity colours match the badges.
+// severities are drawn as separate bars SIDE BY SIDE (not stacked), over
+// horizontal value reference lines. Bars scale to the top tick. Bucket size
+// follows the window (4h ×6 for 24h, 1 day ×7 for 7d).
 function SeverityHistogram({ data }: { data: SeverityBucket[] }) {
-  const max = data.reduce((m, b) => Math.max(m, b.critical, b.high, b.medium, b.low), 0) || 1;
+  const rawMax = data.reduce((m, b) => Math.max(m, b.critical, b.high, b.medium, b.low), 0);
+  const ticks = niceTicks(rawMax);
+  const scaleMax = ticks[ticks.length - 1] || 1;
   const empty = data.every((b) => b.total === 0);
   return (
     <section className="pf-ov2-panel">
@@ -92,19 +107,31 @@ function SeverityHistogram({ data }: { data: SeverityBucket[] }) {
         </div>
       </div>
       {empty ? <div className="pf-ov2-empty">No findings in this window.</div> : (
-        <div className="pf-ov2-hist">
-          {data.map((b, i) => (
-            <div key={i} className="pf-ov2-hist-col" title={`${b.label} · ${b.total} findings`}>
-              <div className="pf-ov2-hist-group">
-                {SEVERITY_ORDER.map((s: SeverityLevel) => (
-                  <div key={s} className="pf-ov2-hist-gbar" title={`${SEVERITY_META[s].label}: ${b[s]}`}>
-                    {b[s] > 0 && <div className={`pf-ov2-hist-gfill sev-${SEVERITY_META[s].tone}`} style={{ height: `${(b[s] / max) * 100}%` }} />}
+        <div className="pf-ov2-hist-wrap">
+          <div className="pf-ov2-hist-y">
+            {ticks.map((t) => <span key={t} style={{ bottom: `${(t / scaleMax) * 100}%` }}>{t}</span>)}
+          </div>
+          <div className="pf-ov2-hist-main">
+            <div className="pf-ov2-hist-plot">
+              {ticks.map((t) => <div key={t} className="pf-ov2-hist-grid" style={{ bottom: `${(t / scaleMax) * 100}%` }} />)}
+              <div className="pf-ov2-hist">
+                {data.map((b, i) => (
+                  <div key={i} className="pf-ov2-hist-col" title={`${b.label} · ${b.total} findings`}>
+                    <div className="pf-ov2-hist-group">
+                      {SEVERITY_ORDER.map((s: SeverityLevel) => (
+                        <div key={s} className="pf-ov2-hist-gbar" title={`${SEVERITY_META[s].label}: ${b[s]}`}>
+                          {b[s] > 0 && <div className={`pf-ov2-hist-gfill sev-${SEVERITY_META[s].tone}`} style={{ height: `${(b[s] / scaleMax) * 100}%` }} />}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
-              <div className="pf-ov2-hist-x">{b.label}</div>
             </div>
-          ))}
+            <div className="pf-ov2-hist-xrow">
+              {data.map((b, i) => <span key={i} className="pf-ov2-hist-x">{b.label}</span>)}
+            </div>
+          </div>
         </div>
       )}
     </section>
