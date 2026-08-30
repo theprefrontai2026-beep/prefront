@@ -99,10 +99,10 @@ function SeverityHistogram({ data }: { data: SeverityBucket[] }) {
       </div>
       {empty ? <div className="pf-ov2-empty">No findings in this window.</div> : (
         <div className="pf-ov2-hist-wrap">
-          <div className="pf-ov2-hist-y">
-            {ticks.map((t) => <span key={t} style={{ bottom: `${(t / scaleMax) * 100}%` }}>{t}</span>)}
-          </div>
-          <div className="pf-ov2-hist-main">
+          <div className="pf-ov2-hist-plotrow">
+            <div className="pf-ov2-hist-y">
+              {ticks.map((t) => <span key={t} style={{ bottom: `${(t / scaleMax) * 100}%` }}>{t}</span>)}
+            </div>
             <div className="pf-ov2-hist-plot">
               {ticks.map((t) => <div key={t} className="pf-ov2-hist-grid" style={{ bottom: `${(t / scaleMax) * 100}%` }} />)}
               <div className="pf-ov2-hist">
@@ -119,9 +119,9 @@ function SeverityHistogram({ data }: { data: SeverityBucket[] }) {
                 ))}
               </div>
             </div>
-            <div className="pf-ov2-hist-xrow">
-              {data.map((b, i) => <span key={i} className="pf-ov2-hist-x">{b.label}</span>)}
-            </div>
+          </div>
+          <div className="pf-ov2-hist-xrow">
+            {data.map((b, i) => <span key={i} className="pf-ov2-hist-x">{b.label}</span>)}
           </div>
         </div>
       )}

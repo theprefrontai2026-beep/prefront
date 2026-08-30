@@ -1426,7 +1426,8 @@ select { cursor: pointer; }
 .pf-ov2-swatch.s2 { background: #cdb8a6; }
 
 /* ── two panels ── */
-.pf-ov2-cols { display: grid; grid-template-columns: 1fr 1.15fr; gap: 28px; margin-top: 30px; align-items: start; }
+.pf-ov2-cols { display: grid; grid-template-columns: 1fr 1.15fr; gap: 28px; margin-top: 30px; align-items: stretch; }
+.pf-ov2-cols > .pf-ov2-panel { display: flex; flex-direction: column; }
 .pf-ov2-panel { background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 12px; padding: 22px 24px; }
 .pf-ov2-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
 .pf-ov2-panel-head h2 { font-family: var(--w-serif); font-size: 19px; color: var(--w-ink); font-weight: 500; margin: 0 0 3px; white-space: nowrap; }
@@ -1479,13 +1480,15 @@ select { cursor: pointer; }
 .pf-ov2-swatch.sev-amber { background: #cf8a5b; }
 .pf-ov2-swatch.sev-gold { background: #cbb75f; }
 .pf-ov2-swatch.sev-slate { background: #b3a99b; }
-.pf-ov2-hist-wrap { display: flex; gap: 8px; margin-top: 16px; }
-.pf-ov2-hist-y { position: relative; width: 26px; height: 180px; flex: none; }
+/* flex column that grows to fill the panel, so this chart's bottom aligns with
+   the severity-breakdown panel beside it (both stretch to equal height) */
+.pf-ov2-hist-wrap { flex: 1; display: flex; flex-direction: column; margin-top: 16px; min-height: 190px; }
+.pf-ov2-hist-plotrow { flex: 1; display: flex; gap: 8px; min-height: 0; }
+.pf-ov2-hist-y { position: relative; width: 26px; flex: none; }
 .pf-ov2-hist-y span { position: absolute; right: 0; transform: translateY(50%); font-size: 10px; color: var(--w-muted); line-height: 1; font-variant-numeric: tabular-nums; }
-.pf-ov2-hist-main { flex: 1; min-width: 0; }
-.pf-ov2-hist-plot { position: relative; height: 180px; }
+.pf-ov2-hist-plot { position: relative; flex: 1; min-width: 0; }
 .pf-ov2-hist-grid { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--w-line); pointer-events: none; }
-.pf-ov2-hist { display: flex; align-items: stretch; gap: 18px; height: 180px; position: relative; z-index: 1; }
+.pf-ov2-hist { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 18px; z-index: 1; }
 .pf-ov2-hist-col { flex: 1; display: flex; height: 100%; min-width: 0; }
 /* grouped: the four severity bars sit side by side within the bucket */
 .pf-ov2-hist-group { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; }
@@ -1495,7 +1498,7 @@ select { cursor: pointer; }
 .pf-ov2-hist-gfill.sev-amber { background: #cf8a5b; }
 .pf-ov2-hist-gfill.sev-gold { background: #cbb75f; }
 .pf-ov2-hist-gfill.sev-slate { background: #b3a99b; }
-.pf-ov2-hist-xrow { display: flex; gap: 18px; margin-top: 7px; }
+.pf-ov2-hist-xrow { display: flex; gap: 18px; margin-top: 7px; padding-left: 34px; }
 .pf-ov2-hist-x { flex: 1; text-align: center; min-width: 0; font-size: 10.5px; color: var(--w-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .pf-ov2-foot { margin-top: 26px; font-size: 12.5px; color: var(--w-muted); }
