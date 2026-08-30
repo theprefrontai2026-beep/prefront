@@ -554,3 +554,30 @@ names domain vocabulary must live in the artifact, not engine code (Hard Rule 1)
 Reuse the existing scale rather than inventing a second one — `ReportFindings`
 already ranks most-severe-first and Verdict shows `expected_findings`. Feeds the
 same Findings sort/filter (already built) and future reports (entry 11).
+
+---
+
+## 22. Help menu + per-page documentation
+
+Not started. The UI has no in-app help: a new operator has to read this repo's
+CLAUDE.md / design docs to understand what each tab does. Add a help menu and
+per-page documentation so each page can explain itself in-app.
+
+Two pieces:
+
+- **A help menu** — a global entry point (natural home is the sidebar, beside
+  the gear that already opens `Settings.tsx`) surfacing the docs and an index
+  of the pages.
+- **Per-page documentation** — each tab gets its own contextual help
+  explaining what it does and how it fits the pipeline. The tabs to cover are
+  the pipeline order already documented above: **Data Connector → Data Graph →
+  Business Graph → Policy Studio → Semantic**, plus the Dashboard, Decision
+  Traces, Observability, and Settings surfaces, and Verdict (its own app —
+  a change meant for both must be made twice; see "UI layout").
+
+To work through: whether help is a modal/flyout per page vs. a single docs
+route, where the copy lives (inline in each component vs. a shared content
+module vs. sourced from the existing design docs so it doesn't drift), and
+that any demo-specific wording stays UI-layer, not engine code (Hard Rule 1).
+This is `prefront-ui` work only — no engine change. See `prefront-ui/CLAUDE.md`
+for the tab architecture.
