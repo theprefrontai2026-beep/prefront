@@ -362,3 +362,57 @@ not be split across partitions out of order), where ClickHouse sits (still the
 store of record, or downstream of the same topic), how the existing degrade-to-
 zero and version-key discipline carry over, and whether this replaces or
 augments the current poll/OTLP paths.
+
+---
+
+## 14. User auth, identity, role determination, and correlation to policy/intents
+
+Not started — the foundational identity layer that entry 9 (per-user audit
+logs) is blocked on. There is no auth in the UI/api-server today, and the
+governed caller identity is trusted-layer only (`X-*-Act-As` / `X-LoanPro-*`
+headers set by config, never by the agent). Four connected pieces to figure
+out:
+
+- **Auth** — how a human operating the console signs in (there is no auth layer
+  at all today).
+- **User identification** — who the authenticated principal is, and how it
+  relates to the governed *caller* identity vs. the console *operator* (the
+  same distinction flagged in entry 9).
+- **Role determination** — how a role is derived for that principal. Note the
+  runtime already resolves a caller's role from config/SQL (`identity.py`'s
+  `IDENTITY_QUERY` aliasing onto the contract names `role`/`region`), so this
+  should build on that mechanism rather than inventing a parallel one.
+- **Correlation to business policy and intents** — tie the resolved role to the
+  rules and intents it is authorized for, so policy (`rule_pack.yaml`) and the
+  intent catalog reference the same role vocabulary the auth layer produces.
+
+Constraint: user ids, roles, and tenant names are domain vocabulary — keep them
+in config/artifacts, not engine code (Hard Rule 1). Settle this before entries
+9 and 11 (per-user reports), both of which assume an identity to scope by.
+
+---
+
+## 15. Aliases across tool args and table columns
+
+Not started. The same real-world concept is often named differently across
+tools and tables — e.g. `loan_id` in one tool is `credit_id` in another, or a
+column and a tool argument for the same key don't share a name. Today matching
+is name-literal end to end: a rule symbol binds to a fact keyed by the literal
+column name *or* the request-arg name (see "Engine mechanics that bite" — "A
+symbol must resolve at publish AND match a fact at runtime"), so a naming
+mismatch either fails to bind at publish or binds but never fires at runtime.
+The same brittleness hits `policybind.root_table_by_intent`'s same-named-field
+disambiguation and the checks that correlate a param across tools.
+
+Allow a **declared alias map** — synonyms for a concept across tool args and
+table columns — so publish-time binding and runtime fact lookup can canonicalize
+to one name before matching.
+
+To work through: where the alias artifact lives and whether it's per-datasource
+or per-application (it's domain vocabulary — an artifact, not engine code, Hard
+Rule 1); whether canonicalization happens at build/publish time (rewrite symbols
+to the canonical name) or at runtime fact lookup (resolve through the alias map),
+and the trade-off between the two; how it interacts with the version key so
+editing aliases re-evaluates affected sessions; and how eval-engine's
+cross-tool param-correlation checks (Family 3 provenance) consume the same map
+so they don't read two aliases of one key as two different params.
