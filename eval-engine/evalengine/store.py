@@ -47,8 +47,8 @@ def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> 
     return ch.verdict_history(rule_id=rule_id, check_id=check_id, limit=limit)
 
 
-def rule_fire_counts(family: str = "family1") -> dict[str, int]:
-    return ch.rule_fire_counts(family)
+def rule_fire_counts(family: str = "family1", since: int = 0) -> dict[str, int]:
+    return ch.rule_fire_counts(family, since)
 
 
 def list_verdicts(**kwargs) -> dict[str, Any]:
@@ -67,8 +67,8 @@ def list_conformance(**kwargs) -> dict[str, Any]:
     return ch.list_conformance(**kwargs)
 
 
-def totals() -> dict[str, Any]:
-    return ch.totals()
+def totals(since: int = 0) -> dict[str, Any]:
+    return ch.totals(since)
 
 
 def truncate() -> None:

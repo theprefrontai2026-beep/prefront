@@ -63,9 +63,9 @@ async def health():
 
 
 @app.get("/eval/status")
-async def status():
+async def status(since: int = 0):
     ok = await asyncio.to_thread(store.ch.ping)
-    totals = await asyncio.to_thread(store.totals) if ok else {}
+    totals = await asyncio.to_thread(store.totals, since) if ok else {}
     return {
         "clickhouse": {"ok": ok, "url": config.CLICKHOUSE_URL, "database": config.CLICKHOUSE_DB, **totals},
         "worker": worker.status(),
@@ -83,13 +83,14 @@ async def status():
 
 
 @app.get("/eval/coverage")
-async def coverage():
+async def coverage(since: int = 0):
     """Rule-pack coverage: which Family-1 rules have ever produced a verdict vs.
     which have never had matching traffic ("never hit"). Authoritative — counts
     over all verdicts server-side, not the capped UI slice. Degrades to
-    configured=false / zero rules when no rule pack is loaded (Hard Rule 9)."""
+    configured=false / zero rules when no rule pack is loaded (Hard Rule 9).
+    Optionally windowed to the last `since` seconds (never-hit within window)."""
     ok = await asyncio.to_thread(store.ch.ping)
-    counts = await asyncio.to_thread(store.rule_fire_counts, "family1") if ok else {}
+    counts = await asyncio.to_thread(store.rule_fire_counts, "family1", since) if ok else {}
     rules = [
         {"rule_id": r.rule_id, "check_id": r.check_id(), "engine": r.engine, "fired": counts.get(r.rule_id, 0)}
         for r in _rule_pack.rules
@@ -143,13 +144,13 @@ async def population(scenario_id: str = "", variant: str = "", baseline_variant:
 
 
 @app.get("/eval/findings")
-async def findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0):
-    return await asyncio.to_thread(store.list_findings, check_id=check_id, family=family, limit=limit, offset=offset)
+async def findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0):
+    return await asyncio.to_thread(store.list_findings, check_id=check_id, family=family, limit=limit, offset=offset, since=since)
 
 
 @app.get("/eval/conformance")
-async def conformance(limit: int = 100, offset: int = 0):
-    return await asyncio.to_thread(store.list_conformance, limit=limit, offset=offset)
+async def conformance(limit: int = 100, offset: int = 0, since: int = 0):
+    return await asyncio.to_thread(store.list_conformance, limit=limit, offset=offset, since=since)
 
 
 @app.get("/eval/sessions/{session_id}/verdicts")

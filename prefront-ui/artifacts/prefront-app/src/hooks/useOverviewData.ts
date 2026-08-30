@@ -23,10 +23,9 @@ import {
 } from "../components/Observability";
 import { severityOf, type SeverityLevel, type SeverityRule } from "../severity";
 
-// One day. The page is a walkthrough, not an ops console — the windowed OOB
-// numbers are "recent activity"; the hero totals from /eval/status are exact.
-const SINCE = 86400;
-const FINDINGS_LIMIT = 500;
+// Findings fetch cap. Bumped from 500 to cover a 7-day window without truncating
+// (all severity/family/histogram stats derive from these rows client-side).
+const FINDINGS_LIMIT = 2000;
 
 // Rule-pack coverage from /eval/coverage: which Family-1 rules have ever fired
 // vs. never had matching traffic ("never hit"). Authoritative, server-side.
@@ -53,7 +52,7 @@ export type OverviewData = {
   reload: () => void;
 };
 
-export function useOverviewData(demo: DemoConfig, active: boolean): OverviewData {
+export function useOverviewData(demo: DemoConfig, active: boolean, since = 86400): OverviewData {
   const [evalStatus, setEvalStatus] = useState<EvalStatus | null>(null);
   const [oobStatus, setOobStatus] = useState<OobStatus | null>(null);
   const [overview, setOverview] = useState<OobOverview | null>(null);
@@ -71,16 +70,16 @@ export function useOverviewData(demo: DemoConfig, active: boolean): OverviewData
     const one = <T,>(key: string, url: string, set: (v: T) => void) =>
       getJSON<T>(url).then(set).catch((e) => { errs[key] = String(e?.message || e); });
     Promise.all([
-      one<EvalStatus>("eval", "/eval/status", setEvalStatus),
+      one<EvalStatus>("eval", `/eval/status${qs({ since })}`, setEvalStatus),
       one<OobStatus>("oob", "/oob/status", setOobStatus),
-      one<OobOverview>("overview", `/oob/overview${qs({ since: SINCE })}`, setOverview),
-      one<{ findings: EvalVerdict[] }>("findings", `/eval/findings${qs({ limit: FINDINGS_LIMIT })}`, (d) => setFindings(d.findings || [])),
-      one<{ conformance_tags: ConformanceTag[] }>("conformance", `/eval/conformance${qs({ limit: 100 })}`, (d) => setConformance(d.conformance_tags || [])),
-      one<{ sessions: SessionRow[] }>("sessions", `/oob/sessions${qs({ since: SINCE, limit: 200 })}`, (d) => setSessions(d.sessions || [])),
+      one<OobOverview>("overview", `/oob/overview${qs({ since })}`, setOverview),
+      one<{ findings: EvalVerdict[] }>("findings", `/eval/findings${qs({ since, limit: FINDINGS_LIMIT })}`, (d) => setFindings(d.findings || [])),
+      one<{ conformance_tags: ConformanceTag[] }>("conformance", `/eval/conformance${qs({ since, limit: 200 })}`, (d) => setConformance(d.conformance_tags || [])),
+      one<{ sessions: SessionRow[] }>("sessions", `/oob/sessions${qs({ since, limit: 500 })}`, (d) => setSessions(d.sessions || [])),
       one<AgentStats>("governed", `/api/stats${qs({ demo: demo.id })}`, setGoverned),
-      one<Coverage>("coverage", "/eval/coverage", setCoverage),
+      one<Coverage>("coverage", `/eval/coverage${qs({ since })}`, setCoverage),
     ]).finally(() => { setErrors(errs); setLoading(false); });
-  }, [demo.id]);
+  }, [demo.id, since]);
 
   useEffect(() => { load(); }, [load]);
   // Refetch on tab activation — a scenario run elsewhere shows up on return.
@@ -192,6 +191,40 @@ export function findingsPerDay(findings: EvalVerdict[], days = 7): { bars: DayBa
   }
   const peak = bars.reduce((m, b) => Math.max(m, b.count), 0);
   return { bars, peak, today: bars[bars.length - 1]?.count ?? 0 };
+}
+
+// Severity distribution over time buckets, sized by the selected window:
+//   24h -> 6 buckets of 4h each;  7d -> 7 buckets of 1 day each.
+// Each bucket carries the per-severity counts (for a stacked histogram) plus
+// the total. Buckets end at "now" and span exactly the window. Severity is
+// derived per finding from the customer's rules (domain-neutral).
+export type SeverityBucket = {
+  label: string; total: number; critical: number; high: number; medium: number; low: number;
+};
+export function severityHistogram(findings: EvalVerdict[], windowSeconds: number, rules: SeverityRule[]): SeverityBucket[] {
+  const day = 86400;
+  const perDay = windowSeconds > day;                 // 7d view vs 24h view
+  const count = perDay ? Math.round(windowSeconds / day) : 6;
+  const sizeMs = (perDay ? day : windowSeconds / 6) * 1000;
+  const now = Date.now();
+  const base = now - count * sizeMs;
+  const buckets = Array.from({ length: count }, (_, i) => ({
+    start: base + i * sizeMs, total: 0, critical: 0, high: 0, medium: 0, low: 0,
+  }));
+  for (const f of findings) {
+    const t = new Date(f.evaluated_at).getTime();
+    if (Number.isNaN(t) || t < base || t > now) continue;
+    const idx = Math.min(count - 1, Math.max(0, Math.floor((t - base) / sizeMs)));
+    const b = buckets[idx];
+    b.total += 1;
+    b[severityOf({ family: f.family, effect: f.effect }, rules)] += 1;
+  }
+  return buckets.map((b) => ({
+    label: perDay
+      ? new Date(b.start).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : new Date(b.start).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+    total: b.total, critical: b.critical, high: b.high, medium: b.medium, low: b.low,
+  }));
 }
 
 // Findings distribution across the three rule families (Policy / Integrity /

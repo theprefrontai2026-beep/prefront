@@ -1313,6 +1313,24 @@ select { cursor: pointer; }
 .pf-dash-feed-status { font-size: 12px; color: var(--muted); padding: 14px 0; }
 .pf-dash-feed-status.error { color: var(--red); }
 
+/* ── Decision Traces › Findings distributions (family + severity) ───────── */
+.pf-find-dists { display: flex; gap: 32px; flex-wrap: wrap; margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.pf-find-dist { flex: 1; min-width: 240px; }
+.pf-find-dist-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; margin-bottom: 9px; }
+.pf-find-dist-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; }
+.pf-find-dist-label { font-size: 12px; color: var(--ink-soft); width: 92px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-find-dist-track { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.pf-find-dist-fill { display: block; height: 100%; border-radius: 4px; background: var(--muted); min-width: 2px; }
+.pf-find-dist-fill.red { background: var(--red); }
+.pf-find-dist-fill.amber { background: var(--amber); }
+.pf-find-dist-fill.gold { background: #ca8a04; }
+.pf-find-dist-fill.slate { background: var(--muted); }
+.pf-find-dist-fill.blue { background: var(--blue); }
+.pf-find-dist-fill.teal { background: var(--teal); }
+.pf-find-dist-fill.purple { background: var(--purple); }
+.pf-find-dist-fill.crit { background: var(--red); }
+.pf-find-dist-count { font-size: 12px; color: var(--ink); width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+
 /* ── Settings › finding severity editor ─────────────────────────────────── */
 .pf-set-table td { vertical-align: middle; }
 .pf-set-pick {
@@ -1360,6 +1378,13 @@ select { cursor: pointer; }
 .pf-ov2-headline { font-family: var(--w-serif); font-size: 40px; line-height: 1.1; letter-spacing: -0.012em; color: var(--w-ink); font-weight: 500; margin: 16px 0 18px; }
 .pf-ov2-accent { color: var(--w-accent); }
 .pf-ov2-lede { font-size: 15px; line-height: 1.62; color: var(--w-ink-soft); max-width: 60ch; margin: 0; }
+/* window toggle (24h / 7d) */
+.pf-ov2-seg { display: inline-flex; border: 1px solid var(--w-line); border-radius: 7px; overflow: hidden; margin-bottom: 16px; }
+.pf-ov2-seg button { border: none; background: var(--w-surface); color: var(--w-ink-soft); font: inherit; font-size: 12.5px; padding: 6px 14px; cursor: pointer; }
+.pf-ov2-seg button + button { border-left: 1px solid var(--w-line); }
+.pf-ov2-seg button.on { background: var(--w-ink); color: #fff; }
+.pf-ov2-seg button:hover:not(.on) { color: var(--w-accent); }
+
 .pf-ov2-spark { margin-top: 14px; }
 .pf-ov2-spark-bars { display: flex; align-items: flex-end; gap: 8px; height: 92px; }
 .pf-ov2-spark-col { flex: 1; display: flex; align-items: flex-end; height: 100%; }
@@ -1447,6 +1472,24 @@ select { cursor: pointer; }
 .pf-ov2-feed-detail { font-size: 13.5px; color: var(--w-ink); margin: 7px 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pf-ov2-feed-meta { font-size: 12px; color: var(--w-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pf-ov2-feed-q { color: var(--w-ink-soft); }
+
+/* severity histogram (findings over time) */
+.pf-ov2-hist-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--w-ink-soft); }
+.pf-ov2-swatch.sev-crit { background: var(--w-accent); }
+.pf-ov2-swatch.sev-amber { background: #cf8a5b; }
+.pf-ov2-swatch.sev-gold { background: #cbb75f; }
+.pf-ov2-swatch.sev-slate { background: #b3a99b; }
+.pf-ov2-hist { display: flex; align-items: stretch; gap: 12px; height: 190px; margin-top: 14px; }
+.pf-ov2-hist-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; min-width: 0; }
+.pf-ov2-hist-bar { flex: 1; width: 100%; max-width: 54px; margin: 0 auto; display: flex; align-items: flex-end; }
+.pf-ov2-hist-stack { width: 100%; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 0 0; overflow: hidden; min-height: 3px; }
+.pf-ov2-hist-seg { width: 100%; min-height: 2px; }
+.pf-ov2-hist-seg.sev-crit { background: var(--w-accent); }
+.pf-ov2-hist-seg.sev-amber { background: #cf8a5b; }
+.pf-ov2-hist-seg.sev-gold { background: #cbb75f; }
+.pf-ov2-hist-seg.sev-slate { background: #b3a99b; }
+.pf-ov2-hist-count { font-size: 11px; color: var(--w-ink-soft); margin-top: 5px; font-variant-numeric: tabular-nums; }
+.pf-ov2-hist-x { font-size: 10.5px; color: var(--w-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
 .pf-ov2-foot { margin-top: 26px; font-size: 12.5px; color: var(--w-muted); }
 

@@ -226,16 +226,20 @@ def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> 
     )
 
 
-def rule_fire_counts(family: str = "family1") -> dict[str, int]:
+def rule_fire_counts(family: str = "family1", since: int = 0) -> dict[str, int]:
     """How many verdicts (any status) each rule_id has produced, for one family.
     A rule declared in the pack but absent from this map has never had matching
     traffic - "never hit". Reads all verdicts (satisfied included), not the
-    violated-only findings slice, so the coverage answer is authoritative."""
+    violated-only findings slice, so the coverage answer is authoritative.
+    Optionally windowed to the last `since` seconds by evaluated_at."""
     where = "rule_id != ''"
     params: dict[str, Any] = {}
     if family:
         where += " AND family = %(f)s"
         params["f"] = family
+    if since and int(since) > 0:
+        where += " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
+        params["since"] = int(since)
     result = rows(f"SELECT rule_id, count() AS n FROM {VERDICTS_T} WHERE {where} GROUP BY rule_id", params)
     return {str(r["rule_id"]): int(r["n"]) for r in result}
 
@@ -364,7 +368,7 @@ TAGS_T = f"{config.CLICKHOUSE_DB}.eval_conformance_tags FINAL"
 
 
 def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", family: str = "",
-                  limit: int = 100, offset: int = 0) -> dict[str, Any]:
+                  limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
     where = ["1 = 1"]
     params: dict[str, Any] = {}
     if session_id:
@@ -379,8 +383,11 @@ def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", fa
     if family:
         where.append("family = %(family)s")
         params["family"] = family
+    if since and int(since) > 0:
+        where.append("evaluated_at >= now() - INTERVAL %(since)s SECOND")
+        params["since"] = int(since)
     where_sql = " AND ".join(where)
-    params["limit"] = max(1, min(int(limit), 500))
+    params["limit"] = max(1, min(int(limit), 2000))
     params["offset"] = max(0, int(offset))
     total = one(f"SELECT count() AS n FROM {VERDICTS_T} WHERE {where_sql}", params).get("n", 0)
     data = rows(
@@ -414,8 +421,8 @@ def _first_user_messages(session_ids: list[str]) -> dict[str, str]:
     return {r["session_id"]: r["user_query"] for r in data if r.get("user_query")}
 
 
-def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0) -> dict[str, Any]:
-    result = list_verdicts(status="violated", check_id=check_id, family=family, limit=limit, offset=offset)
+def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
+    result = list_verdicts(status="violated", check_id=check_id, family=family, limit=limit, offset=offset, since=since)
     result["findings"] = result.pop("verdicts")
     queries = _first_user_messages(sorted({f["session_id"] for f in result["findings"]}))
     for f in result["findings"]:
@@ -427,17 +434,21 @@ def session_conformance(session_id: str) -> list[dict[str, Any]]:
     return rows(f"SELECT * FROM {TAGS_T} WHERE session_id = %(s)s ORDER BY check_id", {"s": session_id})
 
 
-def list_conformance(limit: int = 100, offset: int = 0) -> dict[str, Any]:
+def list_conformance(limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
     """Cross-session conformance tags, newest first - the POSITIVE evidence
     (a rule was applied and satisfied, with its policy clause cited) as a
     single list, mirroring list_findings' shape/cap for the violated side.
     Before this the only read was per-session (session_conformance), so a
     UI wanting "latest N satisfied rules across the deployment" had to fan
     out one call per session."""
-    params: dict[str, Any] = {"limit": max(1, min(int(limit), 500)), "offset": max(0, int(offset))}
-    total = one(f"SELECT count() AS n FROM {TAGS_T}").get("n", 0)
+    where = "1 = 1"
+    params: dict[str, Any] = {"limit": max(1, min(int(limit), 2000)), "offset": max(0, int(offset))}
+    if since and int(since) > 0:
+        where += " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
+        params["since"] = int(since)
+    total = one(f"SELECT count() AS n FROM {TAGS_T} WHERE {where}", params).get("n", 0)
     data = rows(
-        f"SELECT * FROM {TAGS_T} ORDER BY evaluated_at DESC LIMIT %(limit)s OFFSET %(offset)s", params,
+        f"SELECT * FROM {TAGS_T} WHERE {where} ORDER BY evaluated_at DESC LIMIT %(limit)s OFFSET %(offset)s", params,
     )
     return {"conformance_tags": data, "total": total, "limit": params["limit"], "offset": params["offset"]}
 
@@ -448,13 +459,28 @@ def truncate() -> None:
     client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.eval_evaluated_sessions")
 
 
-def totals() -> dict[str, Any]:
+def totals(since: int = 0) -> dict[str, Any]:
+    """Table totals, optionally windowed to the last `since` seconds by
+    evaluated_at (all three tables carry it). since=0 -> all time."""
+    sess_t = f"{config.CLICKHOUSE_DB}.eval_evaluated_sessions FINAL"
+    if since and int(since) > 0:
+        t = " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
+        return one(
+            f"""
+            SELECT
+              (SELECT count() FROM {VERDICTS_T} WHERE 1=1{t}) AS verdicts,
+              (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated'{t}) AS findings,
+              (SELECT count() FROM {TAGS_T} WHERE 1=1{t}) AS conformance_tags,
+              (SELECT count() FROM {sess_t} WHERE 1=1{t}) AS sessions_evaluated
+            """,
+            {"since": int(since)},
+        )
     return one(
         f"""
         SELECT
           (SELECT count() FROM {VERDICTS_T}) AS verdicts,
           (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated') AS findings,
           (SELECT count() FROM {TAGS_T}) AS conformance_tags,
-          (SELECT count() FROM {config.CLICKHOUSE_DB}.eval_evaluated_sessions FINAL) AS sessions_evaluated
+          (SELECT count() FROM {sess_t}) AS sessions_evaluated
         """
     )

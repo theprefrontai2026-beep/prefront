@@ -101,6 +101,30 @@ function WhatWentWrong({ r }: { r: EvalVerdict }) {
   );
 }
 
+// A compact horizontal bar distribution (family or severity) shown above the
+// Findings filters, reflecting the selected time range.
+function DistBars({ title, rows }: { title: string; rows: { label: string; count: number; tone: string }[] }) {
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  return (
+    <div className="pf-find-dist">
+      <div className="pf-find-dist-title">{title}</div>
+      {rows.map((r) => (
+        <div key={r.label} className="pf-find-dist-row">
+          <span className="pf-find-dist-label" title={r.label}>{r.label}</span>
+          <span className="pf-find-dist-track"><span className={`pf-find-dist-fill ${r.tone}`} style={{ width: `${(r.count / max) * 100}%` }} /></span>
+          <span className="pf-find-dist-count">{r.count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const FAMILY_DIST: { key: string; label: string; tone: string }[] = [
+  { key: "family1", label: "Policy", tone: "blue" },
+  { key: "family2", label: "Integrity", tone: "teal" },
+  { key: "family3", label: "Conformance", tone: "purple" },
+];
+
 // `initialEffect` / `initialSeverity` let the Overview's tiles deep-link here
 // prefiltered (block / approval_required / flag, or a severity level); each
 // re-applies whenever it changes so a second click from the Overview isn't
@@ -194,6 +218,24 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       || new Date(b.evaluated_at).getTime() - new Date(a.evaluated_at).getTime());
   }, [rows, range, eventId, family, checkId, effect, severity, policyNum, q, sevOf]);
 
+  // Distribution over the selected time range only (independent of the column
+  // filters), so the family/severity charts always show the full breakdown for
+  // the chosen period.
+  const rangeRows = useMemo(() => {
+    if (!range) return rows;
+    const cutoff = Date.now() - range * 1000;
+    return rows.filter((r) => new Date(r.evaluated_at).getTime() >= cutoff);
+  }, [rows, range]);
+  const familyDist = useMemo(
+    () => FAMILY_DIST.map((f) => ({ label: f.label, tone: f.tone, count: rangeRows.filter((r) => r.family === f.key).length })),
+    [rangeRows],
+  );
+  const severityDist = useMemo(
+    () => SEVERITY_ORDER.map((s) => ({ label: SEVERITY_META[s].label, tone: SEVERITY_META[s].tone, count: rangeRows.filter((r) => sevOf(r) === s).length })),
+    [rangeRows, sevOf],
+  );
+  const rangePhrase = range ? `last ${FINDING_RANGES.find((r) => r.seconds === range)?.label ?? ""}` : "all time";
+
   const activeFilters = (eventId.trim() ? 1 : 0) + (family ? 1 : 0) + (checkId ? 1 : 0) + (effect ? 1 : 0) + (severity ? 1 : 0) + (policyNum ? 1 : 0) + (q.trim() ? 1 : 0);
   const clearAll = () => { setEventId(""); setFamily(""); setCheckId(""); setEffect(""); setSeverity(""); setPolicyNum(""); setQ(""); };
 
@@ -211,6 +253,13 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
           eval-engine/CLAUDE.md). Never on the request path; nothing here blocked anything, it's what
           the checks found after the fact. A clean stack shows none.
         </p>
+
+        {rangeRows.length > 0 && (
+          <div className="pf-find-dists">
+            <DistBars title={`Families · ${rangePhrase}`} rows={familyDist} />
+            <DistBars title={`Severity · ${rangePhrase}`} rows={severityDist} />
+          </div>
+        )}
 
         <div className="pf-tr-filters">
           <div className="pf-tr-chips">

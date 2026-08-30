@@ -18,11 +18,17 @@ import { useState, type ReactNode } from "react";
 import type { DemoConfig } from "../demos";
 import {
   useOverviewData, byEffect, byRule, familySpread, severityBreakdown,
-  findingsPerDay, topRulesShare, type SeverityRow,
+  severityHistogram, topRulesShare, type SeverityRow, type SeverityBucket,
 } from "../hooks/useOverviewData";
 import { useSeverityRules } from "../hooks/useSeverityRules";
-import { SEVERITY_META } from "../severity";
+import { SEVERITY_META, SEVERITY_ORDER, type SeverityLevel } from "../severity";
 import { num, ago, parseSource, SessionFlyout } from "./Observability";
+
+// Overview time window. All stats reflect the selection.
+const WINDOWS: { label: string; secs: number }[] = [
+  { label: "24 hours", secs: 86400 },
+  { label: "7 days", secs: 604800 },
+];
 
 // Verdict (the scenario runner) lives on its own port on the same host.
 const verdictUrl = () => `${window.location.protocol}//${window.location.hostname}:5180`;
@@ -65,6 +71,46 @@ function Spark({ bars, peak }: { bars: { label: string; count: number; today: bo
   );
 }
 
+// A stacked histogram of findings per time bucket, split by severity. The
+// bucket size follows the window (4h ×6 for 24h, 1 day ×7 for 7d). Pure SVG-free
+// flex bars; severity colours match the badges elsewhere.
+function SeverityHistogram({ data }: { data: SeverityBucket[] }) {
+  const max = data.reduce((m, b) => Math.max(m, b.total), 0) || 1;
+  const empty = data.every((b) => b.total === 0);
+  return (
+    <section className="pf-ov2-panel">
+      <div className="pf-ov2-panel-head">
+        <div>
+          <h2>Findings over time</h2>
+          <div className="pf-ov2-kpi-sub">severity distribution across the window</div>
+        </div>
+        <div className="pf-ov2-hist-legend">
+          {SEVERITY_ORDER.map((s: SeverityLevel) => (
+            <span key={s} className="pf-ov2-legend-item"><span className={`pf-ov2-swatch sev-${SEVERITY_META[s].tone}`} />{SEVERITY_META[s].label}</span>
+          ))}
+        </div>
+      </div>
+      {empty ? <div className="pf-ov2-empty">No findings in this window.</div> : (
+        <div className="pf-ov2-hist">
+          {data.map((b, i) => (
+            <div key={i} className="pf-ov2-hist-col" title={`${b.label} · ${b.total} findings`}>
+              <div className="pf-ov2-hist-bar">
+                <div className="pf-ov2-hist-stack" style={{ height: `${(b.total / max) * 100}%` }}>
+                  {SEVERITY_ORDER.map((s: SeverityLevel) => b[s] > 0 && (
+                    <div key={s} className={`pf-ov2-hist-seg sev-${SEVERITY_META[s].tone}`} style={{ flexGrow: b[s] }} title={`${SEVERITY_META[s].label}: ${b[s]}`} />
+                  ))}
+                </div>
+              </div>
+              <div className="pf-ov2-hist-count">{b.total || ""}</div>
+              <div className="pf-ov2-hist-x">{b.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ── page ───────────────────────────────────────────────────────────────── */
 
 export default function Overview({ demo, active = true, onOpenFindings, onOpenFindingsSeverity, onOpenDecisions, onOpenObservability, onOpenSettings }: {
@@ -72,9 +118,11 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   onOpenFindings: (effect?: string) => void; onOpenFindingsSeverity: (severity?: string) => void;
   onOpenDecisions: () => void; onOpenObservability: () => void; onOpenSettings: () => void;
 }) {
-  const d = useOverviewData(demo, active);
+  const [win, setWin] = useState(WINDOWS[0].secs);
+  const d = useOverviewData(demo, active, win);
   const { rules: severityRules } = useSeverityRules(demo.id, active);
   const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail?: string; source?: string } | null>(null);
+  const winLabel = (WINDOWS.find((w) => w.secs === win) ?? WINDOWS[0]).label;
 
   const ev = d.evalStatus;
   const ch = ev?.clickhouse;
@@ -89,7 +137,9 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const sev = severityBreakdown(findings, severityRules);
   const fam = familySpread(findings);
   const famTotal = fam.reduce((s, f) => s + f.count, 0) || 1;
-  const spark = findingsPerDay(findings, 7);
+  const hist = severityHistogram(findings, win, severityRules);
+  const sparkBars = hist.map((b, i) => ({ label: b.label, count: b.total, today: i === hist.length - 1 }));
+  const sparkPeak = hist.reduce((m, b) => Math.max(m, b.total), 0);
   const topShare = topRulesShare(byRule(findings, 3), total, 3);
   const offCatalog = d.sessions.reduce((n, s) => n + (s.off_catalog_calls || 0), 0);
   // Evaluation scope, summed across the sessions the engine evaluated.
@@ -130,7 +180,7 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
       <header className="pf-ov2-hero">
         <div className="pf-ov2-hero-main">
           <div className="pf-ov2-eyebrow">
-            Shadow evaluation{ev && <> · engine {ev.engine_version}</>}
+            Shadow evaluation · last {winLabel}{ev && <> · engine {ev.engine_version}</>}
           </div>
           <h1 className="pf-ov2-headline">
             {d.loading && !ev ? "…" : num(sessionsEvaluated)} sessions evaluated.{" "}
@@ -147,8 +197,16 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
           {nothingYet && <EmptyHint text={`No sessions evaluated yet — eval-engine polls every ${ev?.worker?.poll_seconds ?? "few"}s.`} />}
         </div>
         <div className="pf-ov2-hero-aside">
-          <div className="pf-ov2-eyebrow">Findings / day{spark.peak > 0 && <span className="pf-ov2-peak">peak {spark.peak}</span>}</div>
-          <Spark bars={spark.bars} peak={spark.peak} />
+          <div className="pf-ov2-seg" role="tablist" aria-label="Time window">
+            {WINDOWS.map((w) => (
+              <button key={w.secs} type="button" role="tab" aria-selected={win === w.secs}
+                      className={win === w.secs ? "on" : ""} onClick={() => setWin(w.secs)}>
+                {w.label}
+              </button>
+            ))}
+          </div>
+          <div className="pf-ov2-eyebrow">Findings / {win > 86400 ? "day" : "4h"}{sparkPeak > 0 && <span className="pf-ov2-peak">peak {sparkPeak}</span>}</div>
+          <Spark bars={sparkBars} peak={sparkPeak} />
         </div>
       </header>
 
@@ -292,6 +350,11 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
             <span className="pf-ov2-kpi-sub">Evidence attached to every row — conversation, clause, trace.</span>
           </div>
         </section>
+      </div>
+
+      {/* ── severity distribution over time ── */}
+      <div style={{ marginTop: 28 }}>
+        <SeverityHistogram data={hist} />
       </div>
 
       {/* ── Foot ── */}
