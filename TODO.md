@@ -511,3 +511,24 @@ pins table) and how it survives re-ingestion (oob-ingest re-pulls spans, so a
 pin keyed on `session.id` has to persist independently of the span rows); how it
 overrides retention in entry 18; and — if pins are per-operator — that it
 depends on entries 14/17 for the logged-in identity to attribute a pin to.
+
+---
+
+## 21. Severity ratings for findings
+
+Not started. Every finding today is flat — a verdict is `violated` or not, with
+no notion of how bad it is. Attach a severity rating to each finding so they can
+be ranked, filtered, and triaged (e.g. a leaked SSN vs. an under-declared
+`fields` list are not the same weight).
+
+To work through: where severity comes from — declared per check in the
+artifacts (`rule_pack.yaml` rules, `intent_catalog.yaml` intents, and the
+built-in Family 2 checks each carrying a severity) vs. derived per finding at
+evaluation time vs. both (a check baseline the finding can escalate); the scale
+(the `ReportFindings` tooling already ranks most-severe-first and Verdict shows
+`expected_findings` — a shared vocabulary is worth reusing rather than inventing
+a second one); how it threads through `eval_verdicts` and the version key so
+re-rating re-evaluates; and how it surfaces in Findings (`DecisionTraces.tsx`)
+and feeds sort/filter there and in reports (entry 11). Keep any per-check
+severity that names domain vocabulary in the artifact, not engine code (Hard
+Rule 1).
