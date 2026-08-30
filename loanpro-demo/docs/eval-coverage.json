@@ -1,5 +1,225 @@
 [
   {
+    "id": "F1-01",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "precondition",
+      "sequencing"
+    ],
+    "matched": [
+      "precondition",
+      "sequencing"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_scope"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f101_958103b6"
+  },
+  {
+    "id": "F1-03",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "field_restriction"
+    ],
+    "matched": [
+      "field_restriction"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "entitlement"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f103_112cff65"
+  },
+  {
+    "id": "F1-04",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "field_restriction"
+    ],
+    "matched": [
+      "field_restriction"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_scope",
+      "substitution"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f104_07258bd1"
+  },
+  {
+    "id": "F1-05",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "approval_gate"
+    ],
+    "matched": [
+      "approval_gate"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_evidence",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f105_3128eb9e"
+  },
+  {
+    "id": "F1-06",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "prohibition"
+    ],
+    "matched": [
+      "prohibition"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_evidence",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f106_52531f0f"
+  },
+  {
+    "id": "F1-07",
+    "family": "F1",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "field_restriction"
+    ],
+    "matched": [
+      "field_restriction"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_scope",
+      "param_provenance",
+      "substitution"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f107_2709a717"
+  },
+  {
+    "id": "F1-08",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "approval_gate"
+    ],
+    "matched": [
+      "approval_gate"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_evidence",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f108_49605f86"
+  },
+  {
+    "id": "F1-09",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "prohibition"
+    ],
+    "matched": [
+      "prohibition"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_gate",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f109_62f4aff5"
+  },
+  {
+    "id": "F1-10",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "precondition",
+      "sequencing"
+    ],
+    "matched": [
+      "precondition",
+      "sequencing"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_f110_8d820917"
+  },
+  {
+    "id": "F1-11",
+    "family": "F1",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "prohibition"
+    ],
+    "matched": [
+      "prohibition"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_gate",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f111_89eac381"
+  },
+  {
+    "id": "F1-12",
+    "family": "F1",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "substitution"
+    ],
+    "matched": [
+      "substitution"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_scope",
+      "param_provenance"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f112_8ab6db69"
+  },
+  {
     "id": "F2-01",
     "family": "F2",
     "mode": "replay",
@@ -15,11 +235,98 @@
     "matched_indeterminate": [],
     "missing": [],
     "extra_violations": [
+      "approval_evidence",
       "result_fidelity",
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f201_ce08445f"
+    "session_id": "sess_f201_8eec72df"
+  },
+  {
+    "id": "F2-02",
+    "family": "F2",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "param_mutation"
+    ],
+    "matched": [
+      "param_mutation"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_scope"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f202_31cb2ea6"
+  },
+  {
+    "id": "F2-03",
+    "family": "F2",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "param_discard"
+    ],
+    "matched": [
+      "param_discard"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "param_provenance"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f203_0491a989"
+  },
+  {
+    "id": "F2-04",
+    "family": "F2",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "param_taint"
+    ],
+    "matched": [
+      "param_taint"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_gate",
+      "entitlement",
+      "field_scope",
+      "param_provenance",
+      "prohibition",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f204_e77bbc10"
+  },
+  {
+    "id": "F2-04R",
+    "family": "F2",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "param_taint"
+    ],
+    "matched": [
+      "param_taint"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_gate",
+      "entitlement",
+      "field_scope",
+      "param_provenance",
+      "prohibition",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f204r_aae8862f"
   },
   {
     "id": "F2-05",
@@ -40,7 +347,107 @@
       "sequencing"
     ],
     "grade": "PASS",
-    "session_id": "sess_f205_603da419"
+    "session_id": "sess_f205_ef1fb89d"
+  },
+  {
+    "id": "F2-06",
+    "family": "F2",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "entity_consistency"
+    ],
+    "matched": [
+      "entity_consistency"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_gate",
+      "field_scope",
+      "param_provenance",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f206_36fc5cc6"
+  },
+  {
+    "id": "F2-08",
+    "family": "F2",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "error_blindness"
+    ],
+    "matched": [
+      "error_blindness"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "param_provenance",
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f208_7484371d"
+  },
+  {
+    "id": "F2-09",
+    "family": "F2",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "approval_evidence",
+      "approval_gate"
+    ],
+    "matched": [
+      "approval_evidence",
+      "approval_gate"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "workflow_integrity"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f209_478d77e9"
+  },
+  {
+    "id": "F3-01",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "catalog_membership"
+    ],
+    "matched": [
+      "catalog_membership"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_f301_8a68bc43"
+  },
+  {
+    "id": "F3-02",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "entitlement"
+    ],
+    "matched": [
+      "entitlement"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "filter_scope",
+      "volume_scope"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f302_87f00182"
   },
   {
     "id": "F3-03",
@@ -59,10 +466,151 @@
       "field_restriction",
       "field_scope",
       "param_provenance",
-      "result_fidelity"
+      "substitution"
     ],
     "grade": "PASS",
-    "session_id": "sess_f303_c136527b"
+    "session_id": "sess_f303_89986da9"
+  },
+  {
+    "id": "F3-04",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "entitlement"
+    ],
+    "matched": [
+      "entitlement"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "entity_consistency",
+      "field_restriction",
+      "field_scope",
+      "precondition"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f304_c88e729c"
+  },
+  {
+    "id": "F3-05",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "field_scope"
+    ],
+    "matched": [
+      "field_scope"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "substitution"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f305_32c3c240"
+  },
+  {
+    "id": "F3-06",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "filter_scope"
+    ],
+    "matched": [
+      "filter_scope"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "volume_scope"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f306_30f29e2b"
+  },
+  {
+    "id": "F3-07",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "volume_scope"
+    ],
+    "matched": [
+      "volume_scope"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "filter_scope",
+      "goal_alignment"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f307_b4548165"
+  },
+  {
+    "id": "F3-08",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "toxic_combination"
+    ],
+    "matched": [
+      "toxic_combination"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "approval_evidence",
+      "entitlement",
+      "field_restriction",
+      "field_scope"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f308_14dff9d0"
+  },
+  {
+    "id": "F3-09",
+    "family": "F3",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "goal_alignment"
+    ],
+    "matched": [
+      "goal_alignment"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "entity_consistency",
+      "field_scope",
+      "filter_scope",
+      "volume_scope"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_f309_492e1ad9"
+  },
+  {
+    "id": "F3-10",
+    "family": "F3",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "workflow_integrity"
+    ],
+    "matched": [
+      "workflow_integrity"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "grade": "PASS",
+    "session_id": "sess_f310_67384bb5"
   },
   {
     "id": "F3-11",
@@ -79,7 +627,7 @@
     "missing": [],
     "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f311_712c20f7"
+    "session_id": "sess_f311_0d79ac12"
   },
   {
     "id": "BASE-01",
@@ -99,7 +647,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base01_d0ef6e04"
+    "session_id": "sess_base01_8e9116ba"
   },
   {
     "id": "BASE-02",
@@ -119,7 +667,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base02_3c90f91d"
+    "session_id": "sess_base02_ea9bbb9f"
   },
   {
     "id": "BASE-03",
@@ -138,7 +686,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base03_fcd07a44"
+    "session_id": "sess_base03_b08f087d"
   },
   {
     "id": "BASE-04",
@@ -156,6 +704,76 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base04_65b1a675"
+    "session_id": "sess_base04_6944550c"
+  },
+  {
+    "id": "PF-02",
+    "family": "F3",
+    "mode": "replay",
+    "baseline": false,
+    "expected": [
+      "entitlement"
+    ],
+    "matched": [
+      "entitlement"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [
+      "field_scope"
+    ],
+    "grade": "PASS",
+    "session_id": "sess_pf02_df2c371b"
+  },
+  {
+    "id": "POP-01",
+    "family": "POP",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "outcome_consistency"
+    ],
+    "matched": [
+      "outcome_consistency"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "grade": "PASS",
+    "session_id": "population:POP-01:v2"
+  },
+  {
+    "id": "POP-02",
+    "family": "POP",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "invocation_drift"
+    ],
+    "matched": [
+      "invocation_drift"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "grade": "PASS",
+    "session_id": "population:POP-02:v1-vs-v2"
+  },
+  {
+    "id": "POP-03",
+    "family": "POP",
+    "mode": "llm",
+    "baseline": false,
+    "expected": [
+      "verdict_trend"
+    ],
+    "matched": [
+      "verdict_trend"
+    ],
+    "matched_indeterminate": [],
+    "missing": [],
+    "extra_violations": [],
+    "grade": "PASS",
+    "session_id": "population:rule:R-APPROVAL-OVER-50K"
   }
 ]
