@@ -436,3 +436,21 @@ bounded, finished session); whether verdicts are re-run as more spans land in an
 already-evaluated session (interacts with the version key); and retention /
 windowing so a long-lived session doesn't force an unbounded re-read (ties into
 entries 10 and 13 on ingestion scalability).
+
+---
+
+## 17. Correlate sessions to a logged-in user
+
+Not started. A session today carries `session.id`, `user.id`, `user.role`,
+`channel` on its spans (the trusted-layer caller identity — see the OOB
+"Sessions" columns and LoanPro's `X-LoanPro-*` headers), but that is the
+governed *caller*, not the authenticated human operating the console. Tie each
+session to a logged-in user so sessions can be listed, filtered, and scoped by
+that user.
+
+Depends on entry 14 (auth / user identification) for a real logged-in identity
+to correlate to, and feeds entries 9 and 11 (per-user audit logs and reports).
+To work through: whether the correlation is the caller identity already on the
+span or a separate operator id, where it's stored (a session column vs. a
+join), and — carrying entry 14's constraint — that the user id stays domain
+vocabulary in config/artifacts, not engine code (Hard Rule 1).

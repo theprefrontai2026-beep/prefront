@@ -576,7 +576,12 @@ function pretty(v: string): string {
   try { return JSON.stringify(JSON.parse(v), null, 2); } catch { return v; }
 }
 
-function SpanInspector({ span }: { span: Span }) {
+/** `compact` is for the in-step view inside a trace: the step's own head
+ *  already names the call, so the title is dropped and everything except the
+ *  input/output — span meta, attributes, events — starts collapsed. Without it
+ *  one expanded tool call is a wall: pretty input, pretty output, a nine-row
+ *  meta grid and up to 30 attribute rows, all at once. */
+function SpanInspector({ span, compact = false }: { span: Span; compact?: boolean }) {
   const [showAll, setShowAll] = useState(false);
   const attrs = Object.entries(span.attributes ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const primary = attrs.filter(([k]) => !k.startsWith("llm.input_messages") && !k.startsWith("llm.output_messages") && !k.startsWith("llm.tools.") && k !== "input.value" && k !== "output.value");
@@ -588,11 +593,20 @@ function SpanInspector({ span }: { span: Span }) {
     ["start", when(span.start_time)], ["duration", ms(span.duration_ms)], ["source", `${span.source} (project ${span.project})`],
   ];
   return (
-    <div className="pf-oob-inspector">
-      <h4><KindBadge kind={span.kind} /> {span.name}</h4>
-      <dl className="pf-oob-kv">
-        {meta.map(([k, v]) => <div key={k}><dt>{k}</dt><dd className="mono">{v}</dd></div>)}
-      </dl>
+    <div className={`pf-oob-inspector ${compact ? "compact" : ""}`}>
+      {!compact && <h4><KindBadge kind={span.kind} /> {span.name}</h4>}
+      {compact ? (
+        <details className="pf-oob-details">
+          <summary>Span metadata</summary>
+          <dl className="pf-oob-kv">
+            {meta.map(([k, v]) => <div key={k}><dt>{k}</dt><dd className="mono">{v}</dd></div>)}
+          </dl>
+        </details>
+      ) : (
+        <dl className="pf-oob-kv">
+          {meta.map(([k, v]) => <div key={k}><dt>{k}</dt><dd className="mono">{v}</dd></div>)}
+        </dl>
+      )}
 
       {span.kind === "LLM" && (
         <div className="pf-oob-inline-stats">
@@ -614,7 +628,7 @@ function SpanInspector({ span }: { span: Span }) {
         </details>
       )}
 
-      <details className="pf-oob-details" open>
+      <details className="pf-oob-details" open={!compact}>
         <summary>Attributes ({primary.length})</summary>
         <table className="pf-oob-table compact"><tbody>
           {(showAll ? primary : primary.slice(0, 30)).map(([k, v]) => (
@@ -932,8 +946,16 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
                     </button>
                     {open && (
                       <div className="pf-oob-step-detail">
-                        {st.text && <pre className={`pf-oob-step-text ${st.mono ? "mono" : ""}`}>{st.text}</pre>}
-                        <SpanInspector span={st.span} />
+                        {/* No raw `st.text` blob here: for a tool/LLM step it is
+                            the same args and result the inspector renders below,
+                            pretty-printed — printing both was the single biggest
+                            source of noise in an expanded call. Only the steps
+                            the inspector has no input/output for (a turn's
+                            message text) still show it. */}
+                        {st.text && !st.span.input_value && !st.span.output_value && (
+                          <pre className={`pf-oob-step-text ${st.mono ? "mono" : ""}`}>{st.text}</pre>
+                        )}
+                        <SpanInspector span={st.span} compact />
                       </div>
                     )}
                   </div>

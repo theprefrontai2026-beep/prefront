@@ -1719,6 +1719,9 @@ select { cursor: pointer; }
 .pf-oob-step-preview.mono { font-family: var(--app-font-mono); font-size: 11px; }
 .pf-oob-step-detail { padding: 0 10px 10px; border-top: 1px solid var(--line-soft); }
 .pf-oob-step-detail .pf-oob-inspector { border: none; padding: 0; margin-top: 8px; }
+/* In-step inspector: input/output lead, everything else is behind a summary. */
+.pf-oob-inspector.compact > .pf-oob-io { margin-top: 8px; }
+.pf-oob-inspector.compact > .pf-oob-details > summary { font-size: 11px; }
 .pf-oob-step-text { color: var(--ink-soft); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; margin: 8px 0 0; }
 .pf-oob-step-text.mono { font-family: var(--app-font-mono); font-size: 11px; }
 .pf-oob-turn-sep { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 0; }
