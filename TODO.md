@@ -416,3 +416,23 @@ and the trade-off between the two; how it interacts with the version key so
 editing aliases re-evaluates affected sessions; and how eval-engine's
 cross-tool param-correlation checks (Family 3 provenance) consume the same map
 so they don't read two aliases of one key as two different params.
+
+---
+
+## 16. Sessions spread across time — real session management
+
+Not started. Today a "session" is reconstructed after the fact as every span
+sharing a `session.id`, whatever trace it's in (see the OOB section, "Sessions"
+— `list_sessions` groups on `session.id`). That works because a demo session is
+short and contiguous. A real user session can span hours or days with long
+gaps, so tracking one needs actual session management rather than a
+group-by-attribute over recent spans.
+
+Things to work through: session lifecycle (open / idle-timeout / explicit close,
+and whether a gap starts a new session or continues the old one); how
+eval-engine decides a session is *complete* enough to evaluate when spans keep
+arriving later (its "reconstruct then run three families" model assumes a
+bounded, finished session); whether verdicts are re-run as more spans land in an
+already-evaluated session (interacts with the version key); and retention /
+windowing so a long-lived session doesn't force an unbounded re-read (ties into
+entries 10 and 13 on ingestion scalability).
