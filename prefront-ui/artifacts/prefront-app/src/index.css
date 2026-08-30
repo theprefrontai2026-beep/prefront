@@ -1580,11 +1580,12 @@ select { cursor: pointer; }
 .pf-find-table td { overflow: hidden; }
 .pf-find-table th:nth-child(1), .pf-find-table td:nth-child(1) { width: 64px; }   /* Event */
 .pf-find-table th:nth-child(2), .pf-find-table td:nth-child(2) { width: 132px; }  /* When */
-.pf-find-table th:nth-child(3), .pf-find-table td:nth-child(3) { width: 92px; }   /* Severity - fits "Critical" */
-.pf-find-table th:nth-child(4), .pf-find-table td:nth-child(4) { width: 112px; }  /* Family - fits "Conformance", the longest label */
-.pf-find-table th:nth-child(5), .pf-find-table td:nth-child(5) { width: 140px; }  /* Effect - fits "APPROVAL_REQUIRED" on one line */
-.pf-find-table th:nth-child(6), .pf-find-table td:nth-child(6) { width: 22%; }    /* User query */
-.pf-find-table th:nth-child(7), .pf-find-table td:nth-child(7) { width: auto; }   /* What went wrong */
+.pf-find-table th:nth-child(3), .pf-find-table td:nth-child(3) { width: 116px; }  /* Outcome - fits "indeterminate" */
+.pf-find-table th:nth-child(4), .pf-find-table td:nth-child(4) { width: 92px; }   /* Severity - fits "Critical" */
+.pf-find-table th:nth-child(5), .pf-find-table td:nth-child(5) { width: 112px; }  /* Family - fits "Conformance", the longest label */
+.pf-find-table th:nth-child(6), .pf-find-table td:nth-child(6) { width: 140px; }  /* Effect - fits "APPROVAL_REQUIRED" on one line */
+.pf-find-table th:nth-child(7), .pf-find-table td:nth-child(7) { width: 20%; }    /* User query */
+.pf-find-table th:nth-child(8), .pf-find-table td:nth-child(8) { width: auto; }   /* Policy / detail */
 .pf-tr-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .pf-tr-truncate.narrow { max-width: 90px; }
 
@@ -1976,6 +1977,8 @@ select { cursor: pointer; }
 /* One-liner + policy corroboration at the TOP of a Findings-opened flyout
    (SessionDetail's findingDetail/findingSource props) */
 .pf-find-flyout-top { margin: 4px 0 14px; padding: 10px 12px; border-radius: 8px; border-left: 3px solid var(--red); background: var(--red-light); }
+/* Satisfied rows are positive evidence, not a violation — green, not red. */
+.pf-find-flyout-top.ok { border-left-color: var(--green); background: var(--green-light); }
 .pf-find-flyout-label { display: block; margin-bottom: 4px; }
 .pf-find-flyout-oneliner { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
 

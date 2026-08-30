@@ -96,6 +96,15 @@ function findingWhen(iso: string): string {
 // findingDetail/findingSource, opened by clicking the row), not repeated
 // here where every column is deliberately kept narrow.
 function WhatWentWrong({ r }: { r: EvalVerdict }) {
+  // A satisfied row isn't "wrong" - it's positive evidence, so state the
+  // policy/rule the clean session was checked against and satisfied: the cited
+  // section (Family 1 Policy / Family 3 Conformance) or, when there's no
+  // citation (Family 2 Integrity invariants), the check that passed.
+  if (r.status === "satisfied") {
+    const section = parseSource(r.source)?.section || "";
+    const text = r.detail || (section ? `§${section}` : r.check_id);
+    return <div className="pf-tr-truncate pf-find-detail" title={r.detail || section || r.check_id}>✓ {text}</div>;
+  }
   return (
     <div className="pf-tr-truncate pf-find-detail" title={r.detail}>{r.detail}</div>
   );
@@ -125,6 +134,17 @@ const FAMILY_DIST: { key: string; label: string; tone: string }[] = [
   { key: "family3", label: "Conformance", tone: "purple" },
 ];
 
+// Outcome vocabulary for the unified feed. Violated leads (triage), then
+// indeterminate, then satisfied — so a session's violations stay at the top of
+// the table even though clean/satisfied rows now share it.
+const OUTCOME_META: Record<string, { label: string; tone: string; rank: number }> = {
+  violated:      { label: "violated",      tone: "red",   rank: 0 },
+  indeterminate: { label: "indeterminate", tone: "amber", rank: 1 },
+  satisfied:     { label: "satisfied",     tone: "green", rank: 2 },
+};
+const outcomeMeta = (s: string) => OUTCOME_META[s] || { label: s || "—", tone: "slate", rank: 3 };
+const OUTCOME_ORDER = ["violated", "indeterminate", "satisfied"];
+
 // `initialEffect` / `initialSeverity` let the Overview's tiles deep-link here
 // prefiltered (block / approval_required / flag, or a severity level); each
 // re-applies whenever it changes so a second click from the Overview isn't
@@ -136,13 +156,14 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
-  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail: string; source: string } | null>(null);
+  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail: string; source: string; status: string } | null>(null);
 
   // ── Filters, one per displayed column ──
   const [range, setRange] = useState<number | null>(86400);
   const [eventId, setEventId] = useState("");
   const [family, setFamily] = useState("");
   const [checkId, setCheckId] = useState("");
+  const [outcome, setOutcome] = useState("");
   const [effect, setEffect] = useState(initialEffect);
   const [severity, setSeverity] = useState(initialSeverity);
   const [policyNum, setPolicyNum] = useState("");
@@ -156,14 +177,19 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
     setStatus("loading");
     setError("");
     try {
-      // The most recent 500 (server-sorted by evaluated_at DESC, the
-      // endpoint's own cap) - filtered further client-side below, same
-      // pattern as the Decisions log above (fetch a recent slice once,
-      // slice-and-dice in the browser rather than a filter param per column).
-      const res = await fetch("/eval/findings?limit=500");
+      // The most recent 1000 (server-sorted by evaluated_at DESC), filtered
+      // further client-side below - same fetch-a-slice-then-slice-and-dice
+      // pattern as the Decisions log above. /eval/verdicts is the UNIFIED feed
+      // (every status), so a clean session shows up too, associated with the
+      // policy/rule it satisfied - not /eval/findings, which is violations
+      // only. The cap is higher than the old findings-only 500 because a clean
+      // deployment emits far more satisfied rows than violations, and we don't
+      // want those to push older violations past the window (violations still
+      // sort to the top regardless).
+      const res = await fetch("/eval/verdicts?limit=1000");
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
-      setRows(json.findings || []);
+      setRows(json.verdicts || []);
       setStatus("ready");
     } catch (e: any) {
       setError(String(e?.message || e));
@@ -198,8 +224,11 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       if (eventId.trim() && !r.event_id.includes(eventId.trim())) return false;
       if (family && famOf(r) !== family) return false;
       if (checkId && r.check_id !== checkId) return false;
+      if (outcome && r.status !== outcome) return false;
       if (effect && r.effect !== effect) return false;
-      if (severity && sevOf(r) !== severity) return false;
+      // Severity is a violation-triage concept — a satisfied row has none, so
+      // only apply the severity filter to rows that are actually violations.
+      if (severity && (r.status === "satisfied" || sevOf(r) !== severity)) return false;
       if (policyNum) {
         const src = parseSource(r.source);
         if (!policyNumbers(src?.section || "").includes(policyNum)) return false;
@@ -211,12 +240,14 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       }
       return true;
     });
-    // Triage order: most-severe first, then most-recent within a severity —
-    // the whole point of a severity rating (falls back to server's DESC order).
+    // Triage order in the unified feed: violations first (then indeterminate,
+    // then satisfied), most-severe first within an outcome, then most-recent —
+    // so sharing the table with clean/satisfied rows never buries a violation.
     return out.sort((a, b) =>
-      SEVERITY_META[sevOf(b)].rank - SEVERITY_META[sevOf(a)].rank
+      outcomeMeta(a.status).rank - outcomeMeta(b.status).rank
+      || SEVERITY_META[sevOf(b)].rank - SEVERITY_META[sevOf(a)].rank
       || new Date(b.evaluated_at).getTime() - new Date(a.evaluated_at).getTime());
-  }, [rows, range, eventId, family, checkId, effect, severity, policyNum, q, sevOf]);
+  }, [rows, range, eventId, family, checkId, outcome, effect, severity, policyNum, q, sevOf]);
 
   // Distribution over the selected time range only (independent of the column
   // filters), so the family/severity charts always show the full breakdown for
@@ -231,33 +262,40 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
     [rangeRows],
   );
   const severityDist = useMemo(
-    () => SEVERITY_ORDER.map((s) => ({ label: SEVERITY_META[s].label, tone: SEVERITY_META[s].tone, count: rangeRows.filter((r) => sevOf(r) === s).length })),
+    () => SEVERITY_ORDER.map((s) => ({ label: SEVERITY_META[s].label, tone: SEVERITY_META[s].tone, count: rangeRows.filter((r) => r.status === "violated" && sevOf(r) === s).length })),
     [rangeRows, sevOf],
+  );
+  const outcomeDist = useMemo(
+    () => OUTCOME_ORDER.map((s) => ({ label: outcomeMeta(s).label, tone: outcomeMeta(s).tone, count: rangeRows.filter((r) => r.status === s).length })),
+    [rangeRows],
   );
   const rangePhrase = range ? `last ${FINDING_RANGES.find((r) => r.seconds === range)?.label ?? ""}` : "all time";
 
-  const activeFilters = (eventId.trim() ? 1 : 0) + (family ? 1 : 0) + (checkId ? 1 : 0) + (effect ? 1 : 0) + (severity ? 1 : 0) + (policyNum ? 1 : 0) + (q.trim() ? 1 : 0);
-  const clearAll = () => { setEventId(""); setFamily(""); setCheckId(""); setEffect(""); setSeverity(""); setPolicyNum(""); setQ(""); };
+  const activeFilters = (eventId.trim() ? 1 : 0) + (family ? 1 : 0) + (checkId ? 1 : 0) + (outcome ? 1 : 0) + (effect ? 1 : 0) + (severity ? 1 : 0) + (policyNum ? 1 : 0) + (q.trim() ? 1 : 0);
+  const clearAll = () => { setEventId(""); setFamily(""); setCheckId(""); setOutcome(""); setEffect(""); setSeverity(""); setPolicyNum(""); setQ(""); };
 
   return (
     <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">
-          <h2>Findings</h2>
+          <h2>Decision evidence</h2>
           <button className="pf-dash-link" type="button" onClick={load} disabled={status === "loading"}>
             {status === "loading" ? "Loading…" : "Refresh ↻"}
           </button>
         </div>
         <p className="pf-hint" style={{ marginTop: 0 }}>
-          eval-engine's shadow evaluation of every ingested session — violations only (see
-          eval-engine/CLAUDE.md). Never on the request path; nothing here blocked anything, it's what
-          the checks found after the fact. A clean stack shows none.
+          eval-engine's shadow evaluation of every ingested session — <strong>every outcome</strong>, not
+          only violations (see eval-engine/CLAUDE.md). A clean session isn't absent: it shows as
+          <em> satisfied</em>, associated with the policy or business rule it was checked against.
+          Never on the request path; nothing here blocked anything — it's what the checks found after
+          the fact.
         </p>
 
         {rangeRows.length > 0 && (
           <div className="pf-find-dists">
+            <DistBars title={`Outcome · ${rangePhrase}`} rows={outcomeDist} />
             <DistBars title={`Families · ${rangePhrase}`} rows={familyDist} />
-            <DistBars title={`Severity · ${rangePhrase}`} rows={severityDist} />
+            <DistBars title={`Severity of violations · ${rangePhrase}`} rows={severityDist} />
           </div>
         )}
 
@@ -271,6 +309,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
             ))}
           </div>
           <div className="pf-tr-selects">
+            <Select label="Outcome" value={outcome} options={OUTCOME_ORDER} onChange={setOutcome} />
             <Select label="Family" value={family} options={families} onChange={setFamily} />
             <Select label="Check" value={checkId} options={checks} onChange={setCheckId} />
             <Select label="Effect" value={effect} options={effects} onChange={setEffect} />
@@ -292,7 +331,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
 
         <div className="pf-tr-summary">
           <span className="pf-tr-count">
-            {filtered.length}<span className="muted"> of {rows.length}</span> findings
+            {filtered.length}<span className="muted"> of {rows.length}</span> records
           </span>
           {activeFilters > 0 && (
             <button className="pf-dash-link" type="button" onClick={clearAll}>
@@ -303,10 +342,10 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       </section>
 
       <section className="pf-panel" style={{ marginTop: 14 }}>
-        {status === "error" && <div className="pf-dash-feed-status error">Couldn’t load findings ({error}).</div>}
+        {status === "error" && <div className="pf-dash-feed-status error">Couldn’t load decision evidence ({error}).</div>}
         {status !== "error" && filtered.length === 0 && (
           <div className="pf-dash-feed-status">
-            {rows.length === 0 ? "No findings — either nothing violated, or Family 1/3 have no rule_pack/intent_catalog configured." : "No findings match these filters."}
+            {rows.length === 0 ? "No evaluated sessions yet — run a scenario against a demo agent, then eval-engine's shadow evaluation appears here." : "Nothing matches these filters."}
           </div>
         )}
         {filtered.length > 0 && (
@@ -317,19 +356,23 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
                width-capped (.pf-tr-truncate) with the full value on hover
                (native title tooltip) so long text never blows out the layout. */}
             <thead>
-              <tr><th>Event</th><th>When</th><th>Severity</th><th>Family</th><th>Effect</th><th>User query</th><th>What went wrong</th></tr>
+              <tr><th>Event</th><th>When</th><th>Outcome</th><th>Severity</th><th>Family</th><th>Effect</th><th>User query</th><th>Policy / detail</th></tr>
             </thead>
             <tbody>
               {filtered.map((r, i) => {
                 const sev = sevOf(r);
+                const om = outcomeMeta(r.status);
+                const satisfied = r.status === "satisfied";
                 return (
                 <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
-                    onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source })}>
+                    onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source, status: r.status })}>
                   <td className="mono pf-tr-truncate narrow" title={r.event_id || undefined}>{r.event_id || "—"}</td>
                   <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
-                  <td><span className={`pf-dash-chip ${SEVERITY_META[sev].tone}`}>{SEVERITY_META[sev].label}</span></td>
+                  <td><span className={`pf-dash-chip ${om.tone}`}>{om.label}</span></td>
+                  {/* Severity is a violation-triage rating; a satisfied row has none. */}
+                  <td>{satisfied ? <span className="muted">—</span> : <span className={`pf-dash-chip ${SEVERITY_META[sev].tone}`}>{SEVERITY_META[sev].label}</span>}</td>
                   <td className="pf-tr-truncate" title={famOf(r)}>{famOf(r)}</td>
-                  <td><span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span></td>
+                  <td>{r.effect ? <span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span> : <span className="muted">—</span>}</td>
                   <td className="pf-tr-truncate" title={r.user_query || undefined}>{r.user_query || <span className="muted">—</span>}</td>
                   <td><WhatWentWrong r={r} /></td>
                 </tr>
@@ -341,7 +384,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
 
       {flyout && (
         <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId}
-                       findingDetail={flyout.detail} findingSource={flyout.source} refreshKey={0}
+                       findingDetail={flyout.detail} findingSource={flyout.source} findingStatus={flyout.status} refreshKey={0}
                        onClose={() => setFlyout(null)} />
       )}
     </>

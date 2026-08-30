@@ -801,14 +801,15 @@ function stepsOf(spans: Span[]): Step[] {
   return out;
 }
 
-export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDetail, findingSource, onClose }: {
+export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDetail, findingSource, findingStatus, onClose }: {
   sessionId: string; refreshKey: number; initialSpanId?: string | null;
   // Set only when opened from a Findings row (SessionFlyout below) - the
   // finding's own one-liner + policy citation, shown prominently at the TOP
   // instead of being buried among session meta. Absent for the plain
   // Sessions/Traces call sites, which have no single "this is the finding"
-  // to lead with.
-  findingDetail?: string; findingSource?: string;
+  // to lead with. `findingStatus` flips the heading between a violation and a
+  // satisfied row (which is positive evidence, not "what was wrong").
+  findingDetail?: string; findingSource?: string; findingStatus?: string;
   onClose: () => void;
 }) {
   const [spans, setSpans] = useState<Span[]>([]);
@@ -889,14 +890,21 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           ))}
         </div>
       )}
-      {/* ── "What was wrong": the finding's one-liner + policy citation, ONLY
-          when opened from a Finding. Placed right after the conversation so
-          the panel reads as a narrative - asked -> answered -> what was wrong
-          - with the trace and session meta below as supporting detail. ── */}
-      {findingDetail && (
-        <div className="pf-find-flyout-top">
-          <span className="pf-oob-convo-who pf-find-flyout-label">What was wrong</span>
-          <div className="pf-find-flyout-oneliner">{findingDetail}</div>
+      {/* ── The finding's one-liner + policy citation, ONLY when opened from a
+          Decision-evidence row. Placed right after the conversation so the panel
+          reads as a narrative - asked -> answered -> verdict - with the trace and
+          session meta below as supporting detail. A satisfied row leads with the
+          policy/rule it satisfied (positive evidence), not "what was wrong". ── */}
+      {(findingDetail || findingSrc?.section || findingSrc?.text) && (
+        <div className={`pf-find-flyout-top ${findingStatus === "satisfied" ? "ok" : ""}`}>
+          <span className="pf-oob-convo-who pf-find-flyout-label">
+            {findingStatus === "satisfied" ? "Satisfied policy / rule" : "What was wrong"}
+          </span>
+          {(findingDetail || findingStatus === "satisfied") && (
+            <div className="pf-find-flyout-oneliner">
+              {findingDetail || "This session was checked against the rule below and satisfied it."}
+            </div>
+          )}
           {findingSrc?.text && (
             <blockquote className="pf-find-quote">
               “{findingSrc.text.trim()}”
@@ -1014,9 +1022,9 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */
-export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, refreshKey, onClose }: {
+export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, findingStatus, refreshKey, onClose }: {
   sessionId: string; initialSpanId?: string | null; eventId?: string | null;
-  findingDetail?: string; findingSource?: string; refreshKey: number;
+  findingDetail?: string; findingSource?: string; findingStatus?: string; refreshKey: number;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -1029,8 +1037,8 @@ export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail
       <div className="pf-flyout-backdrop" onClick={onClose} />
       <aside className="pf-flyout" role="dialog" aria-label={`Session ${sessionId}`}>
         <div className="pf-flyout-head">
-          <div className="pf-flyout-title mono" title={eventId ? "eval-engine's unique id for this finding" : undefined}>
-            {eventId ? `finding ${eventId}` : "Trace detail"}
+          <div className="pf-flyout-title mono" title={eventId ? "eval-engine's unique id for this record" : undefined}>
+            {eventId ? `${findingStatus === "satisfied" ? "evidence" : "finding"} ${eventId}` : "Trace detail"}
           </div>
           <div className="pf-oob-actions">
             <button className="pf-btn sm" onClick={onClose}>Close ✕</button>
@@ -1038,7 +1046,7 @@ export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail
         </div>
         <div className="pf-flyout-body">
           <SessionDetail sessionId={sessionId} refreshKey={refreshKey} initialSpanId={initialSpanId}
-                        findingDetail={findingDetail} findingSource={findingSource} onClose={onClose} />
+                        findingDetail={findingDetail} findingSource={findingSource} findingStatus={findingStatus} onClose={onClose} />
         </div>
       </aside>
     </>

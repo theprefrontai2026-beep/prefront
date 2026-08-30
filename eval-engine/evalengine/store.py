@@ -59,6 +59,10 @@ def list_findings(**kwargs) -> dict[str, Any]:
     return ch.list_findings(**kwargs)
 
 
+def list_feed(**kwargs) -> dict[str, Any]:
+    return ch.list_feed(**kwargs)
+
+
 def session_conformance(session_id: str) -> list[dict[str, Any]]:
     return ch.session_conformance(session_id)
 

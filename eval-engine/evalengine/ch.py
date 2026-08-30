@@ -430,6 +430,21 @@ def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset
     return result
 
 
+def list_feed(status: str = "", check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
+    """Cross-session verdicts of EVERY status (or one, when `status` is set),
+    newest first, with each session's first user turn joined in - the unified
+    Decision Traces feed. Unlike list_findings (violated only) this also returns
+    the `satisfied` rows, so a clean session surfaces associated with the
+    policy/rule it satisfied (its `source` citation carries the section/clause),
+    not only the sessions that had a violation. Same shape/cap as list_findings,
+    keyed `verdicts`."""
+    result = list_verdicts(status=status, check_id=check_id, family=family, limit=limit, offset=offset, since=since)
+    queries = _first_user_messages(sorted({v["session_id"] for v in result["verdicts"]}))
+    for v in result["verdicts"]:
+        v["user_query"] = queries.get(v["session_id"], "")
+    return result
+
+
 def session_conformance(session_id: str) -> list[dict[str, Any]]:
     return rows(f"SELECT * FROM {TAGS_T} WHERE session_id = %(s)s ORDER BY check_id", {"s": session_id})
 
