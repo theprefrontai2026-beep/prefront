@@ -270,7 +270,7 @@ export function Bars({ rows, label, value, max, tone }: {
 
 /* Time-series: bars (throughput) + line (p95 latency) + error ticks, inline SVG */
 function Series({ points, bucket }: { points: SeriesPoint[]; bucket: number }) {
-  const W = 900, H = 180, PAD = { l: 44, r: 44, t: 12, b: 26 };
+  const W = 900, H = 240, PAD = { l: 44, r: 44, t: 16, b: 30 };
   if (!points.length) return <Empty text="No spans in range yet — run a scenario against a demo agent (e.g. via Verdict)." />;
   const iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
   const maxT = Math.max(1, ...points.map((p) => p.spans));
@@ -286,7 +286,7 @@ function Series({ points, bucket }: { points: SeriesPoint[]; bucket: number }) {
   const ticks = Math.min(6, points.length);
   return (
     <div className="pf-oob-series">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="pf-oob-series-svg">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="pf-oob-series-svg">
         {[0, 0.5, 1].map((f) => (
           <line key={f} x1={PAD.l} x2={W - PAD.r} y1={PAD.t + ih - f * ih} y2={PAD.t + ih - f * ih} className="pf-oob-grid" />
         ))}

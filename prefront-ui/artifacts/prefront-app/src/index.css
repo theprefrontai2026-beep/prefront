@@ -1804,7 +1804,7 @@ select { cursor: pointer; }
 .pf-oob-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
 .pf-oob-grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
 
-.pf-oob-series-svg { width: 100%; height: 190px; display: block; }
+.pf-oob-series-svg { width: 100%; height: auto; aspect-ratio: 900 / 240; max-height: 360px; display: block; }
 .pf-oob-grid { stroke: var(--color-border); stroke-width: 1; }
 .pf-oob-bar-spans { fill: var(--blue-mid); }
 .pf-oob-bar-errors { fill: var(--red); }
