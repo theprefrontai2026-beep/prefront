@@ -454,3 +454,26 @@ To work through: whether the correlation is the caller identity already on the
 span or a separate operator id, where it's stored (a session column vs. a
 join), and — carrying entry 14's constraint — that the user id stays domain
 vocabulary in config/artifacts, not engine code (Hard Rule 1).
+
+---
+
+## 18. Retention policy for spans and verdicts
+
+Not started. Both the OOB span store (ClickHouse `prefront.spans`) and
+eval-engine's outputs (`eval_verdicts`, `eval_conformance_tags`,
+`eval_evaluated_sessions`) grow unbounded — there is no TTL or pruning today.
+The only existing knobs are manual, all-or-nothing wipes (`DELETE /oob/spans`,
+`DELETE /eval/verdicts`, `DELETE /oob/phoenix` — see "Clearing trace data spans
+three services"). The decision-trace store is the only place with any bound at
+all (`decision_trace` capped at 100), and that's a UI-layer cap, not a
+retention policy.
+
+Add a configurable retention policy so old spans and verdicts age out
+automatically. To work through: TTL vs. row-count cap vs. time-window;
+per-application / per-tenant retention (interacts with entries 8 and 14) vs. one
+global setting; ClickHouse-native TTL on `spans` vs. an app-driven prune; how it
+interacts with re-ingestion (oob-ingest re-pulls from Phoenix, so Phoenix
+retention has to be coordinated — see "Clearing ClickHouse alone is only a
+pause") and with the version key (a re-evaluation must not resurrect
+aged-out verdicts). Ties into entries 10 and 13 (ingestion scalability), where
+unbounded growth is the underlying pressure.
