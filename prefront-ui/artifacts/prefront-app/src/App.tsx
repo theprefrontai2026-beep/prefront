@@ -311,15 +311,15 @@ export default function App() {
       {/* ── Main content ── */}
       <div className="pf-content">
         {/* Page header */}
+        {/* The Overview has its own editorial hero, so the whole app header
+            (title/desc + presence) is omitted there — otherwise it leaves an
+            empty white bar with just the presence text. */}
+        {tab !== "dashboard" && (
         <header className="pf-page-header">
-          {/* The Overview has its own editorial hero, so the app title/desc
-              would just duplicate it — hide the text there, keep presence. */}
-          {tab === "dashboard" ? <div /> : (
-            <div>
-              <div className="pf-page-title">{meta.title}</div>
-              <div className="pf-page-desc">{meta.desc}</div>
-            </div>
-          )}
+          <div>
+            <div className="pf-page-title">{meta.title}</div>
+            <div className="pf-page-desc">{meta.desc}</div>
+          </div>
 
           <div className="pf-page-actions">
             {/* Live presence */}
@@ -345,6 +345,7 @@ export default function App() {
             </div>
           </div>
         </header>
+        )}
 
         {/* Tab bodies — keyed on the active demo so per-tab state resets on switch */}
         <div className="pf-body" key={demoId}>
