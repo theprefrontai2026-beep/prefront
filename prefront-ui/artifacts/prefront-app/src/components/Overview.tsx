@@ -92,6 +92,10 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const spark = findingsPerDay(findings, 7);
   const topShare = topRulesShare(byRule(findings, 3), total, 3);
   const offCatalog = d.sessions.reduce((n, s) => n + (s.off_catalog_calls || 0), 0);
+  // Evaluation scope, summed across the sessions the engine evaluated.
+  const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
+  const turnsEvaluated = d.sessions.reduce((n, s) => n + (s.turns || 0), 0);
+  const toolCallsEvaluated = d.sessions.reduce((n, s) => n + (s.tool_calls || 0), 0);
   const latest = findings.slice(0, 5);
 
   // Sub-detail for the "would have blocked" card: the policy § most block
@@ -106,7 +110,6 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   })();
 
   const noEval = d.errors.eval;
-  const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
   const nothingYet = !noEval && sessionsEvaluated === 0;
 
   const KPIS: { label: string; value: string; sub: ReactNode; accent?: boolean; onClick?: () => void }[] = [
@@ -148,6 +151,16 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         </div>
       </header>
 
+      {/* ── evaluation scope ── */}
+      <div className="pf-ov2-scope">
+        <span className="pf-ov2-eyebrow">Evaluated</span>
+        <span className="pf-ov2-scope-item"><b>{num(sessionsEvaluated)}</b> sessions</span>
+        <span className="pf-ov2-scope-item"><b>{num(turnsEvaluated)}</b> turns</span>
+        <span className="pf-ov2-scope-item"><b>{num(toolCallsEvaluated)}</b> tool calls</span>
+        <span className="pf-ov2-scope-item"><b>{num(ch?.verdicts)}</b> checks run</span>
+        <span className="pf-ov2-scope-item"><b>{num(ch?.conformance_tags)}</b> satisfied</span>
+      </div>
+
       {/* ── KPI row ── */}
       <div className="pf-ov2-kpis">
         {KPIS.map((kpi) => {
@@ -169,7 +182,7 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         <div className="pf-ov2-band-lead">
           <div className="pf-ov2-eyebrow">Rule evaluations</div>
           <div className="pf-ov2-band-value">{num(ch?.verdicts)}</div>
-          <div className="pf-ov2-kpi-sub">{num(rp?.rule_count)} live rules · {num(sessionsEvaluated)} sessions</div>
+          <div className="pf-ov2-kpi-sub">{num(rp?.rule_count)} live rules · every check, incl. satisfied</div>
         </div>
         <div className="pf-ov2-band-mid">
           <div className="pf-ov2-band-head">
