@@ -217,3 +217,70 @@ be whitelisted, and record the answer in the entry's `reason`.
 read time, suppressed findings remain queryable and counted rather than
 vanishing, editing the artifact re-evaluates affected sessions, and an unknown
 check id is rejected at load rather than silently matching nothing.
+
+---
+
+## 8. Per-application settings: turn individual checks on/off within a family
+
+Not started. Related to entry 7 but a different mechanism — that one waives
+*findings* reactively, per tool, with a reason; this one configures *which
+checks run at all* for a given subject application. Build them so they share
+the check-id vocabulary and the version-key discipline, not so one is a special
+case of the other.
+
+### What exists today
+
+Neither half of this is expressible:
+
+- **No per-check granularity, at any level.** `evaluate.py:47-49` runs
+  `evaluate_family2` → `evaluate_family1` → `evaluate_family3` unconditionally.
+  Families 1 and 3 can only be turned off wholesale, and only by *removing
+  their artifact* (Hard Rule 9's degrade-to-zero). **Family 2 cannot be turned
+  off at all** — it is built in and always runs. There is no switch for one
+  check.
+- **No per-application concept in eval-engine.** Configuration is entirely
+  env-var driven and single-tenant: one `EVAL_RULE_PACK_PATH`, one
+  `EVAL_INTENT_CATALOG_PATH` per deployment (`config.py:32-39`). Nothing in
+  `eval_verdicts` identifies an application.
+
+Surface to cover: **27 check ids** in `KNOWN_CHECKS`
+(`preflight.py:42`) — 6 Family 1, 10 Family 2, 11 Family 3 — plus the three
+population checks, which are a separate on-demand path
+(`family3/population.py`) and need their own answer.
+
+### Design questions to settle first
+
+- **What identifies an "application"?** There is no app id anywhere in the
+  pipeline today. The nearest existing per-subject-app artifact is
+  `trace_binding.yaml` (a new subject app ships its own), so that is the
+  natural anchor — but sessions would still need to resolve to one, and
+  `eval_verdicts` would need the column.
+- **Does "off" mean "don't run", or "run and mark"?** Same tension as entry 7,
+  and it may deserve the opposite answer: a deliberate per-app setting is not a
+  per-finding waiver, and not running is genuinely cheaper. But then a session
+  with no findings is indistinguishable from one that was never checked. The
+  engine already has a vocabulary for exactly this distinction —
+  `indeterminate` + `missing_capture`, resolved to `visibility_gap` by the
+  combinator — so the cheap honest option is to **record the disabled set on
+  the session** (version stamp or its own column) so "clean" and "not checked"
+  never read the same, even if the checks genuinely don't run.
+- **Does it apply inline?** `semantic-mcp-server` re-runs a subset of these
+  checks on the governed path (Phase D / step 18). A per-app setting either
+  applies there too or explicitly does not; silently differing between OOB and
+  inline is the worst of the three.
+
+### Constraints carried from entry 7
+
+- **Artifact, not engine code** — an application id is domain vocabulary
+  (Hard Rule 1). And per that entry: do not rely on the domain-noun guard to
+  catch a violation here.
+- **Version it into the version key** (`evaluate.py:27`), so toggling a check
+  re-evaluates affected sessions instead of leaving them stamped with results
+  from a different configuration.
+- **Validate ids against `KNOWN_CHECKS`** at load; an unknown check id must be
+  rejected, never silently ignored.
+
+**Done when** an application can enable/disable any individual check within any
+family from a versioned artifact, Family 2 included; a disabled check is
+distinguishable from a check that passed; toggling re-evaluates; unknown ids
+are rejected at load; and the inline path's behaviour is explicit either way.
