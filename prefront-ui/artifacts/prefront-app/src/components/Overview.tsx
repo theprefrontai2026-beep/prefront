@@ -160,6 +160,11 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         <span className="pf-ov2-scope-item"><b>{num(toolCallsEvaluated)}</b> tool calls</span>
         <span className="pf-ov2-scope-item"><b>{num(ch?.verdicts)}</b> checks run</span>
         <span className="pf-ov2-scope-item"><b>{num(ch?.conformance_tags)}</b> satisfied</span>
+        {cov?.configured && (
+          <span className="pf-ov2-scope-item" title={cov.never_fired > 0 ? `Never hit: ${cov.never_fired_ids.join(", ")}` : "Every rule in the pack has fired at least once"}>
+            <b className={cov.never_fired > 0 ? "pf-ov2-accent" : ""}>{num(cov.never_fired)}</b> rules never hit
+          </span>
+        )}
       </div>
 
       {/* ── KPI row ── */}
@@ -184,15 +189,7 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
           <div className="pf-ov2-eyebrow">Rule evaluations</div>
           <div className="pf-ov2-band-value">{num(ch?.verdicts)}</div>
           <div className="pf-ov2-kpi-sub">
-            {num(rp?.rule_count)} live rules
-            {cov?.configured && <>
-              {" · "}{cov.fired}/{cov.total} hit
-              {" · "}
-              <b className={cov.never_fired > 0 ? "pf-ov2-accent" : ""}
-                 title={cov.never_fired > 0 ? `Never hit: ${cov.never_fired_ids.join(", ")}` : "Every rule has fired at least once"}>
-                {cov.never_fired} never hit
-              </b>
-            </>}
+            {num(rp?.rule_count)} live rules{cov?.configured && <> · {cov.fired}/{cov.total} ever hit</>}
           </div>
         </div>
         <div className="pf-ov2-band-mid">
