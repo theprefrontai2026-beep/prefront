@@ -842,20 +842,10 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
     return out;
   }, [steps]);
   const stepKey = (st: Step, i: number) => `${st.span.span_id}-${st.kind}-${i}`;
-  // Opened from a Findings row: auto-expand the step the finding points at, so
-  // the deep-link still lands on its evidence now that the separate inspector
-  // panel is gone. Runs when the steps arrive, not on mount.
-  //
-  // Exactly ONE step, the last match: a turn span yields two steps ("user
-  // asked" and "agent answered"), and expanding both renders the same span
-  // inspector twice — on top of a conversation block that already shows both
-  // messages. The last match is also the more useful half for an
-  // answer-scoped finding.
-  useEffect(() => {
-    if (!initialSpanId || !steps.length) return;
-    const hits = steps.map(stepKey).filter((_, i) => steps[i].span.span_id === initialSpanId);
-    if (hits.length) setExpanded(new Set([hits[hits.length - 1]]));
-  }, [initialSpanId, steps]);
+  // Nothing auto-expands — every step stays collapsed until the reader opens
+  // it, including the one a finding cites. Opening from a Findings row still
+  // marks that step (see `evidence` below) so the deep-link is findable
+  // without forcing its body open.
 
   const root = spans.find((s) => s.name.startsWith("session ")) ?? spans.find((s) => /^turn /.test(s.name)) ?? spans[0];
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
@@ -913,10 +903,11 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
               const key = stepKey(st, i);
               const open = expanded.has(key);
               const failed = st.span.status === "ERROR" && st.kind === "tool";
+              const evidence = !!initialSpanId && st.span.span_id === initialSpanId;
               return (
                 <div key={key}>
                   {st.kind === "turn" && <div className="pf-oob-turn-sep">turn {st.turn}</div>}
-                  <div className={`pf-oob-step ${open ? "open" : ""} ${failed ? "error" : ""}`}>
+                  <div className={`pf-oob-step ${open ? "open" : ""} ${failed ? "error" : ""} ${evidence ? "evidence" : ""}`}>
                     <button type="button" className="pf-oob-step-head" aria-expanded={open}
                             onClick={() => setExpanded((prev) => {
                               const next = new Set(prev);
@@ -929,7 +920,11 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
                         <span className="pf-oob-subtle">{ms(st.span.duration_ms)}</span>
                       </div>
                       <div className="pf-oob-step-body">
-                        <div className="pf-oob-step-title">{st.title}{failed && <span className="pf-oob-chip red">error</span>}</div>
+                        <div className="pf-oob-step-title">
+                          {st.title}
+                          {failed && <span className="pf-oob-chip red">error</span>}
+                          {evidence && <span className="pf-oob-chip amber" title="The span this finding cites as its evidence">evidence</span>}
+                        </div>
                         {!open && st.text && (
                           <div className={`pf-oob-step-preview ${st.mono ? "mono" : ""}`}>{preview(st.text)}</div>
                         )}

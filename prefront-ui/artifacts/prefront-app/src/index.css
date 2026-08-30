@@ -1705,6 +1705,8 @@ select { cursor: pointer; }
 .pf-oob-step-head:hover { background: var(--surface-alt); }
 .pf-oob-step.open > .pf-oob-step-head { background: var(--surface-alt); }
 .pf-oob-step.error { border-left: 3px solid var(--red); }
+/* The step a finding cites. Marked, never auto-expanded — the reader opens it. */
+.pf-oob-step.evidence { border-color: var(--amber); }
 .pf-oob-step-caret { color: var(--muted); font-size: 10px; line-height: 1.6; }
 .pf-oob-step-kind { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .pf-oob-step-body { min-width: 0; }
