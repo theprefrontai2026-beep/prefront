@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import os
 
-ENGINE_VERSION = "0.1.0"
+# 0.2.0: content.evaluate emits final_answer-scoped verdicts per TURN rather
+# than per step (one answer-scoped leak was reported once per tool call), and
+# result_fidelity scans standalone number tokens rather than every digit run
+# (hyphenated and masked identifiers read as fabricated numeric claims). Both
+# change verdict output, so the bump forces already-evaluated sessions back
+# through evaluation via the version key.
+ENGINE_VERSION = "0.2.0"
 
 
 def _env(name: str, default: str = "") -> str:

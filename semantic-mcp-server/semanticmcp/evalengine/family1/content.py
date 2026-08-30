@@ -44,12 +44,24 @@ def _field_in_text(text: str, field_name: str) -> bool:
     return re.search(pattern, text, re.IGNORECASE) is not None
 
 
+def _role_applies(rule: Rule, session: Session) -> bool:
+    return not rule.restricted_from_roles or session.caller_role in rule.restricted_from_roles
+
+
+def _intent_applies(rule: Rule, step) -> bool:
+    return not rule.applies_to_intents or step.intent in rule.applies_to_intents
+
+
 def _applies(rule: Rule, step, session: Session) -> bool:
-    if rule.applies_to_intents and step.intent not in rule.applies_to_intents:
-        return False
-    if rule.restricted_from_roles and session.caller_role not in rule.restricted_from_roles:
-        return False
-    return True
+    return _intent_applies(rule, step) and _role_applies(rule, session)
+
+
+def _scoped(rule: Rule, scope: str) -> list[tuple[str, dict]]:
+    """(field_name, detector) pairs for one scope. `result` is the default when a
+    detector names no scopes, matching the rule-pack schema."""
+    return [(f, det) for det in rule.detectors
+            for f in (det.get("field_names") or [])
+            if scope in (det.get("scopes") or ["result"])]
 
 
 def _restricted_field_names(rule: Rule) -> list[str]:
@@ -121,36 +133,70 @@ def evaluate_substitution(session: Session, rule_pack: RulePack, ctx: CheckConte
     return out
 
 
+def _verdict(rule: Rule, session: Session, evidence: Evidence, hits: list[str], where: str) -> Verdict:
+    if hits:
+        return Verdict(
+            check_id=rule.check_id(), family="family1", status="violated", effect=rule.effect,
+            session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
+            detail=f"rule {rule.rule_id}: restricted field(s) {sorted(set(hits))} surfaced on {where}",
+            source=rule.source or None,
+        )
+    return Verdict(
+        check_id=rule.check_id(), family="family1", status="satisfied", effect="allow",
+        session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
+        detail=f"rule {rule.rule_id}: no restricted field surfaced on {where}",
+        source=rule.source or None,
+    )
+
+
 def evaluate(session: Session, rule_pack: RulePack, ctx: CheckContext) -> list[Verdict]:
-    turns_by_seq = {t.seq: t for t in session.turns}
+    """One verdict per (rule, unit), where the UNIT is whatever the detector's
+    scope is actually about:
+
+    * `result` scope -> per STEP. Which tool returned the field is the finding.
+    * `final_answer` scope -> per TURN. The answer belongs to the turn, not to
+      any one tool call in it.
+
+    Getting the second one wrong is not cosmetic. The old loop was `for rule ->
+    for step` and re-tested the SAME assistant message on every step, and
+    `evidence_excerpt` carries the tool name — which is part of eval_verdicts'
+    ORDER BY key, so the rows never collapsed. A single credit_score leaked in
+    one answer was reported once per tool call in that turn (twice in F1-04,
+    events 38073/38074; five tool calls would have made it five findings).
+    """
     out: list[Verdict] = []
     for rule in rule_pack.by_engine("content"):
-        for step in session.steps:
-            if not _applies(rule, step, session):
-                continue
-            hits: list[str] = []
-            for det in rule.detectors:
-                field_names = det.get("field_names") or []
-                scopes = det.get("scopes") or ["result"]
-                for fname in field_names:
-                    if "result" in scopes and _field_in_result(step.result, fname):
-                        hits.append(f"{fname} (result)")
-                    turn = turns_by_seq.get(step.turn_seq) if step.turn_seq is not None else None
-                    if "final_answer" in scopes and turn and _field_in_text(turn.assistant_message, fname):
-                        hits.append(f"{fname} (final answer)")
-            evidence = Evidence(span_ids=(step.span_id,), excerpt=f"{step.tool_name}: {rule.rule_id}")
-            if hits:
-                out.append(Verdict(
-                    check_id=rule.check_id(), family="family1", status="violated", effect=rule.effect,
-                    session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
-                    detail=f"rule {rule.rule_id}: restricted field(s) {sorted(set(hits))} surfaced on {step.tool_name}",
-                    source=rule.source or None,
-                ))
-            else:
-                out.append(Verdict(
-                    check_id=rule.check_id(), family="family1", status="satisfied", effect="allow",
-                    session_id=session.session_id, evidence=evidence, rule_id=rule.rule_id,
-                    detail=f"rule {rule.rule_id}: no restricted field surfaced on {step.tool_name}",
-                    source=rule.source or None,
-                ))
+        if not _role_applies(rule, session):
+            continue
+
+        result_fields = _scoped(rule, "result")
+        if result_fields:
+            for step in session.steps:
+                if not _intent_applies(rule, step):
+                    continue
+                hits = [f"{f} (result)" for f, _ in result_fields if _field_in_result(step.result, f)]
+                out.append(_verdict(
+                    rule, session,
+                    Evidence(span_ids=(step.span_id,), excerpt=f"{step.tool_name}: {rule.rule_id}"),
+                    hits, step.tool_name))
+
+        answer_fields = _scoped(rule, "final_answer")
+        if answer_fields:
+            steps_by_turn: dict[int, list] = {}
+            for s in session.steps:
+                if s.turn_seq is not None:
+                    steps_by_turn.setdefault(s.turn_seq, []).append(s)
+            for turn in session.turns:
+                # An intent-scoped rule still needs its intent to have been
+                # exercised somewhere in this turn for the turn's answer to be
+                # in scope; a rule with no applies_to_intents covers every turn.
+                if rule.applies_to_intents and not any(
+                        _intent_applies(rule, s) for s in steps_by_turn.get(turn.seq, [])):
+                    continue
+                hits = [f"{f} (final answer)" for f, _ in answer_fields
+                        if _field_in_text(turn.assistant_message, f)]
+                out.append(_verdict(
+                    rule, session,
+                    Evidence(span_ids=(turn.span_id,), excerpt=f"turn {turn.seq}: {rule.rule_id}"),
+                    hits, f"turn {turn.seq}'s answer"))
     return out

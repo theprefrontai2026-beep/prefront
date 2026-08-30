@@ -15,11 +15,52 @@ from ..provenance import flatten
 
 CHECK_ID = "result_fidelity"
 
-_NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 # A markdown ordered-list marker ("1. ", "2. ", ...) at the start of a line is
 # formatting, not a data claim - stripped before scanning so "1. **Loan ID
 # 7001**..." contributes 7001 (a real claim) but not 1 (a list index).
 _LIST_MARKER_RE = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
+
+# A numeric CLAIM is a standalone number token, once its wrappers are peeled off.
+# Digits welded into an identifier ("343-43-4343", "TIN-5007-3319", "****2665",
+# "2026-08-30") are not claims about a quantity and must never be scanned as
+# such - see _claim_value.
+_PURE_NUM_RE = re.compile(r"^-?\d[\d,]*(\.\d+)?$")
+_EMPHASIS = "*_`~"
+_OPENERS = "([{\"'“‘$€£¥"
+_CLOSERS = ".,;:!?)]}\"'”’%"
+_POSSESSIVES = ("'s", "’s")
+
+
+def _claim_value(token: str):
+    """A whitespace token -> the number it claims, or None.
+
+    Peels sentence punctuation, currency/bracket openers and markdown emphasis,
+    then requires what remains to be PURELY numeric. Anything still carrying a
+    letter, an internal hyphen or a leading mask run is an identifier, not a
+    quantity.
+
+    The asymmetry between leading and trailing emphasis is load-bearing:
+    trailing emphasis is stripped freely (it can only be a closing marker), but
+    LEADING emphasis is stripped only when the token also closed with some -
+    otherwise "****2665", a masked account number, would peel to a bare 2665 and
+    read as a claim, while "**7001**" must still peel to 7001.
+    """
+    t = token.strip()
+    for suf in _POSSESSIVES:
+        if t.endswith(suf):
+            t = t[: -len(suf)]
+    t = t.rstrip(_CLOSERS)
+    wrapped = bool(t) and t[-1] in _EMPHASIS
+    t = t.rstrip(_EMPHASIS).rstrip(_CLOSERS)
+    if wrapped:
+        t = t.lstrip(_EMPHASIS)
+    t = t.lstrip(_OPENERS)
+    if not _PURE_NUM_RE.match(t):
+        return None
+    try:
+        return float(t.replace(",", ""))
+    except ValueError:
+        return None
 
 
 def _rows(result) -> list[dict]:
@@ -64,14 +105,10 @@ def _aggregate_values(session) -> set[float]:
 
 
 def _claims(text: str) -> list[float]:
-    text = _LIST_MARKER_RE.sub("", text)
     seen: list[float] = []
-    for m in _NUM_RE.finditer(text.replace(",", "")):
-        try:
-            v = float(m.group(0))
-        except ValueError:
-            continue
-        if v not in seen:
+    for token in _LIST_MARKER_RE.sub("", text).split():
+        v = _claim_value(token)
+        if v is not None and v not in seen:
             seen.append(v)
     return seen
 
