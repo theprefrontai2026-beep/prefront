@@ -19,9 +19,11 @@ import { useState } from "react";
 import type { DemoConfig } from "../demos";
 import { useDecisionFeed, type PolicyStat } from "../hooks/useDecisionFeed";
 import {
-  useOverviewData, byEffect, byRule, byFamily, iamVsContext, sensitiveFindings,
+  useOverviewData, byEffect, byRule, byFamily, bySeverity, iamVsContext, sensitiveFindings,
   distinctIntents, offCatalogCalls, citedTags, type Effect,
 } from "../hooks/useOverviewData";
+import { useSeverityRules } from "../hooks/useSeverityRules";
+import { SEVERITY_META, SEVERITY_ORDER, type SeverityLevel } from "../severity";
 import { Kpi, Bars, Empty, num, ms, ago, parseSource, SessionFlyout } from "./Observability";
 
 /* ── section copy ───────────────────────────────────────────────────────── */
@@ -130,11 +132,14 @@ function GovernedRuntime({ demo, onViewAll }: { demo: DemoConfig; onViewAll: () 
 
 /* ── page ───────────────────────────────────────────────────────────────── */
 
-export default function Overview({ demo, active = true, onOpenFindings, onOpenDecisions, onOpenObservability }: {
+export default function Overview({ demo, active = true, onOpenFindings, onOpenFindingsSeverity, onOpenDecisions, onOpenObservability }: {
   demo: DemoConfig; active?: boolean;
-  onOpenFindings: (effect?: string) => void; onOpenDecisions: () => void; onOpenObservability: () => void;
+  onOpenFindings: (effect?: string) => void; onOpenFindingsSeverity: (severity?: string) => void;
+  onOpenDecisions: () => void; onOpenObservability: () => void;
 }) {
   const d = useOverviewData(demo, active);
+  const { rules: severityRules } = useSeverityRules(demo.id, active);
+  const severities = bySeverity(d.findings, severityRules);
   const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail?: string; source?: string } | null>(null);
 
   const ev = d.evalStatus;
@@ -211,6 +216,19 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenDe
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+        <div className="pf-ov-severity">
+          <div className="pf-ov-contrast-head">By severity <span className="pf-dash-subtle">triage priority · {windowNote} · configurable in Settings</span></div>
+          <div className="pf-oob-kpis">
+            {SEVERITY_ORDER.map((s: SeverityLevel) => (
+              <button key={s} type="button" className="pf-ov-clickable" onClick={() => onOpenFindingsSeverity(s)} title={`Open findings rated ${SEVERITY_META[s].label}`}>
+                <div className="pf-oob-kpi">
+                  <div className="pf-oob-kpi-value">{num(severities[s])}</div>
+                  <div className="pf-oob-kpi-label"><span className={`pf-dash-chip ${SEVERITY_META[s].tone}`}>{SEVERITY_META[s].label}</span></div>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
         {d.findings.length === 0 && !d.loading && <EmptyHint text="No findings yet — either nothing violated, or no rule pack / intent catalog is configured." />}

@@ -21,6 +21,7 @@ import {
   type ConformanceTag, type EvalStatus, type EvalVerdict, type Overview as OobOverview,
   type SessionRow, type Status as OobStatus,
 } from "../components/Observability";
+import { severityOf, type SeverityLevel, type SeverityRule } from "../severity";
 
 // One day. The page is a walkthrough, not an ops console — the windowed OOB
 // numbers are "recent activity"; the hero totals from /eval/status are exact.
@@ -118,6 +119,14 @@ export function byFamily(findings: EvalVerdict[]): Record<string, number> {
     const key = f.family_label || f.family;
     out[key] = (out[key] ?? 0) + 1;
   }
+  return out;
+}
+
+// Findings grouped by derived severity, using the customer's severity rules
+// (from useSeverityRules). Domain-neutral: severity keys on family/effect only.
+export function bySeverity(findings: EvalVerdict[], rules: SeverityRule[]): Record<SeverityLevel, number> {
+  const out: Record<SeverityLevel, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of findings) out[severityOf({ family: f.family, effect: f.effect }, rules)] += 1;
   return out;
 }
 

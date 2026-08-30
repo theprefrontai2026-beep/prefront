@@ -1305,8 +1305,29 @@ select { cursor: pointer; }
 .pf-dash-chip.red   { color: var(--red);   background: var(--red-light); }
 .pf-dash-chip.amber { color: var(--amber); background: var(--amber-light); }
 .pf-dash-chip.teal  { color: var(--teal);  background: var(--teal-light); }
+/* Severity ramp (critical→low). `crit` is filled to read as the top of the
+   scale, distinct from the light-red `red` used by the block-effect chip. */
+.pf-dash-chip.crit  { color: #fff;          background: var(--red); }
+.pf-dash-chip.gold  { color: #92400e;       background: #fef9c3; }
+.pf-dash-chip.slate { color: var(--muted);  background: #eef1f5; }
 .pf-dash-feed-status { font-size: 12px; color: var(--muted); padding: 14px 0; }
 .pf-dash-feed-status.error { color: var(--red); }
+
+/* ── Settings › finding severity editor ─────────────────────────────────── */
+.pf-set-table td { vertical-align: middle; }
+.pf-set-pick {
+  font-family: inherit; font-size: 12.5px; padding: 4px 8px;
+  border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink-soft);
+}
+.pf-set-btn {
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+  width: 26px; height: 26px; border-radius: 5px; cursor: pointer; font-size: 12px; margin-right: 4px;
+}
+.pf-set-btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.pf-set-btn.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+.pf-set-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.pf-set-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.pf-ov-severity { margin-top: 16px; }
 
 /* ── Decision Traces (filterable log) ─────────────────────────────────────── */
 .pf-tr-filters {
@@ -1377,10 +1398,11 @@ select { cursor: pointer; }
 .pf-find-table td { overflow: hidden; }
 .pf-find-table th:nth-child(1), .pf-find-table td:nth-child(1) { width: 64px; }   /* Event */
 .pf-find-table th:nth-child(2), .pf-find-table td:nth-child(2) { width: 132px; }  /* When */
-.pf-find-table th:nth-child(3), .pf-find-table td:nth-child(3) { width: 112px; }  /* Family - fits "Conformance", the longest label */
-.pf-find-table th:nth-child(4), .pf-find-table td:nth-child(4) { width: 140px; }  /* Effect - fits "APPROVAL_REQUIRED" on one line */
-.pf-find-table th:nth-child(5), .pf-find-table td:nth-child(5) { width: 22%; }    /* User query */
-.pf-find-table th:nth-child(6), .pf-find-table td:nth-child(6) { width: auto; }   /* What went wrong */
+.pf-find-table th:nth-child(3), .pf-find-table td:nth-child(3) { width: 92px; }   /* Severity - fits "Critical" */
+.pf-find-table th:nth-child(4), .pf-find-table td:nth-child(4) { width: 112px; }  /* Family - fits "Conformance", the longest label */
+.pf-find-table th:nth-child(5), .pf-find-table td:nth-child(5) { width: 140px; }  /* Effect - fits "APPROVAL_REQUIRED" on one line */
+.pf-find-table th:nth-child(6), .pf-find-table td:nth-child(6) { width: 22%; }    /* User query */
+.pf-find-table th:nth-child(7), .pf-find-table td:nth-child(7) { width: auto; }   /* What went wrong */
 .pf-tr-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .pf-tr-truncate.narrow { max-width: 90px; }
 

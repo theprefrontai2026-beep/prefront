@@ -316,3 +316,26 @@ export function publishPolicy({ rules, ddl, dsn, domain, datasourceId, metrics }
     }),
   }).then(jsonOrThrow);
 }
+
+// ── Settings: finding-severity mapping (api-server, DB-backed per demo) ──
+
+import type { SeverityRule } from "./severity";
+
+/** The demo's effective ordered rule-list (stored, or the built-in defaults). */
+export function getSeverityRules(demo: string): Promise<{ demo: string; rules: SeverityRule[]; isDefault: boolean }> {
+  return fetch(`/api/settings/severity?demo=${encodeURIComponent(demo)}`).then(jsonOrThrow);
+}
+
+/** Replace the demo's whole ordered rule-list. */
+export function saveSeverityRules(demo: string, rules: SeverityRule[]) {
+  return fetch("/api/settings/severity", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ demo, rules }),
+  }).then(jsonOrThrow);
+}
+
+/** Drop the demo's stored rules so the defaults apply again. */
+export function resetSeverityRules(demo: string) {
+  return fetch(`/api/settings/severity?demo=${encodeURIComponent(demo)}`, { method: "DELETE" }).then(jsonOrThrow);
+}

@@ -8,6 +8,7 @@ import DataGraph from "./components/DataGraph";
 import BusinessGraph from "./components/BusinessGraph";
 import Semantic from "./components/Semantic";
 import Observability from "./components/Observability";
+import Settings from "./components/Settings";
 import DemoChooser from "./components/DemoChooser";
 import { useDemo } from "./DemoContext";
 import { parseKV } from "./util";
@@ -152,6 +153,7 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   policy:   { title: "Policy Studio",   desc: "Upload policy documents, extract rules, and manage the review pipeline." },
   semantic: { title: "Semantic Layer",  desc: "Build governed interfaces — SQL query templates or MCP tool bindings — from approved rules and your schema." },
   oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: sessions, the app agent's turns, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
+  settings: { title: "Settings",         desc: "Under-the-hood configuration. Tune how findings are rated and triaged — the severity mapping applied across the Findings log and Overview." },
 };
 
 function ReviewerDot({ name, color, focused }: { name: string; color: string; focused: boolean }) {
@@ -173,6 +175,7 @@ export default function App() {
   // optionally prefiltered by effect (block / approval_required / flag).
   const [tracesSection, setTracesSection] = useState<TracesSection>("decisions");
   const [findingsEffect, setFindingsEffect] = useState("");
+  const [findingsSeverity, setFindingsSeverity] = useState("");
   const [graphMounted, setGraphMounted] = useState(false);
   const [bizGraphMounted, setBizGraphMounted] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
@@ -301,7 +304,7 @@ export default function App() {
         {/* Bottom utility icons */}
         <div className="pf-sidebar-bottom">
           <button className="pf-nav-item" title="Notifications"><IconBell /></button>
-          <button className="pf-nav-item" title="Settings"><IconSettings /></button>
+          <button className={`pf-nav-item ${tab === "settings" ? "active" : ""}`} title="Settings" onClick={() => setTab("settings")}><IconSettings /></button>
         </div>
       </aside>
 
@@ -343,12 +346,16 @@ export default function App() {
         <div className="pf-body" key={demoId}>
           <div className={tab === "dashboard" ? "" : "tab-hidden"}>
             <Overview demo={demo} active={tab === "dashboard"}
-                      onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setTracesSection("findings"); setTab("traces"); }}
+                      onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setFindingsSeverity(""); setTracesSection("findings"); setTab("traces"); }}
+                      onOpenFindingsSeverity={(sev) => { setFindingsSeverity(sev ?? ""); setFindingsEffect(""); setTracesSection("findings"); setTab("traces"); }}
                       onOpenDecisions={() => { setTracesSection("decisions"); setTab("traces"); }}
                       onOpenObservability={() => setTab("oob")} />
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
-            <DecisionTraces active={tab === "traces"} demo={demo} section={tracesSection} onSection={setTracesSection} findingsEffect={findingsEffect} />
+            <DecisionTraces active={tab === "traces"} demo={demo} section={tracesSection} onSection={setTracesSection} findingsEffect={findingsEffect} findingsSeverity={findingsSeverity} />
+          </div>
+          <div className={tab === "settings" ? "" : "tab-hidden"}>
+            <Settings demo={demo} active={tab === "settings"} />
           </div>
           <div className={tab === "flows" ? "" : "tab-hidden"}>
             <IntentFlows active={tab === "flows"} demo={demo} />

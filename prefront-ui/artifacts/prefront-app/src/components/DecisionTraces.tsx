@@ -13,6 +13,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FeedDecision, Trace } from "../hooks/useDecisionFeed";
 import type { DemoConfig } from "../demos";
 import { SessionFlyout, parseSource, type EvalVerdict } from "./Observability";
+import { severityOf, SEVERITY_META, SEVERITY_ORDER, type SeverityLevel, type SeverityRule } from "../severity";
+import { useSeverityRules } from "../hooks/useSeverityRules";
 
 const DECISIONS: FeedDecision[] = ["ALLOWED", "MASKED", "APPROVAL", "BLOCKED"];
 
@@ -99,10 +101,14 @@ function WhatWentWrong({ r }: { r: EvalVerdict }) {
   );
 }
 
-// `initialEffect` lets the Overview's effect tiles deep-link here prefiltered
-// (block / approval_required / flag); it re-applies whenever it changes so a
-// second click from the Overview isn't ignored.
-function FindingsSection({ initialEffect = "", active = true }: { initialEffect?: string; active?: boolean }) {
+// `initialEffect` / `initialSeverity` let the Overview's tiles deep-link here
+// prefiltered (block / approval_required / flag, or a severity level); each
+// re-applies whenever it changes so a second click from the Overview isn't
+// ignored. `rules` is the customer's severity mapping (severity is derived per
+// row from family+effect, first-match-wins).
+function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true }: {
+  initialEffect?: string; initialSeverity?: string; rules: SeverityRule[]; active?: boolean;
+}) {
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -114,9 +120,13 @@ function FindingsSection({ initialEffect = "", active = true }: { initialEffect?
   const [family, setFamily] = useState("");
   const [checkId, setCheckId] = useState("");
   const [effect, setEffect] = useState(initialEffect);
+  const [severity, setSeverity] = useState(initialSeverity);
   const [policyNum, setPolicyNum] = useState("");
   const [q, setQ] = useState("");
   useEffect(() => { setEffect(initialEffect); if (initialEffect) setRange(null); }, [initialEffect]);
+  useEffect(() => { setSeverity(initialSeverity); if (initialSeverity) setRange(null); }, [initialSeverity]);
+
+  const sevOf = useCallback((r: EvalVerdict): SeverityLevel => severityOf({ family: r.family, effect: r.effect }, rules), [rules]);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -159,12 +169,13 @@ function FindingsSection({ initialEffect = "", active = true }: { initialEffect?
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const cutoff = range ? Date.now() - range * 1000 : null;
-    return rows.filter((r) => {
+    const out = rows.filter((r) => {
       if (cutoff && new Date(r.evaluated_at).getTime() < cutoff) return false;
       if (eventId.trim() && !r.event_id.includes(eventId.trim())) return false;
       if (family && famOf(r) !== family) return false;
       if (checkId && r.check_id !== checkId) return false;
       if (effect && r.effect !== effect) return false;
+      if (severity && sevOf(r) !== severity) return false;
       if (policyNum) {
         const src = parseSource(r.source);
         if (!policyNumbers(src?.section || "").includes(policyNum)) return false;
@@ -176,10 +187,15 @@ function FindingsSection({ initialEffect = "", active = true }: { initialEffect?
       }
       return true;
     });
-  }, [rows, range, eventId, family, checkId, effect, policyNum, q]);
+    // Triage order: most-severe first, then most-recent within a severity —
+    // the whole point of a severity rating (falls back to server's DESC order).
+    return out.sort((a, b) =>
+      SEVERITY_META[sevOf(b)].rank - SEVERITY_META[sevOf(a)].rank
+      || new Date(b.evaluated_at).getTime() - new Date(a.evaluated_at).getTime());
+  }, [rows, range, eventId, family, checkId, effect, severity, policyNum, q, sevOf]);
 
-  const activeFilters = (eventId.trim() ? 1 : 0) + (family ? 1 : 0) + (checkId ? 1 : 0) + (effect ? 1 : 0) + (policyNum ? 1 : 0) + (q.trim() ? 1 : 0);
-  const clearAll = () => { setEventId(""); setFamily(""); setCheckId(""); setEffect(""); setPolicyNum(""); setQ(""); };
+  const activeFilters = (eventId.trim() ? 1 : 0) + (family ? 1 : 0) + (checkId ? 1 : 0) + (effect ? 1 : 0) + (severity ? 1 : 0) + (policyNum ? 1 : 0) + (q.trim() ? 1 : 0);
+  const clearAll = () => { setEventId(""); setFamily(""); setCheckId(""); setEffect(""); setSeverity(""); setPolicyNum(""); setQ(""); };
 
   return (
     <>
@@ -209,6 +225,7 @@ function FindingsSection({ initialEffect = "", active = true }: { initialEffect?
             <Select label="Family" value={family} options={families} onChange={setFamily} />
             <Select label="Check" value={checkId} options={checks} onChange={setCheckId} />
             <Select label="Effect" value={effect} options={effects} onChange={setEffect} />
+            <Select label="Severity" value={severity} options={SEVERITY_ORDER as string[]} onChange={setSeverity} />
             <Select label="Policy §" value={policyNum} options={policies} onChange={setPolicyNum} />
             <label className="pf-tr-select">
               <span>Event</span>
@@ -251,20 +268,23 @@ function FindingsSection({ initialEffect = "", active = true }: { initialEffect?
                width-capped (.pf-tr-truncate) with the full value on hover
                (native title tooltip) so long text never blows out the layout. */}
             <thead>
-              <tr><th>Event</th><th>When</th><th>Family</th><th>Effect</th><th>User query</th><th>What went wrong</th></tr>
+              <tr><th>Event</th><th>When</th><th>Severity</th><th>Family</th><th>Effect</th><th>User query</th><th>What went wrong</th></tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => (
+              {filtered.map((r, i) => {
+                const sev = sevOf(r);
+                return (
                 <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
                     onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source })}>
                   <td className="mono pf-tr-truncate narrow" title={r.event_id || undefined}>{r.event_id || "—"}</td>
                   <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
+                  <td><span className={`pf-dash-chip ${SEVERITY_META[sev].tone}`}>{SEVERITY_META[sev].label}</span></td>
                   <td className="pf-tr-truncate" title={famOf(r)}>{famOf(r)}</td>
                   <td><span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span></td>
                   <td className="pf-tr-truncate" title={r.user_query || undefined}>{r.user_query || <span className="muted">—</span>}</td>
                   <td><WhatWentWrong r={r} /></td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         )}
@@ -284,13 +304,14 @@ export type TracesSection = "decisions" | "findings";
 // `section`/`onSection` make the Decisions|Findings sub-nav controllable
 // (App.tsx lifts it so the Overview can deep-link straight into Findings);
 // uncontrolled fallback keeps the component usable standalone.
-export default function DecisionTraces({ active = true, demo, section: controlled, onSection, findingsEffect }: {
-  active?: boolean; demo: DemoConfig; section?: TracesSection; onSection?: (s: TracesSection) => void; findingsEffect?: string;
+export default function DecisionTraces({ active = true, demo, section: controlled, onSection, findingsEffect, findingsSeverity }: {
+  active?: boolean; demo: DemoConfig; section?: TracesSection; onSection?: (s: TracesSection) => void; findingsEffect?: string; findingsSeverity?: string;
 }) {
   const [internal, setInternal] = useState<TracesSection>("decisions");
   const section = controlled ?? internal;
   const setSection = (s: TracesSection) => { setInternal(s); onSection?.(s); };
   const roleAgents = demo.roleAgents;
+  const { rules: severityRules } = useSeverityRules(demo.id, active);
   const [traces, setTraces] = useState<Trace[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -370,7 +391,7 @@ export default function DecisionTraces({ active = true, demo, section: controlle
         <button className={`pf-oob-view ${section === "decisions" ? "active" : ""}`} onClick={() => setSection("decisions")}>Decisions</button>
         <button className={`pf-oob-view ${section === "findings" ? "active" : ""}`} onClick={() => setSection("findings")}>Findings</button>
       </div>
-      {section === "findings" && <FindingsSection initialEffect={findingsEffect} active={active} />}
+      {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} />}
       {section === "decisions" && <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">
