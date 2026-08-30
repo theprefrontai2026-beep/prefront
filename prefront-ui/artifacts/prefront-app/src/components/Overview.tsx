@@ -316,6 +316,9 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
           </div>
         </section>
 
+        {/* Severity distribution over time */}
+        <SeverityHistogram data={hist} />
+
         {/* Latest findings */}
         <section className="pf-ov2-panel">
           <div className="pf-ov2-panel-head">
@@ -350,11 +353,6 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
             <span className="pf-ov2-kpi-sub">Evidence attached to every row — conversation, clause, trace.</span>
           </div>
         </section>
-      </div>
-
-      {/* ── severity distribution over time ── */}
-      <div style={{ marginTop: 28 }}>
-        <SeverityHistogram data={hist} />
       </div>
 
       {/* ── Foot ── */}

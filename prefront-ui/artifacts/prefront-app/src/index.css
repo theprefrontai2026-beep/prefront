@@ -1426,7 +1426,7 @@ select { cursor: pointer; }
 .pf-ov2-swatch.s2 { background: #cdb8a6; }
 
 /* ── two panels ── */
-.pf-ov2-cols { display: grid; grid-template-columns: 1.12fr 1fr; gap: 28px; margin-top: 30px; }
+.pf-ov2-cols { display: grid; grid-template-columns: 0.95fr 1fr 1.2fr; gap: 24px; margin-top: 30px; align-items: start; }
 .pf-ov2-panel { background: var(--w-surface); border: 1px solid var(--w-line); border-radius: 12px; padding: 22px 24px; }
 .pf-ov2-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
 .pf-ov2-panel-head h2 { font-family: var(--w-serif); font-size: 19px; color: var(--w-ink); font-weight: 500; margin: 0 0 3px; white-space: nowrap; }
