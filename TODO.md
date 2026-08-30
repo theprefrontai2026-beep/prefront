@@ -516,19 +516,41 @@ depends on entries 14/17 for the logged-in identity to attribute a pin to.
 
 ## 21. Severity ratings for findings
 
-Not started. Every finding today is flat — a verdict is `violated` or not, with
-no notion of how bad it is. Attach a severity rating to each finding so they can
-be ranked, filtered, and triaged (e.g. a leaked SSN vs. an under-declared
-`fields` list are not the same weight).
+**Derived-severity half DONE (4c595ba); per-check DECLARED severity still open.**
+Findings are no longer flat — each now carries a severity (critical / high /
+medium / low) that can be ranked, filtered, and triaged.
 
-To work through: where severity comes from — declared per check in the
-artifacts (`rule_pack.yaml` rules, `intent_catalog.yaml` intents, and the
-built-in Family 2 checks each carrying a severity) vs. derived per finding at
-evaluation time vs. both (a check baseline the finding can escalate); the scale
-(the `ReportFindings` tooling already ranks most-severe-first and Verdict shows
-`expected_findings` — a shared vocabulary is worth reusing rather than inventing
-a second one); how it threads through `eval_verdicts` and the version key so
-re-rating re-evaluates; and how it surfaces in Findings (`DecisionTraces.tsx`)
-and feeds sort/filter there and in reports (entry 11). Keep any per-check
-severity that names domain vocabulary in the artifact, not engine code (Hard
-Rule 1).
+**What shipped — a DERIVED rating, UI-layer only, engine untouched.** Severity is
+a pure function of two fields already on every finding, `family` + `effect`
+(`eval-engine/evalengine/contract.py:67,69`), resolved against a customer-editable
+ordered rule-list (first-match-wins). Because both inputs already ride on the
+`/eval/findings` row, there is **no eval-engine change, nothing stored on the
+finding, and no version-key bump** — the whole point of this half. Pieces:
+- config store `severity_rule` (`prefront-ui/lib/db/src/schema/severityRule.ts`,
+  PK `(demo, ordinal)`), applied by api-server's startup `drizzle-kit push-force`;
+- api-server `GET/PUT/DELETE /api/settings/severity`
+  (`prefront-ui/artifacts/api-server/src/routes/settings.ts`), holding
+  `DEFAULT_SEVERITY_RULES` (the seeded "effect wins" mapping — block→critical /
+  approval_required→high for every family, family2/Integrity→medium as its
+  fallback, flag/catch-all→low);
+- resolver + display: `severity.ts` (`severityOf`, `SEVERITY_META`),
+  `useSeverityRules`, a Severity column + filter in `DecisionTraces.tsx` (now
+  sorted severity-first), a `bySeverity` roll-up + deep-link on `Overview.tsx`,
+  and an editable rule-list with live preview in `Settings.tsx` (reached from the
+  sidebar gear — the first "under the hood" Settings surface).
+
+Domain-neutral by construction: rules key on engine concepts (family1/2/3,
+block/approval_required/flag/allow) only, never a demo's tables/roles/fields, so
+this stays out of engine code entirely (Hard Rule 1 holds).
+
+**Still open — per-check DECLARED severity, the richer variant.** A severity
+declared *per check* in the artifacts (`rule_pack.yaml` rules,
+`intent_catalog.yaml` intents, and the built-in Family 2 checks each carrying a
+baseline a finding can escalate), rather than derived from family+effect alone —
+so e.g. a leaked SSN outweighs an under-declared `fields` list even though both
+are the same (family, effect). This one DOES thread through `eval_verdicts` and
+the version key (re-rating must re-evaluate), and any per-check severity that
+names domain vocabulary must live in the artifact, not engine code (Hard Rule 1).
+Reuse the existing scale rather than inventing a second one — `ReportFindings`
+already ranks most-severe-first and Verdict shows `expected_findings`. Feeds the
+same Findings sort/filter (already built) and future reports (entry 11).
