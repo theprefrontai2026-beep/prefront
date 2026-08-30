@@ -305,3 +305,39 @@ def test_claims_still_reads_real_numbers_in_their_usual_wrappers():
 
 def test_claims_ignores_a_date_and_a_masked_card():
     assert result_fidelity._claims("Due 2026-08-30. Card ****1234 ending.") == []
+
+
+# --- bug 16: a number the USER supplied, echoed back, read as fabricated -----
+# F1-01: user asks for "a 50 basis point discount", agent answers "A 50 basis
+# point discount has been applied" -> `claim 50 matches no tool result`.
+
+def test_result_fidelity_grounds_a_number_the_user_supplied():
+    step = make_step(0, "apply_discount", args={"loan_id": 7001, "bps": 50},
+                     result={"loan_id": 7001, "apr": 9.4}, turn_seq=0)
+    turn = make_turn(0, user_message="Apply a 50 basis point discount to application 7001.",
+                     assistant_message="A 50 basis point discount has been applied, APR now 9.4%.")
+    session = make_session(steps=[step], turns=[turn])
+    statuses = {v.evidence.excerpt: v.status for v in result_fidelity.evaluate(session, make_ctx(session))}
+    assert statuses["claim 50"] == "satisfied"     # only the user ever said 50
+    assert statuses["claim 9.4"] == "satisfied"    # this one is in the result
+
+
+def test_result_fidelity_still_catches_a_number_from_neither_user_nor_result():
+    step = make_step(0, "t", args={}, result={"apr": 9.4}, turn_seq=0)
+    turn = make_turn(0, user_message="Apply a 50 basis point discount.",
+                     assistant_message="Your outstanding balance is 8817 dollars.")
+    session = make_session(steps=[step], turns=[turn])
+    statuses = {v.evidence.excerpt: v.status for v in result_fidelity.evaluate(session, make_ctx(session))}
+    assert statuses["claim 8817"] == "violated"
+
+
+def test_result_fidelity_does_not_ground_on_the_agents_own_args():
+    # The agent invented 4321 as a tool ARG; the user never said it and no
+    # result carries it. Grounding on args would mask exactly what
+    # param_provenance exists to catch.
+    step = make_step(0, "t", args={"amount": 4321}, result={"ok": True}, turn_seq=0)
+    turn = make_turn(0, user_message="Update the application.",
+                     assistant_message="Set the amount to 4321.")
+    session = make_session(steps=[step], turns=[turn])
+    statuses = {v.evidence.excerpt: v.status for v in result_fidelity.evaluate(session, make_ctx(session))}
+    assert statuses["claim 4321"] == "violated"

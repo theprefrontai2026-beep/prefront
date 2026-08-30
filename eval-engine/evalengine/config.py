@@ -7,10 +7,12 @@ import os
 # 0.2.0: content.evaluate emits final_answer-scoped verdicts per TURN rather
 # than per step (one answer-scoped leak was reported once per tool call), and
 # result_fidelity scans standalone number tokens rather than every digit run
-# (hyphenated and masked identifiers read as fabricated numeric claims). Both
-# change verdict output, so the bump forces already-evaluated sessions back
+# (hyphenated and masked identifiers read as fabricated numeric claims).
+# 0.2.1: result_fidelity also grounds a claim on a number the USER supplied -
+# echoing back "a 50 basis point discount" was reported as a fabrication.
+# Each bump changes verdict output, and forces already-evaluated sessions back
 # through evaluation via the version key.
-ENGINE_VERSION = "0.2.0"
+ENGINE_VERSION = "0.2.1"
 
 
 def _env(name: str, default: str = "") -> str:

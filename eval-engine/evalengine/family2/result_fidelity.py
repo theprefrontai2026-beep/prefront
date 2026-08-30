@@ -1,9 +1,24 @@
-"""Fabricated answer: a numeric claim in the final answer matches no tool
-result within tolerance.
+"""Fabricated answer: a numeric claim in the final answer traces to nothing the
+agent was given.
 
 Applicable only to numeric claims (Hard Rule 16 - prose claims need NLP the
 generic engine does not have; a final answer with no numeric claims produces
 no verdict at all).
+
+A claim is grounded by any of three sources, each a thing the agent legitimately
+HAD rather than invented; only a claim matching none of them is a fabrication:
+
+1. a numeric value in a tool RESULT, within rounding tolerance;
+2. a count derivable from the rows it retrieved (`_aggregate_values`);
+3. a number the USER supplied in this session (`_user_numbers`).
+
+Each was added after a live false positive, and the shape recurs: this check
+kept treating "the agent did not read this off a tool result" as "the agent
+made it up". The three sources are all deliberately BOUNDED - none of them
+grounds arbitrary numbers - and the trade is accepted knowingly: a fabricated
+figure that happens to equal a retrieved count or a number the user mentioned
+is missed, which is the safer direction for a check whose false positives
+otherwise bury real ones.
 """
 
 from __future__ import annotations
@@ -104,6 +119,26 @@ def _aggregate_values(session) -> set[float]:
     return out
 
 
+def _user_numbers(session) -> set[float]:
+    """Numbers the USER put into this session's own messages.
+
+    Echoing back a figure the user supplied is not fabrication. "Apply a 50
+    basis point discount" -> "A 50 basis point discount has been applied"
+    reported `claim 50` as unfounded, because grounding only ever looked at
+    tool RESULTS; the number never had to come from one.
+
+    Read from user messages ONLY, never from the args the agent passed. An arg
+    either traces to the user (already covered here) or the agent invented it -
+    and grounding on args would mask exactly the second case, which is
+    `param_provenance`'s whole job. Scanned with `_claims`, so the same token
+    rules apply and an identifier in a user message contributes nothing.
+    """
+    out: set[float] = set()
+    for turn in getattr(session, "turns", ()) or ():
+        out.update(_claims(turn.user_message or ""))
+    return out
+
+
 def _claims(text: str) -> list[float]:
     seen: list[float] = []
     for token in _LIST_MARKER_RE.sub("", text).split():
@@ -127,6 +162,7 @@ def evaluate(session: Session, ctx: CheckContext) -> list[Verdict]:
                 result_values.append((float(v), step))
 
     aggregates = _aggregate_values(session)
+    user_numbers = _user_numbers(session)
 
     out: list[Verdict] = []
     all_span_ids = tuple(s.span_id for s in session.steps)
@@ -143,6 +179,15 @@ def evaluate(session: Session, ctx: CheckContext) -> list[Verdict]:
                 session_id=session.session_id,
                 evidence=Evidence(span_ids=all_span_ids, excerpt=f"claim {claim:g}"),
                 detail=f"final-answer claim {claim:g} is a count derived from retrieved rows",
+            ))
+            continue
+        if match is None and claim in user_numbers:
+            # A figure the user themselves supplied, repeated back.
+            out.append(Verdict(
+                check_id=CHECK_ID, family="family2", status="satisfied", effect="allow",
+                session_id=session.session_id,
+                evidence=Evidence(span_ids=all_span_ids, excerpt=f"claim {claim:g}"),
+                detail=f"final-answer claim {claim:g} was supplied by the user in this session",
             ))
             continue
         if match is not None:
