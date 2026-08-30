@@ -28,8 +28,11 @@ export default function PolicyStudio({
 }: Props) {
   const [docs, setDocs] = useState<any[]>([]);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"upload" | "rules" | "ledger" | "atoms" | "validation" | "unresolved" | "audit">("upload");
+  const [tab, setTab] = useState<"rules" | "ledger" | "atoms" | "validation" | "unresolved" | "audit" | "activity">("rules");
   const [auditRefreshKey, setAuditRefreshKey] = useState(0);
+  // Free-text filter over the extracted rules — matched against rule key, type,
+  // conditions, effect, intents, message and source text (see filteredRules).
+  const [ruleQuery, setRuleQuery] = useState("");
 
   /* Upload state */
   const [inputMode, setInputMode] = useState<"file" | "text">("file");
@@ -49,8 +52,13 @@ export default function PolicyStudio({
   const [extractBusy, setExtractBusy] = useState(false);
   const [extractStatus, setExtractStatus] = useState("");
   const [extractError, setExtractError] = useState("");
-  const [extractErrors, setExtractErrors] = useState<any[]>([]);
   const [extractProgress, setExtractProgress] = useState<{ completed: number; total: number } | null>(null);
+  // Client-side activity trace of each extraction run — surfaced in the
+  // "Extraction activity" tab so a customer can hand back a step-by-step log
+  // (timings, per-clause progress, errors) when an extraction misbehaves.
+  const [extractLog, setExtractLog] = useState<Array<{ t: number; level: "info" | "warn" | "error" | "done"; msg: string }>>([]);
+  const logExtract = (level: "info" | "warn" | "error" | "done", msg: string) =>
+    setExtractLog(prev => [...prev, { t: Date.now(), level, msg }].slice(-500));
 
   /* Rule action state */
   const [actionBusy, setActionBusy] = useState(false);
@@ -172,14 +180,25 @@ export default function PolicyStudio({
 
   async function handleExtract() {
     if (!activeDocId) return;
-    setExtractError(""); setExtractStatus(""); setExtractErrors([]); setExtractProgress(null); setExtractBusy(true);
+    setExtractError(""); setExtractStatus(""); setExtractProgress(null); setExtractBusy(true);
+    const t0 = Date.now();
+    const el = (s: number) => `${((s - t0) / 1000).toFixed(1)}s`;
+    logExtract("info", `━━ New extraction run @ ${new Date(t0).toISOString()} ━━`);
+    logExtract("info", `Document: ${activeDoc?.file_name || "?"} · id=${activeDocId} · v${activeDoc?.version ?? "?"} · status=${activeDoc?.status ?? "?"}`);
+    logExtract("info", `LLM provider: ${provider || "env default (LLM_PROVIDER)"} · domain: ${domain || "none"}`);
     try {
       const knownIntents = intents.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
       const knownFields = schema?.catalog
         ? (schema.catalog.tables || []).flatMap((t: any) => (t.columns || []).map((c: any) => c.name))
         : [];
+      logExtract("info", `Known intents (${knownIntents.length}): ${knownIntents.length ? knownIntents.join(", ") : "—"}`);
+      logExtract("info", `Known fields (${knownFields.length}): ${knownFields.length ? knownFields.slice(0, 12).join(", ") + (knownFields.length > 12 ? `, …+${knownFields.length - 12}` : "") : "— (no schema connected)"}`);
+      logExtract("info", `POST extract-rules/start …`);
       const started = await api.startExtractRules(activeDocId, { provider, domain, knownIntents, knownFields });
-      setExtractProgress({ completed: 0, total: started.total || 0 });
+      const total = started.total || 0;
+      setExtractProgress({ completed: 0, total });
+      logExtract("info", `Job accepted (${el(Date.now())}) — ${total} clause${total !== 1 ? "s" : ""} queued for extraction`);
+      if (total === 0) logExtract("warn", `Zero clauses to process — the document may have produced no numbered sections`);
 
       // Poll until the background job (skill-builder/skillbuilder/api.py's
       // extract-rules/start + /progress) reports done or error. The progress
@@ -187,31 +206,54 @@ export default function PolicyStudio({
       // for the final "N rules extracted" message so it never shows a "✓"
       // while still running.
       let res: any;
+      let lastCompleted = -1;
+      let polls = 0;
       for (;;) {
         await new Promise(r => setTimeout(r, 400));
+        polls++;
         const progress = await api.getExtractRulesProgress(activeDocId);
         setExtractProgress({ completed: progress.completed, total: progress.total });
+        if (progress.completed !== lastCompleted) {
+          const pct = progress.total ? Math.round((progress.completed / progress.total) * 100) : 0;
+          logExtract("info", `Progress: clause ${progress.completed}/${progress.total} (${pct}%) · status=${progress.status} · ${el(Date.now())}`);
+          lastCompleted = progress.completed;
+        }
         if (progress.status === "running") continue;
         if (progress.status === "error") {
+          logExtract("error", `Backend reported status=error after ${polls} poll${polls !== 1 ? "s" : ""}: ${progress.error || "extraction failed"}`);
           throw new Error(progress.error || "extraction failed");
         }
+        logExtract("info", `Extraction finished with status=${progress.status} after ${polls} poll${polls !== 1 ? "s" : ""} (${el(Date.now())})`);
         res = progress.result;
         break;
       }
 
       const errs = res.errors || [];
+      logExtract("info", `Result summary: keys=[${Object.keys(res || {}).join(", ") || "—"}] · reported errors=${errs.length}`);
       // extract-rules returns only a count; the rules themselves come from the
       // candidate-rules list endpoint (keyed `candidate_rules`).
+      logExtract("info", `GET candidate-rules …`);
       const listed = await api.listRules(activeDocId);
       const rs = Array.isArray(listed) ? listed : (listed.candidate_rules || listed.rules || []);
       setRules(rs);
-      setExtractErrors(errs);
       onRules(rs, domain);
       const n = rs.length;
+      // Breakdown by the effect decision so the log shows what KIND of rules came back.
+      const byDecision: Record<string, number> = {};
+      for (const r of rs) {
+        const d = r.rule?.effect?.decision || "unknown";
+        byDecision[d] = (byDecision[d] || 0) + 1;
+      }
+      const breakdown = Object.entries(byDecision).map(([k, v]) => `${k}:${v}`).join(", ");
+      logExtract("info", `Fetched ${n} candidate rule${n !== 1 ? "s" : ""}${breakdown ? ` — ${breakdown}` : ""}`);
+      if (n === 0) logExtract("warn", `No candidate rules were produced from ${total} clause${total !== 1 ? "s" : ""}`);
       setExtractStatus(`${n} rule${n !== 1 ? "s" : ""} extracted${errs.length ? ` (${errs.length} errors)` : ""}`);
+      for (const e of errs) logExtract("warn", `Extraction error: ${typeof e === "string" ? e : JSON.stringify(e)}`);
+      logExtract("done", `✓ Done — ${n} rule${n !== 1 ? "s" : ""} extracted${errs.length ? `, ${errs.length} error${errs.length !== 1 ? "s" : ""}` : ""} in ${el(Date.now())}`);
       setTab("rules");
     } catch (e: any) {
       setExtractError(String(e.message || e));
+      logExtract("error", `✗ Run failed after ${el(Date.now())}: ${String(e.message || e)}`);
     } finally {
       setExtractBusy(false);
       setExtractProgress(null);
@@ -419,6 +461,32 @@ export default function PolicyStudio({
   /* Online co-reviewers (not self) for summary */
   const coReviewers = reviewers.filter(r => r.id !== myId);
 
+  /* Free-text filter over the extracted rules. Builds a lower-cased haystack
+     from every reviewer-relevant field so a search matches on rule key, type,
+     condition fields/values, decision, intents, message or the cited source. */
+  const filteredRules = useMemo(() => {
+    const q = ruleQuery.trim().toLowerCase();
+    if (!q) return rules;
+    const terms = q.split(/\s+/);
+    return rules.filter((r: any) => {
+      const rule = r.rule || {};
+      const effect = rule.effect || {};
+      const hay = [
+        rule.rule_key, rule.rule_type, r.review_status,
+        effect.decision, effect.approver_role, effect.message,
+        ...(effect.restricted_fields || []),
+        ...(rule.applies_to_intents || []),
+        ...(rule.conditions || []).flatMap((c: any) => [c.field, c.operator, Array.isArray(c.value) ? c.value.join(" ") : c.value]),
+        // Match the citation shown ON the card: the rule-specific excerpt
+        // (`source_evidence`) and its section locator — NOT `source_text`, which
+        // is the whole policy section (invisible here and shared across every
+        // rule in it, so it both hid card-visible words and over-matched).
+        rule.source_evidence, rule.source?.section, rule.source?.document,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return terms.every(t => hay.includes(t));
+    });
+  }, [rules, ruleQuery]);
+
   return (
     <main className="pf-studio">
       {/* Collaboration toast tray */}
@@ -445,7 +513,7 @@ export default function PolicyStudio({
       <aside className="pf-explorer">
         <div className="pf-explorer-head">
           Documents
-          <button className="pf-explorer-new" onClick={() => setTab("upload")}>+ New</button>
+          <button className="pf-explorer-new" onClick={() => setTab("rules")}>+ New</button>
         </div>
         {docs.length === 0
           ? <div className="pf-explorer-empty">No documents yet</div>
@@ -520,69 +588,48 @@ export default function PolicyStudio({
             <button className="pf-btn primary" onClick={handleUpload} disabled={uploadBusy}>
               {uploadBusy ? "Uploading…" : "Upload"}
             </button>
+            {/* Extract sits right next to Upload — it acts on the active document
+                (the one just uploaded, or the one selected in the sidebar), and
+                is disabled until there is one. */}
+            <button className="pf-btn primary" onClick={handleExtract} disabled={!activeDoc || extractBusy || actionBusy}
+              title={activeDoc ? "" : "Upload or select a document first"}>
+              {extractBusy ? "Extracting…" : "Extract rules"}
+            </button>
             {uploadStatus && <span className="pf-status">✓ {uploadStatus}</span>}
             {uploadError && <span className="pf-error">{uploadError}</span>}
+            {extractStatus && <span className="pf-status">✓ {extractStatus}</span>}
+            {extractError && <span className="pf-error">{extractError}</span>}
           </div>
+
+          {extractBusy && extractProgress && extractProgress.total > 0 && (() => {
+            const pct = Math.min(100, Math.round((extractProgress.completed / extractProgress.total) * 100));
+            return (
+              <div className="pf-progress" role="progressbar"
+                   aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+                <div className="pf-progressbar">
+                  <div className="pf-progressbar-fill" style={{ width: `${pct}%` }} />
+                </div>
+                <div className="pf-progress-step active">
+                  <span className="pf-progress-icon"><span className="pf-spin" /></span>
+                  <span>Extracting clause {extractProgress.completed} of {extractProgress.total} — {pct}%</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {activeDoc && (
           <>
-            {/* Doc banner */}
-            <div className="pf-panel" style={{ paddingTop: 22, paddingBottom: 22 }}>
-              <div className="pf-doc-banner">
-                <div>
-                  <h2>{activeDoc.file_name}</h2>
-                  <div className="pf-doc-banner-sub">
-                    {activeDoc.domain && <span>domain: {activeDoc.domain} · </span>}
-                    v{activeDoc.version} · {activeDoc.status} · {localTime(activeDoc.created_at)}
-                  </div>
-                </div>
-                <div className="pf-publish-row" style={{ margin: 0 }}>
-                  <button className="pf-btn primary" onClick={handleExtract} disabled={extractBusy || actionBusy}>
-                    {extractBusy ? "Extracting…" : "Extract rules"}
-                  </button>
-                </div>
+            {(subStatus || subError) && (
+              <div className="pf-panel" style={{ paddingTop: 10, paddingBottom: 10 }}>
+                {subStatus && <span className="pf-status">✓ {subStatus}</span>}
+                {subError && <span className="pf-error" style={{ marginLeft: 12 }}>{subError}</span>}
               </div>
-
-              <div className="pf-fields">
-                <label style={{ gridColumn: "1 / -1" }}>
-                  Known intents (comma-separated)
-                  <input value={intents} onChange={e => setIntents(e.target.value)} placeholder="get_credit_score, get_account_balance, …" />
-                  <span className="pf-hint">From schema: {schema?.suggestedIntents?.join(", ") || "—"}</span>
-                </label>
-              </div>
-
-              {extractBusy && extractProgress && extractProgress.total > 0 && (
-                <div className="pf-progress" role="progressbar"
-                     aria-valuenow={extractProgress.completed} aria-valuemin={0} aria-valuemax={extractProgress.total}>
-                  <div className="pf-progressbar">
-                    <div className="pf-progressbar-fill"
-                         style={{ width: `${Math.min(100, (extractProgress.completed / extractProgress.total) * 100)}%` }} />
-                  </div>
-                  <div className="pf-progress-step active">
-                    <span className="pf-progress-icon"><span className="pf-spin" /></span>
-                    <span>Extracting clause {extractProgress.completed} of {extractProgress.total}…</span>
-                  </div>
-                </div>
-              )}
-
-              {extractErrors.length > 0 && (
-                <details className="pf-extract-errors">
-                  <summary>{extractErrors.length} extraction error{extractErrors.length !== 1 ? "s" : ""}</summary>
-                  <ul>{extractErrors.map((e, i) => <li key={i}>{JSON.stringify(e)}</li>)}</ul>
-                </details>
-              )}
-
-              {extractStatus && <span className="pf-status">✓ {extractStatus}</span>}
-              {extractError && <span className="pf-error">{extractError}</span>}
-              {subStatus && <span className="pf-status" style={{ marginLeft: 12 }}>✓ {subStatus}</span>}
-              {subError && <span className="pf-error" style={{ marginLeft: 12 }}>{subError}</span>}
-            </div>
+            )}
 
             {/* Sub-nav */}
             <div className="pf-panel" style={{ paddingTop: 0, paddingBottom: 0 }}>
               <div className="pf-sub-nav">
-                <button className={`pf-sub-tab ${tab === "upload" ? "active" : ""}`} onClick={() => setTab("upload")}>Upload</button>
                 <button className={`pf-sub-tab ${tab === "rules" ? "active" : ""}`} onClick={() => setTab("rules")}>
                   Rules {rules.length > 0 && <span className="pf-pill" style={{ marginLeft: 6 }}>{rules.length}</span>}
                 </button>
@@ -601,15 +648,14 @@ export default function PolicyStudio({
                 >
                   Audit log
                 </button>
+                <button className={`pf-sub-tab ${tab === "activity" ? "active" : ""}`} onClick={() => setTab("activity")}>
+                  Extraction activity {extractLog.length > 0 && <span className="pf-pill" style={{ marginLeft: 6 }}>{extractLog.length}</span>}
+                </button>
               </div>
             </div>
 
             {/* Tab content */}
             <div className="pf-panel">
-              {tab === "upload" && (
-                <p className="pf-hint">Document uploaded. Select a tab above to extract rules, classify clauses, or validate.</p>
-              )}
-
               {tab === "rules" && (
                 <>
                   <div className="pf-summary">
@@ -665,11 +711,34 @@ export default function PolicyStudio({
                     </div>
                   )}
 
+                  {/* Search across every extracted rule — key, type, conditions,
+                      decision, intents, message, source. */}
+                  {rules.length > 0 && (
+                    <div className="pf-rule-search" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                      <input
+                        value={ruleQuery}
+                        onChange={e => setRuleQuery(e.target.value)}
+                        placeholder="Search rules — key, field, decision, intent, source…"
+                        style={{ flex: 1 }}
+                      />
+                      {ruleQuery && (
+                        <>
+                          <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                            {filteredRules.length} of {rules.length}
+                          </span>
+                          <button className="pf-btn" onClick={() => setRuleQuery("")}>Clear</button>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {rules.length === 0
                     ? <p className="pf-hint">No rules yet — click "Extract rules" above to generate candidates.</p>
+                    : filteredRules.length === 0
+                    ? <p className="pf-hint">No rules match “{ruleQuery}”.</p>
                     : (
                       <div className="pf-rules">
-                        {rules.map((r: any) => {
+                        {filteredRules.map((r: any) => {
                           const ruleKey = r.rule?.rule_key || r.candidate_rule_id || r.id;
                           return (
                             <RuleCard
@@ -726,6 +795,47 @@ export default function PolicyStudio({
               )}
               {tab === "audit" && activeDocId && (
                 <AuditLog documentId={activeDocId} refreshKey={auditRefreshKey} />
+              )}
+
+              {tab === "activity" && (
+                <>
+                  <div className="pf-summary" style={{ alignItems: "center" }}>
+                    <h3 style={{ margin: 0 }}>Extraction activity</h3>
+                    <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                      <button className="pf-btn" disabled={extractLog.length === 0}
+                        onClick={() => navigator.clipboard?.writeText(
+                          extractLog.map(l => `${new Date(l.t).toISOString()} [${l.level}] ${l.msg}`).join("\n"))}>
+                        Copy log
+                      </button>
+                      <button className="pf-btn" disabled={extractLog.length === 0} onClick={() => setExtractLog([])}>
+                        Clear
+                      </button>
+                    </span>
+                  </div>
+                  <p className="pf-hint">
+                    A step-by-step, client-side trace of each “Extract rules” run — timings, per-clause
+                    progress and errors. Handy to copy back to Prefront when an extraction looks wrong.
+                  </p>
+                  {extractLog.length === 0
+                    ? <p className="pf-hint">No extraction runs yet — click “Extract rules” to populate this log.</p>
+                    : (
+                      <ul className="pf-extract-activity" style={{ listStyle: "none", margin: 0, padding: 0, fontFamily: "var(--mono, monospace)", fontSize: 12 }}>
+                        {extractLog.map((l, i) => (
+                          <li key={i} style={{
+                            display: "flex", gap: 10, padding: "4px 0",
+                            borderTop: i ? "1px solid var(--line)" : "none",
+                            color: l.level === "error" ? "var(--danger, #c0392b)"
+                              : l.level === "warn" ? "var(--warn, #b7791f)"
+                              : l.level === "done" ? "var(--ok, #2f855a)" : "var(--ink-soft)",
+                          }}>
+                            <span style={{ color: "var(--muted)", flexShrink: 0 }}>{localTime(new Date(l.t).toISOString())}</span>
+                            <span style={{ textTransform: "uppercase", fontSize: 10, opacity: 0.7, flexShrink: 0, width: 42 }}>{l.level}</span>
+                            <span style={{ whiteSpace: "pre-wrap" }}>{l.msg}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                </>
               )}
             </div>
           </>
