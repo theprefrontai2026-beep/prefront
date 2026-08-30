@@ -147,3 +147,73 @@ pruned and never reset by "Clear".
 
 **Done when** they're either cleared (as `decision_policy`/`decision_stat`
 already were) or a decision is recorded to keep them as historical record.
+
+---
+
+## 7. Finding suppression / whitelisting (three scopes)
+
+Not started. Motivation: misfiring cases — but read the triage caution below
+before treating any specific case as one.
+
+Three scopes, widest to narrowest:
+
+1. **Family** — suppress an entire family (e.g. all Family 2 / Integrity).
+2. **Tool + family** — a family's findings for one tool (e.g. Integrity on
+   `get_my_applications`).
+3. **Check + tool** within a family — the narrowest (e.g. `param_discard` on
+   `get_my_applications`, or `field_scope` on `apply_discount`).
+
+### Design constraints
+
+- **It must be an artifact, not engine code.** Same rule as `rule_pack.yaml` /
+  `intent_catalog.yaml`: a whitelist naming a tool is domain vocabulary, so it
+  belongs in a published YAML read at design time.
+  *Do not rely on the domain-noun guard to enforce this.* Measured against the
+  real LoanPro tool names, it catches `get_applicant_profile` and `decide_loan`
+  but **passes** `apply_discount`, `get_my_applications`, `quote_terms` and
+  `export_applicants` — including both names used as examples above. Hard
+  Rule 1 is the binding constraint here; the guard is a partial backstop.
+- **Suppress at read time; never drop the verdict.** Hard Rule 15 persists
+  verdicts regardless of status. A whitelist that stops the *write* makes the
+  engine quietly blind and destroys the audit trail — the thing a governance
+  product least wants. Persist the verdict with a `suppressed` marker naming
+  the rule that suppressed it, filter in `GET /eval/findings` (already just a
+  read filtered to `status='violated'`), and surface a visible suppressed
+  **count** rather than a silent zero.
+- **The artifact needs a `version`, joined into the version key.**
+  `evaluate.py:27` composes
+  `{ENGINE_VERSION}:{binding}:{visibility}:{skill}@{ver}:catalog@{ver}` — a
+  whitelist version belongs in that string, so editing it forces
+  already-evaluated sessions back through evaluation rather than stranding
+  them at their old verdicts.
+- **The new column follows the self-healing convention.** `ch.py:60`'s
+  `_ADDED_VERDICT_COLUMNS`, applied at `ch.py:128` as
+  `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, so an older volume self-heals.
+- **Validate check ids** against the same vocabulary as `KNOWN_CHECKS`
+  (`semantic-layer/semanticlayer/preflight.py:42`). A typo'd id would otherwise
+  silently suppress nothing — or, depending on how matching is written, read as
+  suppressing everything.
+- **Require a `reason`; consider an expiry.** Suppression is the mechanism by
+  which this system goes blind over time, so it should be at least as auditable
+  as a finding.
+
+### Triage caution — carry this into the design
+
+Not every "misfire" seen so far was one, and the distinction is not cosmetic:
+
+| case | what it actually was | right fix |
+|---|---|---|
+| `param_discard` on a parameterless call | check bug | fixed in the engine |
+| `result_fidelity` on a derived count | check bug | fixed in the engine |
+| `field_scope` on `apply_discount` (event 38029) | **correct finding** | fix the fixture (entry 2a) |
+
+That third row is the warning: a whitelist there would have hidden a true
+finding about a real catalog under-declaration — one that `amend_application`
+shares — instead of fixing it. Make **"check bug, fixture gap, or genuine
+finding?"** an explicit triage step that has to be answered before anything can
+be whitelisted, and record the answer in the entry's `reason`.
+
+**Done when** a versioned whitelist artifact suppresses at all three scopes at
+read time, suppressed findings remain queryable and counted rather than
+vanishing, editing the artifact re-evaluates affected sessions, and an unknown
+check id is rejected at load rather than silently matching nothing.
