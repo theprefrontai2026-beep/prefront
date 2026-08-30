@@ -158,8 +158,6 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         <span className="pf-ov2-scope-item"><b>{num(sessionsEvaluated)}</b> sessions</span>
         <span className="pf-ov2-scope-item"><b>{num(turnsEvaluated)}</b> turns</span>
         <span className="pf-ov2-scope-item"><b>{num(toolCallsEvaluated)}</b> tool calls</span>
-        <span className="pf-ov2-scope-item"><b>{num(ch?.verdicts)}</b> checks run</span>
-        <span className="pf-ov2-scope-item"><b>{num(ch?.conformance_tags)}</b> satisfied</span>
         {cov?.configured && (
           <span className="pf-ov2-scope-item" title={cov.never_fired > 0 ? `Never hit: ${cov.never_fired_ids.join(", ")}` : "Every rule in the pack has fired at least once"}>
             <b className={cov.never_fired > 0 ? "pf-ov2-accent" : ""}>{num(cov.never_fired)}</b> rules never hit
