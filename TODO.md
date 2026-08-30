@@ -284,3 +284,59 @@ population checks, which are a separate on-demand path
 family from a versioned artifact, Family 2 included; a disabled check is
 distinguishable from a check that passed; toggling re-evaluates; unknown ids
 are rejected at load; and the inline path's behaviour is explicit either way.
+
+---
+
+## 9. Per-user audit logs (scoped to the logged-in user)
+
+Not started. Today the audit log (`api-server` `rule_audit_log`, `/api/audit`)
+and the decision-trace store are global — there is no notion of *whose* actions
+a given viewer may see. Add per-logged-in-user scoping so a user's audit view
+shows their own activity, with the wider view gated by role.
+
+Open questions to settle first: where identity comes from (there is no auth
+layer in the UI/api-server today), whether "user" here means the governed
+*caller* (the trusted `X-*-Act-As` identity) or the human operating the
+console, and how this interacts with the domain-neutrality rule (a user id is
+domain vocabulary — keep it in config/artifacts, not engine code).
+
+---
+
+## 10. Ingestion scalability
+
+Not started — think-about item, no design yet. The OOB path
+(`oob-ingest` → ClickHouse) and eval-engine's re-evaluation both currently
+assume demo-scale volumes: `PhoenixPoller` pages Phoenix REST on a fixed
+interval with an in-memory seen-set, eval-engine reconstructs each session and
+re-runs three check families over the full `spans` table. Neither has been
+exercised at production span rates.
+
+Things to work through: bounded/persisted seen-set vs. in-memory growth, poll
+cadence vs. OTLP push under load, batching/backpressure on the ClickHouse
+writes, incremental (vs. full-table) re-evaluation, and where the first
+bottleneck actually is (measure before optimizing).
+
+---
+
+## 11. Report generation
+
+Not started. A way to produce a shareable report (governance posture, findings
+by family/tool/session, conformance over time) from the data already in the
+decision-trace store + eval-engine's verdicts — rather than only the live
+Dashboard/Findings views. Settle: scope (per-session, per-application,
+time-window), format (in-app artifact vs. exportable file), and whether it
+reads the existing `/eval/*` and `/api/*` surfaces or needs new aggregate
+endpoints.
+
+---
+
+## 12. Configure PII handling when a schema is accepted
+
+Not started. At schema-acceptance time (the Data Connector → Data Graph step,
+where a customer confirms an introspected schema) let the customer mark which
+columns are PII / sensitive and how they should be governed (mask, block,
+scope), instead of that only being expressible later in Policy Studio rules or
+the semantic overlay. Capture it as part of the accepted-schema artifact so it
+flows into the same `build_bindings → build_query_templates → publish-policy`
+tail. Keep the vocabulary (column names, sensitivity tags) in the artifact, not
+engine code (Hard Rule 1).
