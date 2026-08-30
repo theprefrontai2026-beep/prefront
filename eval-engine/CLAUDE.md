@@ -313,9 +313,18 @@ obligation (`decide_loan` with no following `send_notice` - `workflow_integrity`
 an unsanctioned combination (`view_applicant` + `export_directory` in one
 session - `toxic_combination`), and catalog drift (`decide_loan`'s result
 carries `decided_by`/`version`, fields the hand-authored catalog didn't
-declare - `field_scope`; a real gap in the catalog transcription, left as-is
-since "the catalog under-declares" is exactly the kind of thing this check
-exists to surface for a human to reconcile, not for the engine to paper over).
+declare - `field_scope`; a real gap in the catalog transcription, exactly the
+kind of thing this check exists to surface for a human to reconcile, not for
+the engine to paper over).
+
+**That decide_loan gap has since been reconciled** - `intent_catalog.yaml` now
+declares all eight fields, so it no longer fires. Two related gaps remain, both
+recorded in `../TODO.md` entry 2: `apply_discount` still omits `version` (the
+live `field_scope` finding) and `amend_application` omits four; and
+`app_tools.py`'s `INTENTS` has silently diverged from the catalog on **six**
+intents, always with the catalog ahead - it was fixed as findings surfaced
+while `INTENTS` was left behind. That matters because `docs/gen_coverage.py`
+reads `INTENTS`, so `check-coverage.md` documents the stale list.
 
 ## Idempotent replay
 
@@ -460,11 +469,11 @@ misbehaving, read this first.
 | 9 | `entity_consistency` | "looked up A, decided B's loan" invisible | it compared id slots across ARGS only; now also reads a subject from a SINGLE-ROW result (multi-row listings ignored) |
 | 10 | `param_discard` | needed two calls to the same tool | added a single-call shape: a user-named value absent from the args whose result rows mix values. Gated to calls that carried ≥1 arg — a parameterless identity-scoped call has no filter to drop |
 | 11 | `ch.session_shapes` | population checks always "consistent" | it filtered every span by `scenario_id`, which only the session ROOT span carries, so shapes came back empty. Resolves session ids first. `invocation_drift` also gained a call-volume term |
-| 13 | `result_fidelity` | a clean baseline failed on a correct answer | a count the agent derived from rows it retrieved ("8 pending applications") appears in no tool result, so it read as fabrication. `_aggregate_values` now grounds a BOUNDED, data-derived set — each result's row count, and the count of rows sharing each distinct value of each column. Not "any subset count", which would ground every small integer. Surfaced when a seed row moved the count 7→8, so the baseline had been passing on LLM phrasing, not robustly |
 | 12 | `content._field_in_text` | never matched prose | `re.escape` leaves `_` unescaped, so `credit_score` never matched "credit score". Field is split on `[\s_-]` and rejoined with `[\s_-]?` |
+| 13 | `result_fidelity` | a clean baseline failed on a correct answer | a count the agent derived from rows it retrieved ("8 pending applications") appears in no tool result, so it read as fabrication. `_aggregate_values` now grounds a BOUNDED, data-derived set — each result's row count, and the count of rows sharing each distinct value of each column. Not "any subset count", which would ground every small integer. Surfaced when a seed row moved the count 7→8, so the baseline had been passing on LLM phrasing, not robustly |
 | 14 | `content.evaluate` | one leaked field reported once per TOOL CALL | the loop was `for rule → for step` and re-tested the same assistant message on every step, while `evidence_excerpt` carries the tool name — which is in `eval_verdicts`' ORDER BY key, so the rows never collapsed. F1-04 reported one `credit_score` leak twice (38073/38074). A detector's verdict unit is now its SCOPE: `result` → per step (which tool returned it is the finding), `final_answer` → per TURN |
-| 16 | `result_fidelity` | a number the USER supplied read as fabricated | grounding only ever looked at tool RESULTS, so F1-01's "apply a **50** basis point discount" → "a **50** basis point discount has been applied" reported `claim 50` as unfounded. `_user_numbers` adds the session's own user messages as a third grounding source. User messages ONLY, never the agent's args — an arg either traces to the user (covered) or was invented, and grounding on args would mask exactly what `param_provenance` exists to catch |
 | 15 | `result_fidelity` | 6 fabrications from one leaked profile | `_NUM_RE` scanned every digit run, so `343-43-4343` (SSN), `TIN-5007-3319` and `****2665` yielded claims `343, -43, -4343, -5007, -3319, 2665` — each hyphen read as a minus sign. A claim is now a standalone number TOKEN after its wrappers are peeled; leading emphasis is peeled only when the token also closed with some, or `****2665` would peel to a bare `2665` while `**7001**` must still peel to `7001`. Perverse edge: the worse the leak, the more fabrication noise, since SSNs and tax ids are exactly the strings that produced it |
+| 16 | `result_fidelity` | a number the USER supplied read as fabricated | grounding only ever looked at tool RESULTS, so F1-01's "apply a **50** basis point discount" → "a **50** basis point discount has been applied" reported `claim 50` as unfounded. `_user_numbers` adds the session's own user messages as a third grounding source. User messages ONLY, never the agent's args — an arg either traces to the user (covered) or was invented, and grounding on args would mask exactly what `param_provenance` exists to catch |
 
 Two non-engine causes that repeatedly *look* like check bugs, and cost real
 debugging time before being identified:

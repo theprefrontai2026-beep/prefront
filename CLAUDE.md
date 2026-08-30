@@ -14,7 +14,13 @@ docker compose -f loanpro-demo/docker-compose.yml up --build -d   # the ACTIVE D
 make test                                                   # every offline suite + vendoring drift check
 ```
 
-Four facts that catch people out, each expanded below:
+**`oob` is the live branch, not `main`.** It is ~90 commits ahead — all of
+eval-engine (Phases A-D), the OOB pipeline, Verdict, and the current UI live
+there and have never been merged down. `main` is an older SecureBank-era tree,
+so branching from it silently drops nearly everything this file documents.
+Check with `git rev-list --count origin/main..origin/oob` before starting.
+
+Five facts that catch people out, each expanded below:
 
 1. **The engine and each demo are SEPARATE Compose projects.** A plain
    `docker compose up` starts no demo; demo files attach to the engine's
@@ -248,7 +254,12 @@ A second connector alongside Postgres: point the Data Connector tab's **MCP Serv
   `/mcp/introspect` returns as `payload["mcp_tools"]`, `DataConnector.tsx`
   carries into `schema.mcpTools`, and the **Data Graph** renders for an MCP
   source instead of the table view (`buildFromMcpTools` / `GraphToolNode` /
-  `ToolDetailPanel`; masonry layout, no edges — tools aren't joinable).
+  `ToolDetailPanel`). Tools have no foreign keys, but two taking the SAME
+  parameter are operating on the same thing, so edges are **shared arguments**
+  — `loan_id` across 7 of LoanPro's tools; one edge per PAIR carrying every
+  arg it shares, singletons skipped. Layout follows: dagre when edges exist,
+  masonry when none (an edgeless dagre graph stacks every node into one rank).
+  See `prefront-ui/CLAUDE.md`.
   Two distinctions the shape preserves on purpose, because both are findings
   about the upstream server rather than presentation details: `output_schema is
   None` (declared nothing) is **not** `{}` (declared an empty one), and every
