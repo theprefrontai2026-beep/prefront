@@ -22,7 +22,7 @@ import {
 } from "../hooks/useOverviewData";
 import { useSeverityRules } from "../hooks/useSeverityRules";
 import { SEVERITY_META, SEVERITY_ORDER, type SeverityLevel } from "../severity";
-import { num, ago, parseSource, SessionFlyout } from "./Observability";
+import { num, parseSource } from "./Observability";
 
 // Overview time window. All stats reflect the selection.
 const WINDOWS: { label: string; secs: number }[] = [
@@ -32,15 +32,6 @@ const WINDOWS: { label: string; secs: number }[] = [
 
 // Verdict (the scenario runner) lives on its own port on the same host.
 const verdictUrl = () => `${window.location.protocol}//${window.location.hostname}:5180`;
-
-// Effect → the badge shown on a finding. `block` carries the accent; the rest
-// stay quiet. Labels are short, uppercase, and match the runtime vocabulary.
-const EFFECT_BADGE: Record<string, { label: string; tone: string }> = {
-  block:             { label: "Block",    tone: "block" },
-  approval_required: { label: "Approval", tone: "approval" },
-  flag:              { label: "Flag",     tone: "flag" },
-};
-const effectBadge = (e: string) => EFFECT_BADGE[e] ?? { label: e || "—", tone: "flag" };
 
 function EmptyHint({ text }: { text: string }) {
   return (
@@ -148,7 +139,6 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const [win, setWin] = useState(WINDOWS[0].secs);
   const d = useOverviewData(demo, active, win);
   const { rules: severityRules } = useSeverityRules(demo.id, active);
-  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail?: string; source?: string } | null>(null);
   const winLabel = (WINDOWS.find((w) => w.secs === win) ?? WINDOWS[0]).label;
 
   const ev = d.evalStatus;
@@ -174,7 +164,6 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const turnsEvaluated = d.sessions.reduce((n, s) => n + (s.turns || 0), 0);
   const toolCallsEvaluated = d.sessions.reduce((n, s) => n + (s.tool_calls || 0), 0);
   const cov = d.coverage?.rule_pack;
-  const latest = findings.slice(0, 5);
 
   // Sub-detail for the "would have blocked" card: the policy § most block
   // findings cite (from the data, never hardcoded). Empty when none carry one.
@@ -343,44 +332,7 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
           </div>
         </section>
 
-        {/* Latest findings */}
-        <section className="pf-ov2-panel">
-          <div className="pf-ov2-panel-head">
-            <h2>Latest findings</h2>
-            <button className="pf-ov2-link" type="button" onClick={() => onOpenFindings()}>Open the log →</button>
-          </div>
-          {latest.length === 0 ? <EmptyHint text="No findings recorded yet." /> : (
-            <div className="pf-ov2-feed">
-              {latest.map((f) => {
-                const b = effectBadge(f.effect);
-                const src = parseSource(f.source);
-                return (
-                  <button key={f.event_id || f.session_id + f.check_id + f.evidence_excerpt} type="button" className="pf-ov2-feed-row"
-                          onClick={() => setFlyout({ sessionId: f.session_id, spanId: f.evidence_span_ids?.[0] ?? null, eventId: f.event_id || null, detail: f.detail, source: f.source })}>
-                    <div className="pf-ov2-feed-top">
-                      <span className={`pf-ov2-badge sev-${b.tone}`}>{b.label}</span>
-                      <span className="pf-ov2-feed-fam">{f.family_label || f.family}</span>
-                      <span className="pf-ov2-feed-time">{ago(f.evaluated_at).replace(" ago", "")}{f.event_id && <> · evt {f.event_id}</>}</span>
-                    </div>
-                    <div className="pf-ov2-feed-detail" title={f.detail}>{f.detail}</div>
-                    <div className="pf-ov2-feed-meta">
-                      <span className="mono">{f.rule_id || f.check_id}</span>
-                      {f.user_query && <span className="pf-ov2-feed-q" title={f.user_query}> · “{f.user_query}”</span>}
-                      {src?.section && <span className="pf-ov2-kpi-sub"> · §{src.section}</span>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <div className="pf-ov2-panel-foot">
-            <span className="pf-ov2-kpi-sub">Evidence attached to every row — conversation, clause, trace.</span>
-          </div>
-        </section>
-      </div>
-
-      {/* ── severity distribution over time ── */}
-      <div style={{ marginTop: 28 }}>
+        {/* Severity distribution over time — beside the breakdown */}
         <SeverityHistogram data={hist} />
       </div>
 
@@ -393,12 +345,6 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         {" · "}
         <button className="pf-ov2-link" type="button" onClick={d.reload} disabled={d.loading}>{d.loading ? "Refreshing…" : "Refresh ↻"}</button>
       </div>
-
-      {flyout && (
-        <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId}
-                       findingDetail={flyout.detail} findingSource={flyout.source} refreshKey={0}
-                       onClose={() => setFlyout(null)} />
-      )}
     </div>
   );
 }
