@@ -1792,3 +1792,11 @@ select { cursor: pointer; }
 .pf-flyout-body .pf-oob-detail { padding: 0; border: 0; box-shadow: none; }
 .pf-flyout-body .pf-oob-detail-body { grid-template-columns: 1fr; }
 .pf-flyout .pf-oob-detail > .pf-oob-detail-footer .pf-oob-actions > button:last-child { display: none; } /* the fly-out has its own Close */
+
+/* Shared-argument legend entries in the MCP Data Graph. */
+.dg-legend-sep {
+  font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); margin: 6px 0 2px; padding-top: 6px; border-top: 1px solid var(--line);
+}
+.dg-legend-line { display: inline-block; width: 14px; height: 2px; border-radius: 2px; flex-shrink: 0; }
+.dg-legend-item code { font-size: 10.5px; }

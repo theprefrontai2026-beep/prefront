@@ -495,3 +495,19 @@ storage-stats endpoint) and whether the settings write goes to a config
 artifact vs. a live-tunable store; keep any application/tenant vocabulary in the
 artifact, not engine code (Hard Rule 1). Depends on entry 18 for the policy it
 configures.
+
+---
+
+## 20. Pinning specific user sessions
+
+Not started. Let an operator pin specific sessions so they're kept and easy to
+return to — flagged for follow-up (an interesting case, a suspected violation,
+an investigation). Two things fall out of a pin: it should exempt the session
+from the entry 18 retention policy (a pinned session must not age out), and it
+should be surfaceable/filterable in the Sessions view.
+
+To work through: where the pin is stored (a session flag/column vs. a separate
+pins table) and how it survives re-ingestion (oob-ingest re-pulls spans, so a
+pin keyed on `session.id` has to persist independently of the span rows); how it
+overrides retention in entry 18; and — if pins are per-operator — that it
+depends on entries 14/17 for the logged-in identity to attribute a pin to.

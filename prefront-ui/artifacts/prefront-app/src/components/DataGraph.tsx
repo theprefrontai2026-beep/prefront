@@ -188,6 +188,8 @@ interface ToolAnnotationHints {
   open_world?: boolean | null;
 }
 
+type SharedArg = { param: string; tools: string[]; color: string };
+
 interface ToolDef {
   id: string;
   label: string;
@@ -206,6 +208,10 @@ interface ToolDef {
   policies: AppliedPolicy[];
   pii: PiiIndex;
 }
+
+// Edge colours, assigned to shared parameters most-connected first, so the two
+// or three keys that actually structure a server get the distinct hues.
+const SHARED_ARG_COLORS = ["#4f46e5", "#0891b2", "#d97706", "#059669", "#7c3aed", "#db2777", "#0284c7", "#65a30d"];
 
 const TOOL_NODE_W = 264;
 const TOOL_HEAD_H = 44;
@@ -245,20 +251,84 @@ function buildFromMcpTools(tools: any[], policyIndex: Map<string, AppliedPolicy[
     };
   });
 
-  // Masonry, not dagre: with no edges every node lands in one rank, which
-  // renders a 19-tool server as a single unreadable column. Each card goes to
-  // the shortest column so variable heights never overlap.
-  const cols = Math.max(1, Math.min(4, Math.round(Math.sqrt(defs.length)) || 1));
-  const colY = new Array(cols).fill(24);
-  const nodes = defs.map((t) => {
-    const h = toolNodeHeight(t);
-    const c = colY.indexOf(Math.min(...colY));
-    const position = { x: 24 + c * (TOOL_NODE_W + 44), y: colY[c] };
-    colY[c] += h + 36;
-    return { id: t.id, type: "graphTool", position, data: { tool: t }, selected: false, __h: h };
+  // ── Shared-argument edges ────────────────────────────────────────────────
+  // MCP tools have no foreign keys, but two tools taking the SAME parameter
+  // are operating on the same thing — `loan_id` across get_application,
+  // decide_loan, apply_discount … is the closest an MCP catalog gets to a join
+  // key, and it is the governance-relevant fact: a caller holding that id can
+  // reach every one of them. A parameter used by exactly one tool connects
+  // nothing and is skipped.
+  const toolsByParam = new Map<string, string[]>();
+  for (const t of defs) {
+    for (const p of t.params) toolsByParam.set(p.name, [...(toolsByParam.get(p.name) ?? []), t.id]);
+  }
+  const shared = [...toolsByParam.entries()]
+    .filter(([, ts]) => ts.length > 1)
+    .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  const paramColor = new Map(shared.map(([p], i) => [p, SHARED_ARG_COLORS[i % SHARED_ARG_COLORS.length]]));
+
+  // One edge per PAIR, not per (pair, param): two tools sharing two arguments
+  // are one relationship carrying both names, and drawing it twice just
+  // doubles the ink.
+  const byPair = new Map<string, { source: string; target: string; params: string[] }>();
+  for (const [param, ts] of shared) {
+    const ids = [...ts].sort();
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const key = `${ids[i]}::${ids[j]}`;
+        const e = byPair.get(key) ?? { source: ids[i], target: ids[j], params: [] };
+        e.params.push(param);
+        byPair.set(key, e);
+      }
+    }
+  }
+  const edges = [...byPair.values()].map((e) => {
+    const color = paramColor.get(e.params[0]) || "#94a3b8";
+    return {
+      id: `${e.source}->${e.target}`,
+      source: e.source,
+      target: e.target,
+      type: "smoothstep",
+      label: e.params.join(" · "),
+      style: { stroke: color, strokeWidth: 1.25, opacity: 0.55 },
+      labelStyle: { fill: color, fontSize: 9 },
+      labelBgStyle: { fill: "#ffffff", fillOpacity: 0.9 },
+      labelBgPadding: [3, 2] as [number, number],
+      labelBgBorderRadius: 3,
+    };
   });
 
-  return { nodes, edges: [] as any[], defs };
+  const nodes = defs.map((t) => ({
+    id: t.id, type: "graphTool", position: { x: 0, y: 0 },
+    data: { tool: t }, selected: false, __h: toolNodeHeight(t),
+  }));
+
+  if (edges.length) {
+    // Real edges exist, so dagre can rank them the way the Postgres view does.
+    const g = new (dagre as any).graphlib.Graph();
+    g.setDefaultEdgeLabel(() => ({}));
+    g.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 140, marginx: 24, marginy: 24 });
+    nodes.forEach((n: any) => g.setNode(n.id, { width: TOOL_NODE_W, height: n.__h }));
+    edges.forEach((e: any) => g.setEdge(e.source, e.target));
+    dagre.layout(g);
+    nodes.forEach((n: any) => {
+      const p = g.node(n.id);
+      if (p) n.position = { x: p.x - TOOL_NODE_W / 2, y: p.y - n.__h / 2 };
+    });
+  } else {
+    // No shared arguments anywhere: dagre would stack every unconnected node
+    // into one rank, so fall back to masonry — each card to the shortest
+    // column, so variable heights never overlap.
+    const cols = Math.max(1, Math.min(4, Math.round(Math.sqrt(defs.length)) || 1));
+    const colY = new Array(cols).fill(24);
+    nodes.forEach((n: any) => {
+      const c = colY.indexOf(Math.min(...colY));
+      n.position = { x: 24 + c * (TOOL_NODE_W + 44), y: colY[c] };
+      colY[c] += n.__h + 36;
+    });
+  }
+
+  return { nodes, edges, defs, shared: shared.map(([p, ts]) => ({ param: p, tools: ts, color: paramColor.get(p)! })) };
 }
 
 // ── MCP tool node ────────────────────────────────────────────────────────────
@@ -796,13 +866,25 @@ function Legend() {
   );
 }
 
-function McpLegend() {
+function McpLegend({ shared }: { shared: SharedArg[] }) {
   return (
     <div className="dg-legend">
       <div className="dg-legend-item"><span className="dg-legend-icon">•</span> Required</div>
       <div className="dg-legend-item"><span className="dg-legend-icon">○</span> Optional</div>
       <div className="dg-legend-item"><span className="dg-legend-icon sens">⚠</span> PII guess</div>
-      <div className="dg-legend-item">No edges — MCP tools aren’t joinable</div>
+      {shared.length === 0 ? (
+        <div className="dg-legend-item">No shared arguments between these tools</div>
+      ) : (
+        <>
+          <div className="dg-legend-sep">Shared arguments</div>
+          {shared.map((s) => (
+            <div key={s.param} className="dg-legend-item" title={s.tools.join(", ")}>
+              <span className="dg-legend-line" style={{ background: s.color }} />
+              <code>{s.param}</code> · {s.tools.length} tools
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -849,7 +931,7 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii, sour
   const built = useMemo(
     () => (isMcp ? buildFromMcpTools(mcpTools!, policyIndex, piiMap)
          : hasCatalog ? buildFromCatalog(catalog, policyIndex, piiMap)
-         : { nodes: [], edges: [], defs: [] as (TableDef | ToolDef)[] }),
+         : { nodes: [], edges: [], defs: [] as (TableDef | ToolDef)[], shared: [] as SharedArg[] }),
     [catalog, mcpTools, isMcp, policyIndex, piiMap, hasCatalog]
   );
 
@@ -922,7 +1004,7 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii, sour
             <Background color="#e4e7ed" gap={24} size={1} />
             <Controls showInteractive={false} />
           </ReactFlow>
-          {isMcp ? <McpLegend /> : <Legend />}
+          {isMcp ? <McpLegend shared={(built as any).shared ?? []} /> : <Legend />}
         </div>
 
         {selected ? (

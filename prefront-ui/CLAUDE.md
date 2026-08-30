@@ -27,9 +27,20 @@ and `McpLegend`) fed by `schema.mcpTools` — the full `mcp_tools` record from
 `/design/semantic/mcp/introspect`, NOT `schema.catalog`, whose one-table-per-tool
 projection carries only input properties. Three things to keep in mind:
 
-- **Layout is masonry, not dagre.** MCP tools aren't joinable, so the graph has
-  no edges, and dagre puts every edgeless node in one rank — a 19-tool server
-  renders as a single unreadable column. Each card goes to the shortest column.
+- **Edges are SHARED ARGUMENTS.** MCP tools have no foreign keys, but two tools
+  taking the same parameter are operating on the same thing — `loan_id` across
+  7 of LoanPro's tools is the closest an MCP catalog gets to a join key, and
+  it is the governance-relevant fact (a caller holding that id reaches all of
+  them). One edge per PAIR, not per (pair, param): two tools sharing two
+  arguments are one relationship carrying both names. A parameter used by
+  exactly one tool connects nothing and is skipped — on LoanPro that leaves 4
+  shared params of 17, and 37 edges. Colours are assigned most-connected
+  first, so the keys that actually structure the server get the distinct hues,
+  and `McpLegend` maps colour → param → tool count.
+- **Layout depends on whether edges exist.** With edges, dagre LR, same as the
+  Postgres view. With none, masonry — dagre puts every edgeless node in one
+  rank, so a 19-tool server with no shared arguments would render as a single
+  unreadable column; each card goes to the shortest column instead.
 - **"Undeclared" must never render like "empty".** Most MCP servers declare no
   `outputSchema`; the node shows a hatched *no output schema declared* note and
   the panel says so in words, and `McpStatsBar` surfaces the count as a
