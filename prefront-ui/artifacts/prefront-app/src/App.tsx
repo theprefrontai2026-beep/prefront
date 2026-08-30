@@ -349,7 +349,8 @@ export default function App() {
                       onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setFindingsSeverity(""); setTracesSection("findings"); setTab("traces"); }}
                       onOpenFindingsSeverity={(sev) => { setFindingsSeverity(sev ?? ""); setFindingsEffect(""); setTracesSection("findings"); setTab("traces"); }}
                       onOpenDecisions={() => { setTracesSection("decisions"); setTab("traces"); }}
-                      onOpenObservability={() => setTab("oob")} />
+                      onOpenObservability={() => setTab("oob")}
+                      onOpenSettings={() => setTab("settings")} />
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
             <DecisionTraces active={tab === "traces"} demo={demo} section={tracesSection} onSection={setTracesSection} findingsEffect={findingsEffect} findingsSeverity={findingsSeverity} />

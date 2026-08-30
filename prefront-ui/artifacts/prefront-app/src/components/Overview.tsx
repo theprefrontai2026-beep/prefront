@@ -1,332 +1,288 @@
 /*
- * Overview — the buyer-facing home screen.
+ * Overview — the buyer-facing home screen, editorial layout.
  *
- * Five dashboard sections, one per buyer concern (before-execution
- * decisions, rule execution, business-context controls, decision context,
- * evidence), each backed by LIVE evidence — never a fixture: eval-engine's
- * shadow evaluation of the demo's (ungoverned) agent: what Prefront WOULD
- * have decided before each action ran. Copy says so wherever a number could
- * be mistaken for inline enforcement; nothing here claims a block that never
- * happened.
+ * A single-glance shadow-evaluation report: what Prefront WOULD have decided
+ * before each action ran, for the demo's (ungoverned) agent. Every number is
+ * LIVE — never a fixture — from eval-engine (/eval/*) and oob-ingest (/oob/*)
+ * via hooks/useOverviewData.ts. Nothing here claims a block that happened.
  *
- * Data: hooks/useOverviewData.ts. Primitives: Kpi/Bars/Empty + formatters
- * from Observability.tsx; the flyout is the same SessionFlyout the Findings
- * table opens. Section titles/captions below are UI copy, not domain
- * vocabulary — nothing in this file names a demo's tables, roles, or fields.
+ * The demo is ungoverned, so the framing is always "would have" — nothing on
+ * this page was actually blocked.
+ *
+ * Domain-neutral: this file names no demo's tables, roles, or fields. Policy
+ * section numbers come from finding data (source.section); sensitive-field
+ * names, when used, come from demos.ts — never a literal here.
  */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { DemoConfig } from "../demos";
-import { useDecisionFeed, type PolicyStat } from "../hooks/useDecisionFeed";
 import {
-  useOverviewData, byEffect, byRule, byFamily, bySeverity, iamVsContext, sensitiveFindings,
-  distinctIntents, offCatalogCalls, citedTags, type Effect,
+  useOverviewData, byEffect, byRule, familySpread, severityBreakdown,
+  findingsPerDay, topRulesShare, type SeverityRow,
 } from "../hooks/useOverviewData";
 import { useSeverityRules } from "../hooks/useSeverityRules";
-import { SEVERITY_META, SEVERITY_ORDER, type SeverityLevel } from "../severity";
-import { Kpi, Bars, Empty, num, ms, ago, parseSource, SessionFlyout } from "./Observability";
-
-/* ── section copy ───────────────────────────────────────────────────────── */
-// Plain dashboard headings. Each section still maps to one buyer concern
-// (before-execution decisions / rule execution / business-context controls /
-// decision context / evidence) but reads as a dashboard, not a pitch.
-
-const SECTIONS = {
-  layer:    { title: "Decisions before execution", caption: "What the agent did, next to what Prefront would have allowed before it acted." },
-  tools:    { title: "Rules applied",               caption: "Which rule fired, how often, and the policy section it comes from." },
-  iam:      { title: "Business-context controls",  caption: "Findings that need business context to decide — beyond who-can-access-what." },
-  catalog:  { title: "Decision context",           caption: "Rules and intents available to agents, and how much of that context sessions actually used." },
-  evidence: { title: "Decision evidence",          caption: "Each decision leaves a trace: facts used, rule applied, approval, outcome, and the policy clause." },
-} as const;
-
-const SHADOW_NOTE = "Shadow evaluation of an ungoverned agent — nothing here was blocked. These are the decisions Prefront would have made before execution.";
-
-const EFFECT_LABEL: Record<Effect, { label: string; sub: string; tone: string }> = {
-  block:             { label: "Would have blocked",       sub: "action not allowed",       tone: "red" },
-  approval_required: { label: "Would need approval",      sub: "routed to a human first",  tone: "amber" },
-  flag:              { label: "Would have flagged",       sub: "allowed, evidence noted",  tone: "teal" },
-};
-const effectTone = (e: string) => EFFECT_LABEL[e as Effect]?.tone ?? "teal";
+import { SEVERITY_META } from "../severity";
+import { num, ago, parseSource, SessionFlyout } from "./Observability";
 
 // Verdict (the scenario runner) lives on its own port on the same host.
 const verdictUrl = () => `${window.location.protocol}//${window.location.hostname}:5180`;
 
-/* ── shell ──────────────────────────────────────────────────────────────── */
-
-function Section({ s, children, aside }: {
-  s: { title: string; caption: string }; children: React.ReactNode; aside?: React.ReactNode;
-}) {
-  return (
-    <section className="pf-panel pf-ov-section">
-      <div className="pf-ov-head">
-        <div>
-          <h2>{s.title}</h2>
-          <p className="pf-ov-answer">{s.caption}</p>
-        </div>
-        {aside}
-      </div>
-      {children}
-    </section>
-  );
-}
+// Effect → the badge shown on a finding. `block` carries the accent; the rest
+// stay quiet. Labels are short, uppercase, and match the runtime vocabulary.
+const EFFECT_BADGE: Record<string, { label: string; tone: string }> = {
+  block:             { label: "Block",    tone: "block" },
+  approval_required: { label: "Approval", tone: "approval" },
+  flag:              { label: "Flag",     tone: "flag" },
+};
+const effectBadge = (e: string) => EFFECT_BADGE[e] ?? { label: e || "—", tone: "flag" };
 
 function EmptyHint({ text }: { text: string }) {
   return (
-    <div className="pf-dash-feed-status">
-      {text} <a className="pf-dash-link" href={verdictUrl()} target="_blank" rel="noreferrer">Run a scenario in Verdict →</a>
+    <div className="pf-ov2-empty">
+      {text} <a className="pf-ov2-link" href={verdictUrl()} target="_blank" rel="noreferrer">Run a scenario in Verdict →</a>
     </div>
   );
 }
 
-/* ── governed runtime (conditional) ─────────────────────────────────────── */
-
-const policyTone = (effect: PolicyStat["effect"]) =>
-  effect === "block" ? "red" : effect === "mask" ? "teal" : effect === "approval" ? "amber" : "green";
-
-// Only rendered when the decision store has governed traffic for this demo
-// (a governed orchestrator ran). Never shows a zero-panel that would imply
-// inline enforcement happened when it didn't.
-function GovernedRuntime({ demo, onViewAll }: { demo: DemoConfig; onViewAll: () => void }) {
-  const feed = useDecisionFeed(demo);
-  const s = feed.stats;
-  if (!s || !s.total) return null;
-  const pctOf = (n: number) => Math.round((n / s.total) * 100);
-  const max = feed.policies[0]?.count || 1;
+// The hero sparkline: findings per day over the fetched window. Pure SVG, no
+// library. An empty window renders flat bars (real: nothing evaluated yet).
+function Spark({ bars, peak }: { bars: { label: string; count: number; today: boolean }[]; peak: number }) {
+  const max = Math.max(peak, 1);
   return (
-    <section className="pf-panel pf-ov-section">
-      <div className="pf-ov-head">
-        <div>
-          <h2>Inline enforcement</h2>
-          <p className="pf-ov-answer">Decisions Prefront's runtime actually made on the request path for this deployment.</p>
-        </div>
-        <button className="pf-dash-link" type="button" onClick={onViewAll}>View decision log →</button>
-      </div>
-      <div className="pf-ov-contrast">
-        <div>
-          <div className="pf-dash-bars">
-            {([["Allowed", s.allowed, "green"], ["Masked", s.masked, "teal"], ["Blocked", s.blocked, "red"], ["Approval required", s.approval, "amber"]] as const).map(([label, n, tone]) => (
-              <div key={label} className="pf-dash-bar-row">
-                <div className="pf-dash-bar-label">{label}</div>
-                <div className="pf-dash-bar-track"><div className={`pf-dash-bar-fill ${tone}`} style={{ width: `${pctOf(n)}%` }} /></div>
-                <div className="pf-dash-bar-pct">{pctOf(n)}%</div>
-              </div>
-            ))}
+    <div className="pf-ov2-spark">
+      <div className="pf-ov2-spark-bars">
+        {bars.map((b, i) => (
+          <div key={i} className={`pf-ov2-spark-col ${b.today ? "today" : ""}`} title={`${b.label}: ${b.count}`}>
+            <div className="pf-ov2-spark-fill" style={{ height: `${Math.max((b.count / max) * 100, 3)}%` }} />
           </div>
-        </div>
-        <div className="pf-dash-pol">
-          {feed.policies.slice(0, 5).map((p, i) => (
-            <div key={p.policy} className={`pf-dash-pol-row${i === 0 ? " top" : ""}`}>
-              <div className="pf-dash-pol-head">
-                <span className="pf-dash-pol-name">{p.policy}</span>
-                {p.effect && <span className={`pf-dash-chip ${policyTone(p.effect)}`}>{p.effect}</span>}
-                <span className="pf-dash-pol-count">{num(p.count)}</span>
-              </div>
-              <div className="pf-dash-pol-track"><div className={`pf-dash-pol-fill ${policyTone(p.effect)}`} style={{ width: `${Math.max((p.count / max) * 100, 4)}%` }} /></div>
-            </div>
-          ))}
-        </div>
+        ))}
       </div>
-    </section>
+      <div className="pf-ov2-spark-axis">
+        <span>{bars[0]?.label}</span>
+        <span>today · {bars[bars.length - 1]?.count ?? 0}</span>
+      </div>
+    </div>
   );
 }
 
 /* ── page ───────────────────────────────────────────────────────────────── */
 
-export default function Overview({ demo, active = true, onOpenFindings, onOpenFindingsSeverity, onOpenDecisions, onOpenObservability }: {
+export default function Overview({ demo, active = true, onOpenFindings, onOpenFindingsSeverity, onOpenDecisions, onOpenObservability, onOpenSettings }: {
   demo: DemoConfig; active?: boolean;
   onOpenFindings: (effect?: string) => void; onOpenFindingsSeverity: (severity?: string) => void;
-  onOpenDecisions: () => void; onOpenObservability: () => void;
+  onOpenDecisions: () => void; onOpenObservability: () => void; onOpenSettings: () => void;
 }) {
   const d = useOverviewData(demo, active);
   const { rules: severityRules } = useSeverityRules(demo.id, active);
-  const severities = bySeverity(d.findings, severityRules);
   const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail?: string; source?: string } | null>(null);
 
   const ev = d.evalStatus;
   const ch = ev?.clickhouse;
   const rp = ev?.worker?.rule_pack;
   const ic = ev?.worker?.intent_catalog;
-  const evaluated = ch?.sessions_evaluated ?? 0;
-  const effects = byEffect(d.findings);
-  const rules = byRule(d.findings);
-  const families = byFamily(d.findings);
-  const iam = iamVsContext(d.findings);
-  const sensitive = sensitiveFindings(d.findings, demo.sensitiveFields);
-  const offCatalog = offCatalogCalls(d.sessions);
-  const intentsUsed = distinctIntents(d.sessions);
-  const cited = citedTags(d.conformance);
-  const latest = d.findings.slice(0, 5);
   const k = d.overview?.kpis ?? {};
+
+  const findings = d.findings;
+  const total = findings.length;
+  const effects = byEffect(findings);
+  const ruleRows = byRule(findings, 3);
+  const sev = severityBreakdown(findings, severityRules);
+  const fam = familySpread(findings);
+  const famTotal = fam.reduce((s, f) => s + f.count, 0) || 1;
+  const spark = findingsPerDay(findings, 7);
+  const topShare = topRulesShare(byRule(findings, 3), total, 3);
+  const offCatalog = d.sessions.reduce((n, s) => n + (s.off_catalog_calls || 0), 0);
+  const latest = findings.slice(0, 5);
+
+  // Sub-detail for the "would have blocked" card: the policy § most block
+  // findings cite (from the data, never hardcoded). Empty when none carry one.
+  const blockSection = (() => {
+    const secs = new Map<string, number>();
+    for (const f of findings) if (f.effect === "block") {
+      const s = parseSource(f.source)?.section?.split(/[/,]/)[0]?.trim();
+      if (s) secs.set(s, (secs.get(s) ?? 0) + 1);
+    }
+    return [...secs.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  })();
+
   const noEval = d.errors.eval;
-  const nothingYet = !noEval && evaluated === 0;
-  const windowNote = `last ${num(Math.min(d.findings.length, 500))} findings`;
+  const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
+  const nothingYet = !noEval && sessionsEvaluated === 0;
+
+  const KPIS: { label: string; value: string; sub: ReactNode; accent?: boolean; onClick?: () => void }[] = [
+    { label: "Would have blocked", value: num(effects.block), accent: effects.block > 0,
+      sub: blockSection ? <>Policy · §{blockSection}</> : "action not allowed", onClick: () => onOpenFindings("block") },
+    { label: "Needs a human", value: num(effects.approval_required),
+      sub: "approval required", onClick: () => onOpenFindings("approval_required") },
+    { label: "Rules live", value: num(rp?.rule_count),
+      sub: ic?.configured ? <>{num(ic.intent_count)} intents in catalog</> : "no catalog configured" },
+    { label: "Off-catalog calls", value: num(offCatalog),
+      sub: "tools no intent declares", onClick: onOpenObservability },
+  ];
 
   return (
-    <div className="pf-dash">
-      {/* ── Hero: decision evidence ── */}
-      <section className="pf-panel pf-dash-hero">
-        <div className="pf-dash-hero-score">
-          <div className="pf-dash-hero-label">Decision evidence</div>
-          <div className="pf-dash-hero-value" title="sessions eval-engine has evaluated">{d.loading && !ev ? "…" : num(evaluated)}</div>
-          <div className="pf-dash-hero-sub">
-            <span className="pf-dash-hero-grade">sessions evaluated</span>
-            {ev && <span className="pf-dash-subtle">{ev.mode} evaluation · engine {ev.engine_version}</span>}
+    <div className="pf-ov2">
+      {/* ── Hero ── */}
+      <header className="pf-ov2-hero">
+        <div className="pf-ov2-hero-main">
+          <div className="pf-ov2-eyebrow">
+            Shadow evaluation{ev && <> · engine {ev.engine_version}</>}
           </div>
-          <div className="pf-dash-subtle" style={{ marginTop: 10 }}>
+          <h1 className="pf-ov2-headline">
+            {d.loading && !ev ? "…" : num(sessionsEvaluated)} sessions evaluated.{" "}
+            <span className="pf-ov2-accent">{num(total)} would not have been allowed.</span>
+          </h1>
+          <p className="pf-ov2-lede">
+            Prefront evaluated every action before execution. Nothing was stopped in production —
+            each finding carries the conversation, the clause it breached, and the trace.
             {rp?.configured
-              ? <>rule pack <span className="mono">{rp.source_skill}@{rp.source_skill_version}</span>{ic?.configured && <> · catalog v{ic.version}</>}</>
-              : "no rule pack configured — Family 1/3 checks idle"}
-          </div>
-          {noEval && <div className="pf-oob-error" style={{ marginTop: 8 }}>eval-engine unreachable: {noEval}</div>}
+              ? <> {num(rp.rule_count)} rules{ic?.configured && <> and {num(ic.intent_count)} intents</>} are live.</>
+              : <> No rule pack is configured — Family&nbsp;1/3 checks are idle.</>}
+          </p>
+          {noEval && <div className="pf-ov2-error">eval-engine unreachable: {noEval}</div>}
           {nothingYet && <EmptyHint text={`No sessions evaluated yet — eval-engine polls every ${ev?.worker?.poll_seconds ?? "few"}s.`} />}
         </div>
-        <div className="pf-dash-hero-counters">
-          <button className="pf-dash-counter pf-ov-clickable" type="button" onClick={() => onOpenFindings()}>
-            <div className={`pf-dash-counter-value ${(ch?.findings ?? 0) > 0 ? "red" : ""}`}>{num(ch?.findings)}</div>
-            <div className="pf-dash-counter-label">Findings — decisions that would not have been allowed as-is</div>
-          </button>
-          <div className="pf-dash-counter">
-            <div className="pf-dash-counter-value">{num(ch?.conformance_tags)}</div>
-            <div className="pf-dash-counter-label">Rules applied and satisfied — positive evidence, policy cited</div>
-          </div>
-          <div className="pf-dash-counter">
-            <div className="pf-dash-counter-value">{num(rp?.rule_count)}<span className="pf-ov-counter-sep">·</span>{num(ic?.intent_count)}</div>
-            <div className="pf-dash-counter-label">Policy coverage — rules in the pack · intents in the catalog</div>
-          </div>
+        <div className="pf-ov2-hero-aside">
+          <div className="pf-ov2-eyebrow">Findings / day{spark.peak > 0 && <span className="pf-ov2-peak">peak {spark.peak}</span>}</div>
+          <Spark bars={spark.bars} peak={spark.peak} />
         </div>
-      </section>
+      </header>
 
-      {/* ── 1. Head of AI ── */}
-      <Section s={SECTIONS.layer} aside={<span className="pf-ov-note">{SHADOW_NOTE}</span>}>
-        <div className="pf-ov-contrast">
-          <div>
-            <div className="pf-ov-contrast-head">What happened <span className="pf-dash-subtle">observability · last 24h</span></div>
-            <div className="pf-oob-kpis">
-              <Kpi label="traces" value={num(k.traces)} />
-              <Kpi label="tool calls" value={num(k.tool_calls)} />
-              <Kpi label="p95 latency" value={ms(k.p95_ms)} />
-            </div>
-          </div>
-          <div>
-            <div className="pf-ov-contrast-head">What should have been allowed <span className="pf-dash-subtle">decision · {windowNote}</span></div>
-            <div className="pf-oob-kpis">
-              {(Object.keys(EFFECT_LABEL) as Effect[]).map((e) => (
-                <button key={e} type="button" className="pf-ov-clickable" onClick={() => onOpenFindings(e)} title={`Open findings filtered to effect=${e}`}>
-                  <Kpi label={EFFECT_LABEL[e].label} value={num(effects[e])} sub={EFFECT_LABEL[e].sub} tone={EFFECT_LABEL[e].tone} />
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* ── KPI row ── */}
+      <div className="pf-ov2-kpis">
+        {KPIS.map((kpi) => {
+          const inner = (
+            <>
+              <div className="pf-ov2-kpi-label">{kpi.label}</div>
+              <div className={`pf-ov2-kpi-value ${kpi.accent ? "accent" : ""}`}>{kpi.value}</div>
+              <div className="pf-ov2-kpi-sub">{kpi.sub}</div>
+            </>
+          );
+          return kpi.onClick
+            ? <button key={kpi.label} type="button" className="pf-ov2-kpi clickable" onClick={kpi.onClick}>{inner}</button>
+            : <div key={kpi.label} className="pf-ov2-kpi">{inner}</div>;
+        })}
+      </div>
+
+      {/* ── Rule-evaluation band ── */}
+      <div className="pf-ov2-band">
+        <div className="pf-ov2-band-lead">
+          <div className="pf-ov2-eyebrow">Rule evaluations</div>
+          <div className="pf-ov2-band-value">{num(ch?.verdicts)}</div>
+          <div className="pf-ov2-kpi-sub">{num(rp?.rule_count)} live rules · {num(sessionsEvaluated)} sessions</div>
         </div>
-        <div className="pf-ov-severity">
-          <div className="pf-ov-contrast-head">By severity <span className="pf-dash-subtle">triage priority · {windowNote} · configurable in Settings</span></div>
-          <div className="pf-oob-kpis">
-            {SEVERITY_ORDER.map((s: SeverityLevel) => (
-              <button key={s} type="button" className="pf-ov-clickable" onClick={() => onOpenFindingsSeverity(s)} title={`Open findings rated ${SEVERITY_META[s].label}`}>
-                <div className="pf-oob-kpi">
-                  <div className="pf-oob-kpi-value">{num(severities[s])}</div>
-                  <div className="pf-oob-kpi-label"><span className={`pf-dash-chip ${SEVERITY_META[s].tone}`}>{SEVERITY_META[s].label}</span></div>
-                </div>
-              </button>
+        <div className="pf-ov2-band-mid">
+          <div className="pf-ov2-band-head">
+            <span className="pf-ov2-eyebrow">Findings by family</span>
+            <span className="pf-ov2-kpi-sub">{num(total)} total · top 3 checks carry {topShare}%</span>
+          </div>
+          <div className="pf-ov2-stack">
+            {fam.map((f, i) => f.count > 0 && (
+              <div key={f.key} className={`pf-ov2-stack-seg s${i}`} style={{ width: `${(f.count / famTotal) * 100}%` }} title={`${f.label}: ${f.count}`} />
+            ))}
+          </div>
+          <div className="pf-ov2-legend">
+            {fam.map((f, i) => (
+              <span key={f.key} className="pf-ov2-legend-item">
+                <span className={`pf-ov2-swatch s${i}`} />
+                {f.label} · {num(f.count)}{f.rules > 0 && <span className="pf-ov2-kpi-sub"> · {f.rules} rules</span>}
+              </span>
             ))}
           </div>
         </div>
-        {d.findings.length === 0 && !d.loading && <EmptyHint text="No findings yet — either nothing violated, or no rule pack / intent catalog is configured." />}
-      </Section>
-
-      {/* ── 2. CIO ── */}
-      <Section s={SECTIONS.tools} aside={<Kpi label="verdicts recorded" value={num(ch?.verdicts)} sub="every check, incl. satisfied" />}>
-        <div className="pf-ov-contrast-head">Which rule applied <span className="pf-dash-subtle">{windowNote}</span></div>
-        {rules.length === 0
-          ? <Empty text="No rule has fired yet." />
-          : <Bars rows={rules} label={(r) => r.section ? `${r.key}  §${r.section}` : r.key} value={(r) => r.count} tone={(r) => effectTone(r.effect)} />}
-        <div className="pf-ov-family-row">
-          {[["family1", "policy rules"], ["family2", "integrity invariants"], ["family3", "intent conformance"]].map(([f, label]) => (
-            <span key={f} className="pf-dash-subtle"><strong>{num(families[f])}</strong> {label}</span>
-          ))}
+        <div className="pf-ov2-band-tail">
+          <div className="pf-ov2-eyebrow">Satisfied</div>
+          <div className="pf-ov2-band-value quiet">{num(ch?.conformance_tags)}</div>
+          <div className="pf-ov2-kpi-sub">rules applied, policy cited</div>
         </div>
-      </Section>
+      </div>
 
-      {/* ── 3. CISO ── */}
-      <Section s={SECTIONS.iam}>
-        <div className="pf-oob-kpis">
-          <Kpi label="role-only findings" value={num(iam.roleOnly)} sub="IAM could catch these" />
-          <Kpi label="business-context findings" value={num(iam.context)} sub="IAM has no concept of these" tone={iam.context ? "red" : undefined} />
-          <Kpi label="sensitive-field findings" value={num(sensitive)} sub={`${demo.sensitiveFields.length} fields watched`} tone={sensitive ? "amber" : undefined} />
-          <Kpi label="off-catalog tool calls" value={num(offCatalog)} sub="actions no approved intent covers" tone={offCatalog ? "amber" : undefined} />
-        </div>
-      </Section>
-
-      {/* ── 4. CDO ── */}
-      <Section s={SECTIONS.catalog}>
-        <div className="pf-oob-kpis">
-          <Kpi label="rules in the pack" value={num(rp?.rule_count)} sub={rp?.configured ? `${rp.source_skill}@${rp.source_skill_version}` : "not configured"} />
-          <Kpi label="intents in the catalog" value={num(ic?.intent_count)} sub={ic?.configured ? `catalog v${ic.version}` : "not configured"} />
-          <Kpi label="intents actually invoked" value={num(intentsUsed)} sub="distinct, last 24h" />
-          <Kpi label="catalog-conformance findings" value={num(families.family3)} sub={windowNote} tone={families.family3 ? "amber" : undefined} />
-        </div>
-      </Section>
-
-      {/* ── 5. Compliance ── */}
-      <Section s={SECTIONS.evidence} aside={<button className="pf-dash-link" type="button" onClick={() => onOpenFindings()}>All findings →</button>}>
-        <div className="pf-ov-contrast">
-          <div>
-            <div className="pf-ov-contrast-head">Latest decision evidence <span className="pf-dash-subtle">click a row for the full trace</span></div>
-            {latest.length === 0 ? <EmptyHint text="No evidence recorded yet." /> : (
-              <div className="pf-dash-feed">
-                {latest.map((f) => {
-                  const src = parseSource(f.source);
-                  return (
-                    <button key={f.event_id || f.session_id + f.check_id + f.evidence_excerpt} type="button" className="pf-dash-feed-row pf-ov-clickable"
-                            onClick={() => setFlyout({ sessionId: f.session_id, spanId: f.evidence_span_ids?.[0] ?? null, eventId: f.event_id || null, detail: f.detail, source: f.source })}>
-                      <div className="pf-dash-feed-time">{ago(f.evaluated_at).replace(" ago", "")}</div>
-                      <div className="pf-dash-feed-body">
-                        <div className="pf-dash-feed-top">
-                          <span className={`pf-dash-chip ${effectTone(f.effect)}`}>{f.effect}</span>
-                          <span className="pf-dash-feed-intent mono">{f.rule_id || f.check_id}</span>
-                          {f.event_id && <span className="pf-dash-subtle mono">#{f.event_id}</span>}
-                        </div>
-                        <div className="pf-dash-feed-meta pf-tr-truncate" title={f.detail}>{f.detail}</div>
-                        {f.user_query && <div className="pf-dash-feed-meta pf-tr-truncate" title={f.user_query}>“{f.user_query}”</div>}
-                        {src?.section && <div className="pf-find-cite pf-dash-subtle">{src.document} · §{src.section}</div>}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+      {/* ── Two panels: severity insights · latest findings ── */}
+      <div className="pf-ov2-cols">
+        {/* Severity insights (replaces obligation coverage) */}
+        <section className="pf-ov2-panel">
+          <div className="pf-ov2-panel-head">
+            <div>
+              <h2>Severity breakdown</h2>
+              <div className="pf-ov2-kpi-sub">{num(total)} findings · triage priority</div>
+            </div>
+            <button className="pf-ov2-link" type="button" onClick={() => onOpenFindings()}>Open the log →</button>
           </div>
-          <div>
-            <div className="pf-ov-contrast-head">Rules applied &amp; satisfied <span className="pf-dash-subtle">{num(ch?.conformance_tags)} total · newest cited</span></div>
-            {cited.length === 0 ? <Empty text="No policy-cited conformance yet." /> : (
-              <div className="pf-dash-feed">
-                {cited.map((t, i) => (
-                  <button key={t.session_id + t.check_id + t.rule_id + i} type="button" className="pf-dash-feed-row pf-ov-clickable"
-                          onClick={() => setFlyout({ sessionId: t.session_id, spanId: t.evidence_span_ids?.[0] ?? null, eventId: null })}>
-                    <div className="pf-dash-feed-time">{ago(t.evaluated_at).replace(" ago", "")}</div>
-                    <div className="pf-dash-feed-body">
-                      <div className="pf-dash-feed-top">
-                        <span className="pf-dash-chip green">satisfied</span>
-                        <span className="pf-dash-feed-intent mono">{t.rule_id || t.check_id}</span>
-                        {t.section && <span className="pf-dash-subtle">§{t.section}</span>}
+          {total === 0 ? <EmptyHint text="No findings yet — either nothing violated, or no rule pack / intent catalog is configured." /> : (
+            <table className="pf-ov2-sev">
+              <thead>
+                <tr><th>Severity</th><th>Share</th><th>Top driver</th><th className="r">Count</th></tr>
+              </thead>
+              <tbody>
+                {sev.map((row: SeverityRow) => (
+                  <tr key={row.level} className={row.count ? "clickable" : "muted"}
+                      onClick={row.count ? () => onOpenFindingsSeverity(row.level) : undefined}>
+                    <td><span className={`pf-ov2-badge sev-${SEVERITY_META[row.level].tone}`}>{SEVERITY_META[row.level].label}</span></td>
+                    <td>
+                      <div className="pf-ov2-sev-share">
+                        <div className="pf-ov2-sev-track"><div className={`pf-ov2-sev-fill sev-${SEVERITY_META[row.level].tone}`} style={{ width: `${Math.max(row.share * 100, row.count ? 3 : 0)}%` }} /></div>
+                        <span className="pf-ov2-sev-pct">{Math.round(row.share * 100)}%</span>
                       </div>
-                      {t.clause_text && <blockquote className="pf-find-quote pf-ov-quote">“{t.clause_text.trim().slice(0, 140)}{t.clause_text.length > 140 ? "…" : ""}”<cite>{t.policy_document}</cite></blockquote>}
+                    </td>
+                    <td className="pf-ov2-driver" title={row.topDriver}>
+                      {row.topDriver ? <><span className="mono">{row.topDriver}</span>{row.topSection && <span className="pf-ov2-kpi-sub"> · §{row.topSection}</span>}</> : <span className="pf-ov2-kpi-sub">—</span>}
+                    </td>
+                    <td className="r"><span className="pf-ov2-count">{num(row.count)}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div className="pf-ov2-panel-foot">
+            <span className="pf-ov2-kpi-sub">Severity is derived from each finding's family + effect.</span>
+            <button className="pf-ov2-link" type="button" onClick={onOpenSettings}>Tune the mapping in Settings →</button>
+          </div>
+        </section>
+
+        {/* Latest findings */}
+        <section className="pf-ov2-panel">
+          <div className="pf-ov2-panel-head">
+            <h2>Latest findings</h2>
+            <button className="pf-ov2-link" type="button" onClick={() => onOpenFindings()}>Open the log →</button>
+          </div>
+          {latest.length === 0 ? <EmptyHint text="No findings recorded yet." /> : (
+            <div className="pf-ov2-feed">
+              {latest.map((f) => {
+                const b = effectBadge(f.effect);
+                const src = parseSource(f.source);
+                return (
+                  <button key={f.event_id || f.session_id + f.check_id + f.evidence_excerpt} type="button" className="pf-ov2-feed-row"
+                          onClick={() => setFlyout({ sessionId: f.session_id, spanId: f.evidence_span_ids?.[0] ?? null, eventId: f.event_id || null, detail: f.detail, source: f.source })}>
+                    <div className="pf-ov2-feed-top">
+                      <span className={`pf-ov2-badge sev-${b.tone}`}>{b.label}</span>
+                      <span className="pf-ov2-feed-fam">{f.family_label || f.family}</span>
+                      <span className="pf-ov2-feed-time">{ago(f.evaluated_at).replace(" ago", "")}{f.event_id && <> · evt {f.event_id}</>}</span>
+                    </div>
+                    <div className="pf-ov2-feed-detail" title={f.detail}>{f.detail}</div>
+                    <div className="pf-ov2-feed-meta">
+                      <span className="mono">{f.rule_id || f.check_id}</span>
+                      {f.user_query && <span className="pf-ov2-feed-q" title={f.user_query}> · “{f.user_query}”</span>}
+                      {src?.section && <span className="pf-ov2-kpi-sub"> · §{src.section}</span>}
                     </div>
                   </button>
-                ))}
-              </div>
-            )}
+                );
+              })}
+            </div>
+          )}
+          <div className="pf-ov2-panel-foot">
+            <span className="pf-ov2-kpi-sub">Evidence attached to every row — conversation, clause, trace.</span>
           </div>
-        </div>
-      </Section>
+        </section>
+      </div>
 
-      <GovernedRuntime demo={demo} onViewAll={onOpenDecisions} />
-
-      <div className="pf-dash-subtle pf-ov-foot">
+      {/* ── Foot ── */}
+      <div className="pf-ov2-foot">
         {d.oobStatus?.clickhouse?.spans != null && <>{num(d.oobStatus.clickhouse.spans)} spans ingested · </>}
-        <button className="pf-dash-link" type="button" onClick={onOpenObservability}>Observability →</button>
+        <button className="pf-ov2-link" type="button" onClick={onOpenObservability}>Observability →</button>
         {" · "}
-        <button className="pf-dash-link" type="button" onClick={d.reload} disabled={d.loading}>{d.loading ? "Refreshing…" : "Refresh ↻"}</button>
+        <button className="pf-ov2-link" type="button" onClick={onOpenDecisions}>Decision log →</button>
+        {" · "}
+        <button className="pf-ov2-link" type="button" onClick={d.reload} disabled={d.loading}>{d.loading ? "Refreshing…" : "Refresh ↻"}</button>
       </div>
 
       {flyout && (

@@ -130,6 +130,76 @@ export function bySeverity(findings: EvalVerdict[], rules: SeverityRule[]): Reco
   return out;
 }
 
+// Per-severity triage row for the Overview's severity panel: count, share of all
+// findings, and the check that drives that band most (with its policy § when
+// the finding cites one). Ordered critical → low.
+export type SeverityRow = {
+  level: SeverityLevel; count: number; share: number; topDriver: string; topSection: string;
+};
+export function severityBreakdown(findings: EvalVerdict[], rules: SeverityRule[]): SeverityRow[] {
+  const total = findings.length || 1;
+  const buckets = new Map<SeverityLevel, EvalVerdict[]>();
+  for (const f of findings) {
+    const lvl = severityOf({ family: f.family, effect: f.effect }, rules);
+    (buckets.get(lvl) ?? buckets.set(lvl, []).get(lvl)!).push(f);
+  }
+  const order: SeverityLevel[] = ["critical", "high", "medium", "low"];
+  return order.map((level) => {
+    const rows = buckets.get(level) ?? [];
+    const drivers = new Map<string, number>();
+    for (const f of rows) { const k = f.rule_id || f.check_id; drivers.set(k, (drivers.get(k) ?? 0) + 1); }
+    const top = [...drivers.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+    const topSection = rows.find((f) => (f.rule_id || f.check_id) === top && parseSource(f.source)?.section)
+      ? parseSource(rows.find((f) => (f.rule_id || f.check_id) === top)!.source)?.section ?? "" : "";
+    return { level, count: rows.length, share: rows.length / total, topDriver: top, topSection };
+  });
+}
+
+// Findings bucketed by calendar day for the hero sparkline — the last `days`
+// day-slots ending today, counted from each finding's evaluated_at. Real data
+// over whatever window the fetched findings span (nothing synthesized).
+export type DayBar = { label: string; count: number; today: boolean };
+export function findingsPerDay(findings: EvalVerdict[], days = 7): { bars: DayBar[]; peak: number; today: number } {
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const counts = new Map<string, number>();
+  for (const f of findings) {
+    const d = new Date(f.evaluated_at);
+    if (!Number.isNaN(d.getTime())) counts.set(dayKey(d), (counts.get(dayKey(d)) ?? 0) + 1);
+  }
+  const bars: DayBar[] = [];
+  const now = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0, 0, 0, 0);
+    bars.push({
+      label: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      count: counts.get(dayKey(d)) ?? 0,
+      today: i === 0,
+    });
+  }
+  const peak = bars.reduce((m, b) => Math.max(m, b.count), 0);
+  return { bars, peak, today: bars[bars.length - 1]?.count ?? 0 };
+}
+
+// Findings distribution across the three rule families (Policy / Integrity /
+// Conformance), each with the count and how many distinct rules/checks produced
+// them. Keyed on the display label, fixed order.
+export type FamilyRow = { key: string; label: string; count: number; rules: number };
+export function familySpread(findings: EvalVerdict[]): FamilyRow[] {
+  const spec: [string, string][] = [["family1", "Policy"], ["family2", "Integrity"], ["family3", "Conformance"]];
+  return spec.map(([key, label]) => {
+    const rows = findings.filter((f) => f.family === key);
+    const rules = new Set(rows.map((f) => f.rule_id || f.check_id)).size;
+    return { key, label, count: rows.length, rules };
+  });
+}
+
+// Share of findings the top-N checks account for — concentration, not a total.
+export function topRulesShare(rows: RuleRow[], allFindings: number, n = 3): number {
+  if (!allFindings) return 0;
+  const top = rows.slice(0, n).reduce((s, r) => s + r.count, 0);
+  return Math.round((top / allFindings) * 100);
+}
+
 // The CISO split. "entitlement" is the ONE check that asks a pure who-may-
 // call-what question an IAM system could also answer; every other check
 // (precondition, sequencing, field_restriction, entity_consistency, param_*,
