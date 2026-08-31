@@ -29,11 +29,17 @@ function demoOf(v: unknown): string {
   return /^[a-z0-9_-]{1,32}$/.test(s) ? s : DEFAULT_DEMO;
 }
 
-// Retention cap: keep only the newest N traces PER DEMO; older ones pruned on write.
-const MAX_TRACES = 100;
+// Retention cap: keep only the newest N traces PER DEMO; older ones pruned on
+// write. This is a UI-store cap, NOT a compliance retention schedule - the
+// schema comment calls decision_trace "append-only", which it is only while
+// the cap is off. DECISION_TRACE_CAP=0 disables pruning entirely (the store
+// then grows unbounded, which is what an audit-log reading of it requires);
+// see compliance_design.md §5.1 / §5.4.
+const MAX_TRACES = Math.max(0, Number(process.env.DECISION_TRACE_CAP ?? 100) || 0);
 
 /** Delete everything but the newest MAX_TRACES rows for `demo`. Runs after each insert. */
 async function pruneOldTraces(demo: string): Promise<void> {
+  if (!MAX_TRACES) return;
   const keep = db
     .select({ id: decisionTrace.id })
     .from(decisionTrace)

@@ -895,3 +895,31 @@ def preflight_generate(body: PreflightBody):
         "candidates": [c.model_dump() for c in candidates],
         "rejected": rejected,
     }
+
+
+# --- compliance overlay (Layer B of compliance_design.md) -------------------
+
+class OverlayField(BaseModel):
+    table: str = ""
+    column: str
+    entity: str = ""
+
+
+class OverlaySuggestRequest(BaseModel):
+    deployment: str = "deployment"
+    policy_document: str = ""
+    fields: list[OverlayField] = Field(default_factory=list)
+    frameworks: list[str] = Field(default_factory=list)
+
+
+@app.post("/design/semantic/compliance/overlay/suggest")
+def compliance_overlay_suggest(req: OverlaySuggestRequest):
+    """Draft a CANDIDATE compliance overlay from a PII scan (the pii-analyzer's
+    per-column entities). Deterministic, no LLM, never written to the
+    artifacts volume here: a human reviews and publishes it, then points
+    eval-engine's EVAL_COMPLIANCE_OVERLAY_PATH at it."""
+    from .compliance_overlay import suggest_overlay
+    return suggest_overlay(
+        deployment=req.deployment, policy_document=req.policy_document,
+        fields=[f.model_dump() for f in req.fields], frameworks=req.frameworks,
+    )

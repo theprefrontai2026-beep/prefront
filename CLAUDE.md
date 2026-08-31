@@ -90,7 +90,7 @@ This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml`
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
-| eval-engine | `eval-engine/evalengine`| 8120| **evaluation engine** (FastAPI + background worker): reads the shared `spans` table read-only, reconstructs each session, runs the three check families over it, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 needs no onboarding; Family 1 needs `rule_pack.yaml` (`EVAL_RULE_PACK_PATH`) and Family 3 an `intent_catalog.yaml` (`EVAL_INTENT_CATALOG_PATH`), both degrading to zero verdicts when unconfigured. Full 39-scenario grading run is 39/39 (`loanpro-demo/docs/eval-coverage.md`). See `eval-engine/CLAUDE.md` |
+| eval-engine | `eval-engine/evalengine`| 8120| **evaluation engine** (FastAPI + background worker): reads the shared `spans` table read-only, reconstructs each session, runs the three check families over it, and persists version-stamped verdicts/findings/conformance tags via `/eval/*`. Family 2 needs no onboarding; Family 1 needs `rule_pack.yaml` (`EVAL_RULE_PACK_PATH`) and Family 3 an `intent_catalog.yaml` (`EVAL_INTENT_CATALOG_PATH`), both degrading to zero verdicts when unconfigured. Full 39-scenario grading run is 39/39 (`loanpro-demo/docs/eval-coverage.md`). Also serves `/eval/compliance` — framework evidence over those verdicts (shipped packs × the deployment's `EVAL_COMPLIANCE_OVERLAY_PATH` overlay, see "Compliance reporting" below). See `eval-engine/CLAUDE.md` |
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
@@ -556,6 +556,39 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   `curl -X POST :8110/oob/sync` (pull now), `docker exec prefront-clickhouse-1
   clickhouse-client -q "SELECT service, count() FROM prefront.spans FINAL GROUP BY service"`.
 
+## Compliance reporting (`/eval/compliance`, the Compliance tab)
+
+`compliance_design.md` is the reference; the short version:
+
+- **A control is a view over verdicts, never a new check.** Shipped
+  framework packs (`eval-engine/evalengine/frameworks/*.yaml` — GDPR, SOC 2,
+  PCI-DSS v4, HIPAA) name only **control classes** (`access`, `minimization`,
+  `field_protection`, `retention`, …) and abstract **data classes**
+  (`personal_data`, `phi`, `cardholder_data`, …). The fixed
+  `control_class → check_ids` table lives in
+  `evalengine/compliance/classes.py`, tested both ways. Nothing in the
+  engine names a column, role or framework-specific field.
+- **The per-deployment overlay is the only place domain vocabulary enters.**
+  `EVAL_COMPLIANCE_OVERLAY_PATH` → a `compliance_overlay.yaml` binding data
+  classes to `table.column`s and the deployment's own regime as
+  `policy_section → control_class` (LoanPro's: `loanpro-demo/policy/compliance_overlay.yaml`,
+  seeded to the shared volume). Unconfigured ⇒ every pack reported, every
+  class-keyed control `unbound` — the truthful state, never an error.
+- **Six states, and "no evidence" is never "clean":** `violated`,
+  `evidenced`, `indeterminate`, `no_evidence`, `unbound`, `not_configured`.
+  Store-based classes (`audit_logging`, `retention`, `change_management`)
+  read facts — verdict count, the TTL ClickHouse actually holds, artifact
+  versions on verdicts — not verdict status.
+- **Retention is a ClickHouse TTL, env-driven, applied on every start:**
+  `OOB_RETENTION_DAYS` (`spans`) + `EVAL_RETENTION_DAYS` (`eval_*`), `0` =
+  none. Set both together. `DECISION_TRACE_CAP=0` stops the api-server prune.
+- **The governance trace is hash-chained** (`semanticmcp/governance/trace.py`):
+  `prev_hash`/`hash` per line, failures counted on `/healthz.audit`,
+  `python -m semanticmcp audit-verify` finds the first broken link.
+- A candidate overlay can be drafted from the Data Connector's PII scan
+  (`POST /design/semantic/compliance/overlay/suggest`, deterministic) — a
+  human publishes it; nothing in the pipeline writes it.
+
 ## Commands
 
 ### Run the bundled stack
@@ -712,6 +745,7 @@ Top-level design docs, each answering a different question:
 | `prefront-check-families.md` | the three OOB check families (learnt rules / integrity invariants / intent conformance) — the WHAT |
 | `autonomous_build.md` | the phased build order for the eval engine — the HOW |
 | `intent_learning_design.md` | **PLANNED, not built** (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog from observed traces, for customers with no policy document to compile |
+| `compliance_design.md` | how the engine's checks map onto GDPR / SOC 2 / PCI-DSS / HIPAA and a deployment's own regime — the two-layer model (shipped framework packs × per-deployment overlay) behind `/eval/compliance` and the Compliance tab, plus the ranked list of gaps no mapping covers; per-section status markers say what is built |
 | `loanpro-demo/docs/check-coverage.md` | generated contract: check → session → the span attributes that detect it |
 | `loanpro-demo/docs/use-cases.md` | the policy-failure use cases in narrative form, each with its real `loan_underwriting_policy.md` citation (and a correction table for numbers from an older version of that document) |
 | `loanpro-demo/docs/eval-coverage.md` | generated grading report for the scenario catalogue |

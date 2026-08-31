@@ -13,7 +13,7 @@ Package/workspace shape (pnpm workspace, the `verdict` second app, the shared
 
 ## Tab architecture (`artifacts/prefront-app/src/`)
 
-`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Decision Traces → Intent Flows → Observability**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Decision Traces → Intent Flows → Observability → Compliance**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
 
 ## Routing & shareable links (`lib/router.ts`, `routes.ts`, `components/CopyLink.tsx`)
@@ -330,3 +330,30 @@ observability" section. What follows is the UI over it.
   and fixed together; Phoenix is untouched by design (oob-ingest re-pulls from
   it), so `spans` repopulates on the next poll — that's a re-pull, not
   retention, and is what the confirm dialog now says explicitly.
+
+
+## Compliance tab (`components/Compliance.tsx`, route `/compliance`)
+
+Framework evidence over the verdicts eval-engine already recorded — a VIEW
+of `GET /eval/compliance?since=` (see the root `CLAUDE.md` § "Compliance
+reporting" and `compliance_design.md`). Per selected framework pack, one row
+per control: class, data class, one of six states (`violated` / `evidenced`
+/ `indeterminate` / `no_evidence` / `unbound` / `not_configured`), counts,
+and the first evidence sample as a link — a violated sample deep-links into
+Decision Traces › Findings via `findingHref(session, event, span)`, any other
+into the Observability session view. Below the packs: the deployment's own
+regime bindings (from its overlay, with "citing verdicts" — verdicts whose
+own `source.section` names that policy section), the store facts the
+store-based rows read (TTLs as enforced, artifact versions), and a "Draft an
+overlay" panel that posts the connected schema's PII map
+(`schema.pii`, `"table.column" → {label, score}` from `DataConnector.tsx`)
+to `/design/semantic/compliance/overlay/suggest` and shows the candidate
+YAML to copy — nothing publishes.
+
+Two rules the page inherits. **Truthfulness:** when the engine reports
+`facts.shadow` the banner says every count is what Prefront *would have*
+decided; nothing is called enforced. **Domain neutrality:** the component
+names no demo table/role/field — `grep -in "loan\|applicant\|underwrit"`
+over `Compliance.tsx` must stay empty; column names appear only inside the
+drafted YAML, which comes from the schema. "Export evidence (JSON)" is an
+in-app blob download of the report (span references + excerpts only).

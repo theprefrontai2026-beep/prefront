@@ -8,6 +8,7 @@ import DataGraph from "./components/DataGraph";
 import BusinessGraph from "./components/BusinessGraph";
 import Semantic from "./components/Semantic";
 import Observability from "./components/Observability";
+import Compliance from "./components/Compliance";
 import Settings from "./components/Settings";
 import DemoChooser from "./components/DemoChooser";
 import CopyLink from "./components/CopyLink";
@@ -51,9 +52,18 @@ const TABS = [
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
   { id: "oob",      label: "Observability",   sub: "Traces, LLM, cost (OOB)",   icon: IconPulse },
+  { id: "compliance", label: "Compliance",    sub: "Framework evidence",        icon: IconCheckShield },
 ];
 
 /* ── Sidebar icons ── */
+function IconCheckShield() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      <path d="M9 12l2 2 4-4"/>
+    </svg>
+  );
+}
 function IconPulse() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -158,6 +168,7 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   policy:   { title: "Policy Studio",   desc: "Upload policy documents, extract rules, and manage the review pipeline." },
   semantic: { title: "Semantic Layer",  desc: "Build governed interfaces — SQL query templates or MCP tool bindings — from approved rules and your schema." },
   oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: sessions, the app agent's turns, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
+  compliance:{ title: "Compliance",       desc: "Framework evidence — GDPR, SOC 2, PCI-DSS, HIPAA and the deployment's own regime, each control resolved over the verdicts already recorded: evidenced, violated, or honestly no evidence." },
   settings: { title: "Settings",         desc: "Under-the-hood configuration. Tune how findings are rated and triaged — the severity mapping applied across the Findings log and Overview." },
 };
 
@@ -389,6 +400,9 @@ export default function App() {
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
             <DecisionTraces active={tab === "traces"} demo={demo} section={tracesSection} onSection={setTracesSection} findingsEffect={findingsEffect} findingsSeverity={findingsSeverity} />
+          </div>
+          <div className={tab === "compliance" ? "" : "tab-hidden"}>
+            <Compliance demo={demo} active={tab === "compliance"} schema={schema} />
           </div>
           <div className={tab === "settings" ? "" : "tab-hidden"}>
             <Settings demo={demo} active={tab === "settings"} />

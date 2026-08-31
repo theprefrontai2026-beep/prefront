@@ -14,6 +14,7 @@ POC behavior (templates as plain query wrappers).
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Optional
@@ -34,6 +35,7 @@ from .governance import trace as trace_mod
 from .governance import writes as writes_mod
 
 _tracer = tracing.get_tracer("prefront.governance")
+log = logging.getLogger("semanticmcp.server")
 
 
 class _Registry:
@@ -252,7 +254,10 @@ async def _call_governed(
         )
         if inline_checks_trace:
             t["inline_checks"] = inline_checks_trace
-        trace_mod.persist(t)
+        if not trace_mod.persist(t):
+            # never fatal to the call, never silent either: the counter is on /healthz
+            log.warning("audit trace NOT persisted (%s): %s", t.get("trace_id"),
+                        trace_mod.audit_status().get("last_error"))
         return {"tool": tool["name"], "status": decision.status,
                 "reasons": decision.reasons or None,
                 "approver_roles": decision.approver_roles or None,
@@ -576,6 +581,8 @@ def serve_http(dsn: str, templates_path: str | Path, *, host: str = "0.0.0.0", p
             "tools": list(registry.tools),
             "governed": policy.active or identity_mod.configured(),
             "policy_rules": len((policy.bundle or {}).get("rules", [])),
+            # hash-chained audit log health: `failures` is wrong when non-zero
+            "audit": trace_mod.audit_status(),
         })
 
     app = Starlette(routes=[

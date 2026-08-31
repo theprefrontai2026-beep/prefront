@@ -79,6 +79,14 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _cmd_audit_verify(args: argparse.Namespace) -> int:
+    """Walk the hash-chained trace log and report the first broken link."""
+    from .governance import trace as trace_mod
+    result = trace_mod.verify_chain(args.path)
+    print(json.dumps(result, indent=2))
+    return 0 if result["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="semanticmcp", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -106,6 +114,10 @@ def main(argv: list[str] | None = None) -> int:
     c.set_defaults(func=_cmd_call)
 
     sub.add_parser("doctor", help="Check DB connectivity + template load").set_defaults(func=_cmd_doctor)
+
+    v = sub.add_parser("audit-verify", help="Verify the hash chain of the trace log (TRACE_PATH)")
+    v.add_argument("--path", default=None, help="Trace log path (default: $TRACE_PATH or /data/traces.jsonl)")
+    v.set_defaults(func=_cmd_audit_verify)
 
     args = parser.parse_args(argv)
     return args.func(args)

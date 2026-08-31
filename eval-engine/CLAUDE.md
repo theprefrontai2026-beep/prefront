@@ -442,6 +442,43 @@ Two constraints from that plan bear directly on code here, if you pick it up:
   learned positively at all, since frequency learns what co-occurs as normal.
   The design doc has the field-by-field table — do not widen it by guessing.
 
+## Compliance reporting (`evalengine/compliance/`, `/eval/compliance`)
+
+Built after Phase F; the design is `../compliance_design.md`. A framework
+control is a **view over verdicts**, never a check: `classes.py` fixes
+`control_class → check_ids` (tested both ways in `tests/test_compliance.py`:
+every mapped id is real, every real check evidences a class), `packs.py`
+loads the shipped Layer A packs from `evalengine/frameworks/*.yaml`
+(`EVAL_FRAMEWORK_PACKS_DIR` adds/replaces by framework id), `overlay.py`
+loads the deployment's Layer B overlay (`EVAL_COMPLIANCE_OVERLAY_PATH`, the
+only place a column name or policy section reaches this service), and
+`report.py` is the pure fold (no I/O, no clock) to the six states.
+
+Things that keep it inside the hard rules:
+
+- **Hard Rule 1 holds by construction** — packs name abstract data classes,
+  the overlay binds them; `test_domain_independence.py` scans the YAML packs
+  for deployment names and the Python for domain nouns as before.
+- **It joins the version key nowhere.** Editing a pack or overlay re-renders
+  the report on the next request; it never re-evaluates a session, because
+  nothing about how a verdict is computed changed. It reads
+  `eval_verdicts` (`ch.verdict_rows_for_report`, newest first, capped by
+  `EVAL_COMPLIANCE_ROW_CAP` with a `truncated` flag) and writes nothing.
+- **Data-class scoping is by `detail` text, and only for `FIELD_AWARE_CHECKS`**
+  (`field_restriction`, `substitution`, `field_scope`, `filter_scope` — the
+  ones whose detail names the field). Every other check is scoped at the
+  check level and the row says so (`scoping`). A control keyed on a class the
+  overlay leaves empty is `unbound`, never counted.
+- **Store-based classes read facts.** `audit_logging` = verdicts exist in the
+  window; `retention` = the TTL `system.tables` reports (via `ch.table_ttls`,
+  the `spans` table included — a read of oob-ingest's table, not a write);
+  `change_management` = artifact versions stamped on verdicts. `basis: store`
+  on the row.
+- **Retention is `apply_retention()` in `ch.ensure_schema`** — `MODIFY TTL
+  toDateTime(evaluated_at) + toIntervalDay(n)` on the three tables, `REMOVE
+  TTL` at `0`, never fatal (a failure is logged and the report shows the
+  table without a TTL, which is the truth).
+
 ## Live-run status and the bugs those runs found
 
 `loanpro-demo/grading_harness.py` (`make grade-loanpro`) has run the **full

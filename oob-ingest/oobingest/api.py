@@ -125,6 +125,9 @@ async def status():
         "clickhouse": {"ok": ok, "url": config.CLICKHOUSE_URL, "database": config.CLICKHOUSE_DB, **totals},
         "phoenix": poller.status(),
         "otlp": {"endpoint": "/v1/traces", "api_key_required": bool(config.OTLP_API_KEY), **_otlp_received},
+        # what ClickHouse enforces on `spans`, beside what config asked for
+        "retention": {"days": config.RETENTION_DAYS,
+                      "spans_ttl": (await asyncio.to_thread(ch.spans_ttl)) if ok else ""},
         "started_at": _started_at.isoformat(),
     }
 

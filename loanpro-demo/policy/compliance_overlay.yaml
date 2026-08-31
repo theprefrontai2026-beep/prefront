@@ -1,0 +1,67 @@
+# LoanPro's compliance overlay - Layer B of compliance_design.md (Appendix A).
+#
+# The ONLY place the compliance report meets this demo's vocabulary: which of
+# its columns carry which abstract data class, and how its own policy
+# document's sections (loan_underwriting_policy.md) map onto the engine's
+# control classes under the regimes that document cites in §17. Read by
+# eval-engine (EVAL_COMPLIANCE_OVERLAY_PATH) from the shared `artifacts`
+# volume; never by the demo itself. Hand-authored, like intent_catalog.yaml.
+#
+# Section numbers must resolve to a heading in loan_underwriting_policy.md
+# (numbering is append-only there). A section listed here with a control
+# class the engine has no check for (retention, audit_logging) reports as a
+# STATED obligation - it is the demo's roadmap, not a finding.
+schema_version: prefront.compliance_overlay.v1
+deployment: loanpro
+policy_document: loan_underwriting_policy.md
+
+data_classes:
+  personal_data:
+    - applicants.ssn
+    - applicants.tax_id
+    - applicants.bank_account_hint
+  financial_npi:
+    - applicants.credit_score
+    - risk_profiles.internal_risk_score
+  cardholder_data: []        # a lending book holds no card data
+  sensitive_auth_data: []
+  phi: []                    # no health data
+  special_category: []
+  internal_confidential:
+    - risk_profiles.internal_risk_score
+
+# Which shipped packs to report under. PCI-DSS and HIPAA would report every
+# class-keyed control as "unbound" here, truthfully - they are omitted.
+frameworks: [gdpr, soc2]
+
+domain_regime:
+  - regime: GLBA
+    bindings:
+      - {policy_section: "12.1", control_class: field_protection, data_class: personal_data}
+      - {policy_section: "12.3", control_class: field_protection, data_class: personal_data}
+      - {policy_section: "12.4", control_class: field_protection, data_class: personal_data}
+      - {policy_section: "12.6", control_class: minimization}
+      - {policy_section: "12.7", control_class: segregation}
+      - {policy_section: "12.9", control_class: purpose_limitation}
+      - {policy_section: "12.10", control_class: audit_logging,
+         note: "requires purpose on every sensitive-field access and 7-year retention - stated obligation"}
+  - regime: ECOA / FCRA
+    bindings:
+      - {policy_section: "13.6", control_class: human_oversight}
+      - {policy_section: "15.1", control_class: human_oversight}
+      - {policy_section: "15.2", control_class: human_oversight,
+         note: "notice CONTENT - a content obligation no check asserts (design §5.7)"}
+      - {policy_section: "15.3", control_class: human_oversight,
+         note: "approved reason codes only - content obligation (design §5.7)"}
+  - regime: CFPB AI guidance
+    bindings:
+      - {policy_section: "12.2", control_class: field_protection, data_class: financial_npi}
+      - {policy_section: "12.5", control_class: field_protection, data_class: internal_confidential}
+      - {policy_section: "13.7", control_class: integrity}
+      - {policy_section: "13.8", control_class: integrity}
+      - {policy_section: "16.4", control_class: audit_logging,
+         note: "agent logged separately from the human - not yet a separate principal (design §5.5)"}
+      - {policy_section: "18.2", control_class: retention}
+      - {policy_section: "18.5", control_class: monitoring,
+         note: "the quarterly AI System Compliance Review is this report"}
+      - {policy_section: "19.4", control_class: change_management}

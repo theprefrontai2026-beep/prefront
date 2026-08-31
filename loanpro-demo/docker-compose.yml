@@ -122,6 +122,8 @@ services:
         ([ -f /artifacts/loanpro-demo/query_templates.yaml ] ||
          cp /src/query_templates.yaml /src/policy.yaml /src/rule_pack.yaml /src/intent_catalog.yaml
             /artifacts/loanpro-demo/) &&
+        ([ -f /artifacts/loanpro-demo/compliance_overlay.yaml ] ||
+         cp /src/compliance_overlay.yaml /artifacts/loanpro-demo/) &&
         echo "loanpro curated artifacts ready in /artifacts/loanpro-demo"
     volumes:
       - artifacts:/artifacts
