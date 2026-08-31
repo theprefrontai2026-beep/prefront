@@ -177,6 +177,8 @@ services:
       # Attributes scrubbed from spans that ARE kept (a demo harness's scenario
       # root annotates the governed side too).
       OOB_STRIP_ATTR_PREFIXES: ${OOB_STRIP_ATTR_PREFIXES:-scenario.governed_,scenario.expected}
+      # Retention (TTL) on `spans`; 0 = none. Pair with EVAL_RETENTION_DAYS.
+      OOB_RETENTION_DAYS: ${OOB_RETENTION_DAYS:-0}
     ports: ["8110:8110"]
     depends_on:
       clickhouse:
@@ -211,6 +213,15 @@ services:
       # the engine doesn't know a demo's directory exists.
       EVAL_RULE_PACK_PATH: ${EVAL_RULE_PACK_PATH:-}
       EVAL_INTENT_CATALOG_PATH: ${EVAL_INTENT_CATALOG_PATH:-}
+      # Compliance (compliance_design.md): the per-deployment overlay follows
+      # the same rule - unconfigured by default, point it at the demo's copy
+      # on the shared volume (e.g. /artifacts/loanpro-demo/compliance_overlay.yaml).
+      # Framework packs are bundled; a directory here adds/replaces them.
+      EVAL_COMPLIANCE_OVERLAY_PATH: ${EVAL_COMPLIANCE_OVERLAY_PATH:-}
+      EVAL_FRAMEWORK_PACKS_DIR: ${EVAL_FRAMEWORK_PACKS_DIR:-}
+      # Retention (TTL) on this service's eval_* tables; 0 = none. Pair with
+      # OOB_RETENTION_DAYS on oob-ingest.
+      EVAL_RETENTION_DAYS: ${EVAL_RETENTION_DAYS:-0}
     volumes:
       - artifacts:/artifacts:ro
     ports: ["8120:8120"]
@@ -329,6 +340,8 @@ services:
       # default.
       ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://loanpro-orchestrator:8098}
       ORCHESTRATOR_URL_SECUREBANK: ${ORCHESTRATOR_URL_SECUREBANK:-http://securebank-orchestrator:8095}
+      # decision_trace rows kept per demo (pruned on write); 0 = never prune.
+      DECISION_TRACE_CAP: ${DECISION_TRACE_CAP:-100}
       ORCHESTRATOR_URL_LOANPRO: ${ORCHESTRATOR_URL_LOANPRO:-http://loanpro-orchestrator:8098}
     ports: ["8080:8080"]
     depends_on:

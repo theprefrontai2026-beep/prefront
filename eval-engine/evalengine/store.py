@@ -75,5 +75,17 @@ def totals(since: int = 0) -> dict[str, Any]:
     return ch.totals(since)
 
 
+def verdict_rows_for_report(since: int = 0, cap: int = 20000) -> tuple[list[dict[str, Any]], bool]:
+    return ch.verdict_rows_for_report(since, cap)
+
+
+def retention_facts() -> dict[str, str]:
+    """table -> TTL expression for every store the report speaks for: this
+    service's three tables plus the shared `spans` table oob-ingest owns."""
+    out = ch.table_ttls(ch._RETENTION_TABLES)
+    out["spans"] = ch.spans_ttl()
+    return out
+
+
 def truncate() -> None:
     ch.truncate()

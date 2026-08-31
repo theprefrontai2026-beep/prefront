@@ -47,6 +47,14 @@ STRIP_ATTR_PREFIXES = [p.strip() for p in
 # must carry `Authorization: Bearer <key>`.
 OTLP_API_KEY = _env("OOB_OTLP_API_KEY")
 
+# Retention for the `spans` table as a ClickHouse TTL on start_time. 0 = none
+# (unbounded growth, the historical behaviour). Coordinate with Phoenix's own
+# retention: a span aged out here but still in Phoenix is re-pulled on the
+# next poll only if it is inside PHOENIX_LOOKBACK_SECONDS of the watermark,
+# so in practice it stays gone. eval-engine has the matching
+# EVAL_RETENTION_DAYS for its verdict tables (compliance_design.md §5.1).
+RETENTION_DAYS = int(_env("OOB_RETENTION_DAYS", "0"))
+
 # Per-1M-token prices used for the cost estimate. Override with a JSON map,
 # e.g. OOB_MODEL_PRICES='{"gpt-4o-mini": {"input": 0.15, "output": 0.6}}'.
 _DEFAULT_PRICES = {

@@ -1,0 +1,47 @@
+schema_version: prefront.framework_pack.v1
+framework: hipaa
+title: HIPAA (Privacy and Security Rules)
+version: "1"
+out_of_scope:
+  - "§164.524 individual access (no per-subject index, §5.6)"
+  - "§164.312(e) transmission security, §164.308(b) business associate contracts, workforce training"
+controls:
+  - id: s164_502_b
+    title: Minimum necessary
+    control_class: minimization
+    data_class: phi
+    note: "the strongest single fit - the check families' own thesis"
+  - id: s164_502_b_purpose
+    title: Minimum necessary - purpose of the access
+    control_class: purpose_limitation
+    data_class: phi
+  - id: s164_308_a_1_ii_D
+    title: Information system activity review
+    control_class: monitoring
+    data_class: phi
+    note: "no review attestation record"
+  - id: s164_308_a_4
+    title: Information access management
+    control_class: access
+    data_class: phi
+  - id: s164_312_a_1
+    title: Access control
+    control_class: access
+    data_class: phi
+    note: "the acting agent is not identified as a principal separate from the human (§5.5)"
+  - id: s164_312_b
+    title: Audit controls
+    control_class: audit_logging
+    data_class: phi
+  - id: s164_312_c_1
+    title: Integrity
+    control_class: integrity
+    data_class: phi
+  - id: s164_528
+    title: Accounting of disclosures
+    control_class: audit_logging
+    data_class: phi
+    note: "the per-call record exists but is not indexed by subject (§5.6)"
+  - id: s164_316_b_2
+    title: Documentation retention
+    control_class: retention

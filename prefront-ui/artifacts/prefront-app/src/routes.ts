@@ -23,6 +23,7 @@ export const TAB_PATH: Record<string, string> = {
   // with startsWith, unlike nginx's trailing-slash locations), so the
   // Observability tab — whose id is still `oob` — is routed as /observability.
   oob:        "/observability",
+  compliance: "/compliance",
   settings:   "/settings",
   semantic:   "/semantic",
 };

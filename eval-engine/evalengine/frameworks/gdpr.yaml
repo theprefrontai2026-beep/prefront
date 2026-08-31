@@ -1,0 +1,72 @@
+schema_version: prefront.framework_pack.v1
+framework: gdpr
+title: GDPR
+version: "1"
+out_of_scope:
+  - "Art. 15 / 17 subject access and erasure - no per-subject index of what was touched (compliance_design.md §5.6)"
+  - "Art. 28 processor contracts, Art. 35 DPIA, Chapter V international transfers"
+  - "Encryption at rest and in transit, network and physical security"
+controls:
+  - id: art5_1_b
+    title: Purpose limitation
+    control_class: purpose_limitation
+    data_class: personal_data
+    note: "descriptor match is coarse - an unmatched request is a low-severity signal, not a verdict"
+  - id: art5_1_b_agg
+    title: Purpose limitation - unsanctioned aggregation
+    control_class: segregation
+    data_class: personal_data
+  - id: art5_1_c
+    title: Data minimisation
+    control_class: minimization
+    data_class: personal_data
+    note: "field-level scope needs the intent catalog to declare `fields:`; an empty set is silent"
+  - id: art5_1_d
+    title: Accuracy
+    control_class: integrity
+    data_class: personal_data
+  - id: art5_1_e
+    title: Storage limitation
+    control_class: retention
+    data_class: personal_data
+  - id: art5_1_f
+    title: Integrity and confidentiality
+    control_class: field_protection
+    data_class: personal_data
+    note: "the trace store itself holds raw tool payloads unless ingest-side redaction is configured (§5.2)"
+  - id: art5_1_f_access
+    title: Integrity and confidentiality - access control
+    control_class: access
+    data_class: personal_data
+  - id: art5_2
+    title: Accountability
+    control_class: audit_logging
+  - id: art5_2_change
+    title: Accountability - controlled change of the rules
+    control_class: change_management
+  - id: art9
+    title: Special categories of personal data
+    control_class: field_protection
+    data_class: special_category
+  - id: art22
+    title: Automated individual decision-making
+    control_class: human_oversight
+    data_class: personal_data
+  - id: art25
+    title: Data protection by design and by default
+    control_class: access
+    note: "allow-listed intents; a sensitive field is deny-by-default at design time"
+  - id: art30
+    title: Records of processing activities
+    control_class: audit_logging
+    data_class: personal_data
+    note: "per session and per clause; no per-subject or per-purpose index"
+  - id: art32
+    title: Security of processing
+    control_class: field_protection
+    data_class: personal_data
+  - id: art33
+    title: Breach detection
+    control_class: monitoring
+    data_class: personal_data
+    note: "findings are not incidents - there is no incident record or 72-hour clock"

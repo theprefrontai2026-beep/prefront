@@ -1,0 +1,54 @@
+schema_version: prefront.framework_pack.v1
+framework: soc2
+title: SOC 2 (Trust Services Criteria)
+version: "1"
+out_of_scope:
+  - "CC6.6 / CC6.7 boundary protection and data in transit"
+  - "P5.1 data subject access (no per-subject index)"
+  - "Availability (A-series), processing integrity outside agent data access, vendor management"
+controls:
+  - id: cc6_1
+    title: Logical access security
+    control_class: access
+    note: "the governed caller is evidenced; the UI/API operator is not authenticated (§5.5)"
+  - id: cc6_3
+    title: Role-based access
+    control_class: access
+  - id: cc6_3_least_privilege
+    title: Least privilege - fields and rows
+    control_class: minimization
+  - id: cc6_5
+    title: Disposal of data
+    control_class: retention
+  - id: cc7_2
+    title: Monitoring for anomalies
+    control_class: monitoring
+  - id: cc7_3
+    title: Evaluation of security events
+    control_class: monitoring
+    note: "a finding has no acknowledged/resolved lifecycle"
+  - id: cc8_1
+    title: Change management
+    control_class: change_management
+    note: "rule approvals are recorded (rule_audit_log) but that store is unauthenticated and mutable (§5.4)"
+  - id: c1_1
+    title: Identify and protect confidential information
+    control_class: field_protection
+    data_class: internal_confidential
+  - id: c1_2
+    title: Dispose of confidential information
+    control_class: retention
+    data_class: internal_confidential
+  - id: p4_1
+    title: Limit use of personal information to identified purposes
+    control_class: purpose_limitation
+    data_class: personal_data
+  - id: p4_2
+    title: Retain personal information per purposes
+    control_class: retention
+    data_class: personal_data
+  - id: p6_1
+    title: Disclosure of personal information is recorded
+    control_class: audit_logging
+    data_class: personal_data
+    note: "per call and per session; no per-subject disclosure index (§5.6)"

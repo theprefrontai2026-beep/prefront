@@ -459,7 +459,17 @@ vocabulary in config/artifacts, not engine code (Hard Rule 1).
 
 ## 18. Retention policy for spans and verdicts
 
-Not started. Both the OOB span store (ClickHouse `prefront.spans`) and
+**PARTLY DONE (compliance_impl): env-driven TTLs exist; legal hold, per-tenant
+schedules and the UI (entry 19) are still open.** `OOB_RETENTION_DAYS` sets a
+ClickHouse TTL on `spans` (`oob-ingest/oobingest/ch.py:apply_retention`) and
+`EVAL_RETENTION_DAYS` on the three `eval_*` tables
+(`eval-engine/evalengine/ch.py:apply_retention`), both applied on every start
+and reported as what ClickHouse actually enforces (`/oob/status.retention`,
+`/eval/compliance.facts.retention`). `DECISION_TRACE_CAP=0` stops the
+api-server prune. See `compliance_design.md` §5.1. The rest of this entry is
+what remains.
+
+Originally: both the OOB span store (ClickHouse `prefront.spans`) and
 eval-engine's outputs (`eval_verdicts`, `eval_conformance_tags`,
 `eval_evaluated_sessions`) grow unbounded — there is no TTL or pruning today.
 The only existing knobs are manual, all-or-nothing wipes (`DELETE /oob/spans`,

@@ -1,10 +1,12 @@
 # Prefront and regulatory compliance — design
 
-> **Status: PROPOSED.** Nothing in this document is built. It maps what the
-> engine already produces onto what GDPR, SOC 2, PCI-DSS, HIPAA and a
-> deployment's own domain regulations ask for, names the gaps no mapping can
-> cover, and proposes the two artifacts that would turn existing verdicts into
-> framework evidence. It adds no check and no engine vocabulary.
+> **Status: §2–§4 and build-order steps 1–3 (§6) are BUILT; §5.2, §5.5–§5.8
+> remain open.** The two-layer model ships as `eval-engine/evalengine/compliance/`
+> (+ the four packs under `evalengine/frameworks/`), `GET /eval/compliance`, and
+> the UI's **Compliance** tab; retention is an env-driven ClickHouse TTL on
+> both stores; the inline governance trace is hash-chained. Each section below
+> carries its own status line. The document still adds no check and no engine
+> vocabulary — a control is a view over verdicts the families already emit.
 >
 > **Framework citations** (GDPR article numbers, SOC 2 Trust Services Criteria
 > ids, PCI-DSS v4.0 requirement numbers, HIPAA CFR sections) were written from
@@ -196,6 +198,25 @@ controls:
     control_class: field_protection
     data_class: personal_data
 ```
+
+**Status: BUILT.** Layer A: `evalengine/frameworks/{gdpr,soc2,pci_dss,hipaa}.yaml`,
+loaded by `evalengine/compliance/packs.py` (`EVAL_FRAMEWORK_PACKS_DIR` adds or
+replaces a pack by framework id). The fixed `control_class → check_ids` half
+of the binding rule is `evalengine/compliance/classes.py`, and
+`tests/test_compliance.py` asserts it both ways — every mapped id is a real
+check, every real check evidences at least one class. Layer B:
+`evalengine/compliance/overlay.py` (`EVAL_COMPLIANCE_OVERLAY_PATH`), the
+fold is `evalengine/compliance/report.py` (pure: no I/O, no clock), served
+by `GET /eval/compliance?since=&framework=` and `GET /eval/compliance/packs`.
+Data-class scoping applies to the `FIELD_AWARE_CHECKS` (whose `detail`
+names the field); every other check is scoped at the check level and the
+row says which (`scoping`). The three store-based classes (`audit_logging`,
+`retention`, `change_management`) read facts — the verdict count, the TTL
+ClickHouse actually holds, the artifact versions stamped on verdicts —
+rather than verdict status (`basis: store`). A candidate overlay can be
+drafted from the PII scan: `POST /design/semantic/compliance/overlay/suggest`
+(`semantic-layer/semanticlayer/compliance_overlay.py`, deterministic) and the
+Compliance tab's "Draft an overlay" panel — never published by either.
 
 What it touches and what it must not:
 
@@ -412,6 +433,17 @@ PCI 10.5, HIPAA §164.316(b)(2), and any sector rule with a minimum period.
 A retention design also has to cover legal hold (a kept-forever exemption)
 and coordinate with Phoenix, which re-feeds anything ClickHouse forgets.
 
+**Status: BUILT (env-driven TTL); legal hold and per-tenant schedules open.**
+`OOB_RETENTION_DAYS` sets `TTL toDateTime(start_time) + toIntervalDay(n)` on
+`spans` (`oob-ingest/oobingest/ch.py:apply_retention`, applied on every
+start, `0` removes it) and `EVAL_RETENTION_DAYS` does the same on the three
+`eval_*` tables by `evaluated_at` (`eval-engine/evalengine/ch.py:apply_retention`).
+Both are surfaced as what ClickHouse actually enforces (`/oob/status.retention`,
+`/eval/compliance.facts.retention`), which is what the `retention` control
+class reads. `DECISION_TRACE_CAP=0` stops the api-server prune. Set the two
+TTLs together: spans that outlive their verdicts are re-evaluated at the
+current artifact versions (correct, but a re-evaluation, not a resurrection).
+
 ### 5.2 The trace store holds raw payloads
 
 `oob-ingest/oobingest/model.py:34` caps `input_value` / `output_value` at
@@ -439,6 +471,14 @@ class-keyed row in §4 is unbindable until this exists. Layer B (§2.2) is the
 proposed home; the PII analyser becomes its *suggestion* source, human
 approval its gate — the same posture as every other candidate.
 
+**Status: BUILT at the overlay; open in the semantic layer.** A deployment
+declares its data classes in `compliance_overlay.yaml` and can draft that
+file from the PII scan (§2.4). What is still open is the other direction:
+`semanticlayer/policy.py`'s three-way `classification` is unchanged, so a
+data class declared in the overlay does not yet flow into `build_bindings`
+/ `publish-policy` as a sensitivity rule — the overlay evidences, it does
+not enforce.
+
 ### 5.4 Audit stores are not tamper-evident, and one fails silently
 
 - `governance/trace.py:63-72` swallows `OSError` — a full disk or a read-only
@@ -454,6 +494,19 @@ Blocks SOC 2 CC8.1 (as *evidence*), PCI 10.3, HIPAA §164.312(b), and any
 regime with an immutability clause. Minimum viable: a hash chain over the
 governance trace and `rule_audit_log`, plus a persisted failure counter that
 surfaces on the status endpoints.
+
+**Status: BUILT for the governance trace; `rule_audit_log` and the verdict
+store still open.** `semanticmcp/governance/trace.py` now writes every line
+with `prev_hash`/`hash` (SHA-256 over the previous hash + the canonical
+record), continues the chain across restarts from the file's last line, and
+returns the link in the tool response (`governance.hash`). `persist()`
+still never raises, but returns `False`, counts the failure, and the server
+logs it; `/healthz.audit` carries `written` / `failures` / `last_error`.
+`python -m semanticmcp audit-verify [--path]` walks a file and names the
+first broken link (`tests/test_trace_chain.py` covers edit, delete, restart,
+legacy prefix, write failure). `decision_trace`'s prune is now
+`DECISION_TRACE_CAP` (`0` = never). Unchanged: `rule_audit_log` is still
+unauthenticated (needs 5.5) and `eval_verdicts` is not tamper-evident.
 
 ### 5.5 No authenticated operator, no agent-vs-human attribution
 
@@ -490,17 +543,21 @@ key is meant to supply.
 
 ## 6. Suggested build order
 
-1. **Layer A packs + the report view.** Zero engine change, visible value
+1. **Layer A packs + the report view.** — **DONE.** Zero engine change, visible value
    immediately: an aggregate over verdicts grouped by control, with the three
    honest states (evidenced / violated / no evidence) and span-linked samples.
    Every "no evidence" cell doubles as the gap list for that customer.
-2. **Layer B overlay, starting with data classes.** Closes the PII-analyser
-   loop and makes every class-keyed row in §4 bindable; unlocks class-aware
-   redaction at ingest (5.2) as a follow-on.
-3. **Retention + audit integrity** (5.1, 5.4). Independent of the above but
+   (`/eval/compliance`, the Compliance tab, JSON export of the evidence bundle.)
+2. **Layer B overlay, starting with data classes.** — **DONE** (overlay +
+   PII-scan drafter); the semantic-layer enforcement side is open (§5.3).
+   Closes the PII-analyser loop and makes every class-keyed row in §4 bindable;
+   unlocks class-aware redaction at ingest (5.2) as a follow-on.
+3. **Retention + audit integrity** (5.1, 5.4). — **DONE** for the TTLs and
+   the governance-trace hash chain; legal hold, `rule_audit_log` integrity and
+   verdict-store tamper-evidence open. Independent of the above but
    without them the report's storage-limitation and log-integrity rows stay
    permanently "no evidence".
-4. **Per-subject index** (5.6). Last, because it depends on 2 and on the
+4. **Per-subject index** (5.6). — open. Last, because it depends on 2 and on the
    ingest-side redaction from 5.2.
 
 ---
@@ -522,6 +579,11 @@ already says which of those sections a check evidences; the overlay below is
 that matrix re-expressed in control classes.
 
 ### A.1 A Layer B overlay for it
+
+**This overlay now exists**: `loanpro-demo/policy/compliance_overlay.yaml`,
+seeded to `/artifacts/loanpro-demo/` by that demo's seed job, read by
+eval-engine when `.env` sets `EVAL_COMPLIANCE_OVERLAY_PATH` to it. The
+listing below is its shape; the file is the source of truth.
 
 ```yaml
 schema_version: prefront.compliance_overlay.v1

@@ -46,6 +46,25 @@ VISIBILITY_PROFILE_PATH = _env("EVAL_VISIBILITY_PROFILE_PATH", "")
 RULE_PACK_PATH = _env("EVAL_RULE_PACK_PATH", "")
 INTENT_CATALOG_PATH = _env("EVAL_INTENT_CATALOG_PATH", "")
 
+# Compliance reporting (compliance_design.md). The per-deployment overlay
+# (Layer B: data classes -> columns, the deployment's own regime) follows the
+# same rule as the two artifacts above: empty = not configured, every data
+# class reports as unbound, never an error. Framework packs (Layer A) are
+# bundled under evalengine/frameworks/; a directory here adds/replaces them.
+COMPLIANCE_OVERLAY_PATH = _env("EVAL_COMPLIANCE_OVERLAY_PATH", "")
+FRAMEWORK_PACKS_DIR = _env("EVAL_FRAMEWORK_PACKS_DIR", "")
+# Verdict rows the report folds per request (newest first); past this the
+# report flags itself `truncated` rather than silently under-counting.
+COMPLIANCE_ROW_CAP = int(_env("EVAL_COMPLIANCE_ROW_CAP", "20000"))
+
+# Retention for this service's OWN tables (eval_verdicts, eval_conformance_tags,
+# eval_evaluated_sessions), as a ClickHouse TTL on evaluated_at. 0 = none
+# (the historical behaviour: unbounded growth). oob-ingest has the matching
+# OOB_RETENTION_DAYS for `spans`; set both, or a re-evaluation of spans that
+# outlived their verdicts re-creates the verdicts at the CURRENT artifact
+# versions (the version key sees an unevaluated session, which is correct).
+RETENTION_DAYS = int(_env("EVAL_RETENTION_DAYS", "0"))
+
 # Deployment mode for the standalone worker/API. Phase A only ever runs OOB;
 # "inline" mode of the *combinator* is exercised by semantic-mcp-server
 # importing evalengine directly (Phase D), not by this service.

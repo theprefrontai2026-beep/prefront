@@ -1,0 +1,50 @@
+schema_version: prefront.framework_pack.v1
+framework: pci_dss
+title: PCI-DSS v4.0
+version: "1"
+out_of_scope:
+  - "Req 1-2 network controls, Req 4 transmission encryption, Req 5-6 malware and secure development"
+  - "Req 3.6-3.7 key management, Req 9 physical access, Req 11 vulnerability testing, Req 12 policy"
+  - "Req 3.5 as a storage property of the UPSTREAM store - the engine sees what tools returned, not what is stored"
+controls:
+  - id: req3_3
+    title: Sensitive authentication data not retained after authorisation
+    control_class: field_protection
+    data_class: sensitive_auth_data
+    note: "evidences only that no tool ever returned it - a detector on the class's columns"
+  - id: req3_4
+    title: Primary account number masked when displayed
+    control_class: field_protection
+    data_class: cardholder_data
+  - id: req3_5
+    title: Primary account number unreadable wherever it is stored
+    control_class: field_protection
+    data_class: cardholder_data
+    note: "the trace store holds raw tool payloads unless ingest-side redaction is configured (§5.2)"
+  - id: req7_2
+    title: Access by business need to know
+    control_class: access
+    data_class: cardholder_data
+  - id: req7_2_least_privilege
+    title: Least privilege - fields and rows
+    control_class: minimization
+    data_class: cardholder_data
+  - id: req8_2
+    title: Unique identification of users
+    control_class: access
+    note: "the acting agent is not identified as a principal separate from the human (§5.5)"
+  - id: req10_2
+    title: Audit logs of all access to cardholder data
+    control_class: audit_logging
+    data_class: cardholder_data
+  - id: req10_3
+    title: Audit logs protected from destruction and modification
+    control_class: audit_logging
+    note: "the inline governance trace is hash-chained; the verdict store is not tamper-evident (§5.4)"
+  - id: req10_4
+    title: Audit logs reviewed
+    control_class: monitoring
+    note: "no review attestation record"
+  - id: req10_5
+    title: Audit log retention
+    control_class: retention

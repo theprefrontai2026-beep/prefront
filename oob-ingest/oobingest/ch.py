@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
@@ -120,6 +121,39 @@ def ensure_schema() -> None:
     c.command(DDL_STATE)
     for name, typ in _ADDED_COLUMNS:
         c.command(f"ALTER TABLE {config.CLICKHOUSE_DB}.spans ADD COLUMN IF NOT EXISTS {name} {typ}")
+    apply_retention(config.RETENTION_DAYS)
+
+
+def apply_retention(days: int) -> str:
+    """Set (days > 0) or clear (days == 0) the TTL on `spans`. Idempotent and
+    never fatal - a failure is logged and ingestion still starts; the
+    compliance report then truthfully shows the table without a TTL.
+    Returns the TTL expression ClickHouse now holds ("" when none)."""
+    full = f"{config.CLICKHOUSE_DB}.spans"
+    try:
+        if days > 0:
+            client().command(f"ALTER TABLE {full} MODIFY TTL toDateTime(start_time) + toIntervalDay({int(days)})")
+        else:
+            client().command(f"ALTER TABLE {full} REMOVE TTL")
+    except Exception as e:  # noqa: BLE001
+        log.warning("retention: could not %s TTL on %s: %s", "set" if days > 0 else "clear", full, e)
+    return spans_ttl()
+
+
+_TTL_RE = re.compile(r"\bTTL\s+(.+?)(?:\s+SETTINGS\b|$)", re.IGNORECASE | re.DOTALL)
+
+
+def spans_ttl() -> str:
+    """The TTL expression on `spans` as ClickHouse reports it - what is
+    enforced, not what was asked for."""
+    res = client().query(
+        "SELECT engine_full FROM system.tables WHERE database = %(db)s AND name = 'spans'",
+        parameters={"db": config.CLICKHOUSE_DB},
+    )
+    if not res.result_rows:
+        return ""
+    m = _TTL_RE.search(str(res.result_rows[0][0] or ""))
+    return m.group(1).strip() if m else ""
 
 
 def ping() -> bool:

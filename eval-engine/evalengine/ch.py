@@ -11,6 +11,8 @@ never writes them.
 from __future__ import annotations
 
 import json
+import logging
+import re
 import threading
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
@@ -19,6 +21,8 @@ import clickhouse_connect
 
 from . import config
 from .contract import family_label
+
+log = logging.getLogger("evalengine.ch")
 
 _client = None
 _lock = threading.Lock()
@@ -119,6 +123,9 @@ def reset_client() -> None:
         _client = None
 
 
+_RETENTION_TABLES = ("eval_verdicts", "eval_conformance_tags", "eval_evaluated_sessions")
+
+
 def ensure_schema() -> None:
     c = client()
     c.command(f"CREATE DATABASE IF NOT EXISTS {config.CLICKHOUSE_DB}")
@@ -127,6 +134,52 @@ def ensure_schema() -> None:
     c.command(DDL_EVALUATED)
     for name, typ in _ADDED_VERDICT_COLUMNS:
         c.command(f"ALTER TABLE {config.CLICKHOUSE_DB}.eval_verdicts ADD COLUMN IF NOT EXISTS {name} {typ}")
+    apply_retention(config.RETENTION_DAYS)
+
+
+def apply_retention(days: int) -> dict[str, str]:
+    """Set (days > 0) or clear (days == 0) the TTL on this service's tables.
+    Idempotent and never fatal: a TTL failure is logged and the service still
+    starts - the compliance report then shows the table without one, which
+    is the truthful state. Returns table -> TTL expression after the call."""
+    c = client()
+    for t in _RETENTION_TABLES:
+        full = f"{config.CLICKHOUSE_DB}.{t}"
+        try:
+            if days > 0:
+                c.command(f"ALTER TABLE {full} MODIFY TTL toDateTime(evaluated_at) + toIntervalDay({int(days)})")
+            else:
+                c.command(f"ALTER TABLE {full} REMOVE TTL")
+        except Exception as e:  # noqa: BLE001
+            log.warning("retention: could not %s TTL on %s: %s", "set" if days > 0 else "clear", full, e)
+    return table_ttls(_RETENTION_TABLES)
+
+
+_TTL_RE = re.compile(r"\bTTL\s+(.+?)(?:\s+SETTINGS\b|$)", re.IGNORECASE | re.DOTALL)
+
+
+def table_ttls(names: Iterable[str]) -> dict[str, str]:
+    """table -> its TTL expression ("" when none), read from system.tables.
+    Read-only; used by the compliance report's `retention` control so the
+    claim is what ClickHouse actually enforces, not what config asked for."""
+    names = list(names)
+    if not names:
+        return {}
+    data = rows(
+        "SELECT name, engine_full FROM system.tables WHERE database = %(db)s AND name IN %(names)s",
+        {"db": config.CLICKHOUSE_DB, "names": names},
+    )
+    out = {n: "" for n in names}
+    for r in data:
+        m = _TTL_RE.search(str(r.get("engine_full") or ""))
+        out[str(r["name"])] = m.group(1).strip() if m else ""
+    return out
+
+
+def spans_ttl() -> str:
+    """The shared `spans` table's TTL expression ("" when none) - oob-ingest
+    owns that table; this is a read of its state for the report."""
+    return table_ttls(("spans",)).get("spans", "")
 
 
 def ping() -> bool:
@@ -466,6 +519,30 @@ def list_conformance(limit: int = 100, offset: int = 0, since: int = 0) -> dict[
         f"SELECT * FROM {TAGS_T} WHERE {where} ORDER BY evaluated_at DESC LIMIT %(limit)s OFFSET %(offset)s", params,
     )
     return {"conformance_tags": data, "total": total, "limit": params["limit"], "offset": params["offset"]}
+
+
+_REPORT_COLS = ("session_id", "check_id", "family", "rule_id", "status", "effect", "detail",
+                "evidence_span_ids", "evidence_excerpt", "source", "event_id", "evaluated_at",
+                "rule_pack_version", "catalog_version")
+
+
+def verdict_rows_for_report(since: int = 0, cap: int = 20000) -> tuple[list[dict[str, Any]], bool]:
+    """Every verdict (any status) in the window, newest first, up to `cap`.
+    Returns (rows, truncated). The compliance report folds these per control
+    in Python because the data-class scoping matches field names inside
+    `detail`, which no GROUP BY can do."""
+    where = "1 = 1"
+    params: dict[str, Any] = {"limit": max(1, int(cap)) + 1}
+    if since and int(since) > 0:
+        where += " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
+        params["since"] = int(since)
+    data = rows(
+        f"SELECT {', '.join(_REPORT_COLS)} FROM {VERDICTS_T} WHERE {where} "
+        f"ORDER BY evaluated_at DESC LIMIT %(limit)s",
+        params,
+    )
+    truncated = len(data) > int(cap)
+    return data[: int(cap)], truncated
 
 
 def truncate() -> None:

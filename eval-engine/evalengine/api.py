@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import binding as binding_mod
+from . import compliance as compliance_mod
 from . import config, evaluate, store, visibility as visibility_mod
 from .family1 import compilepack as rulepack_mod
 from .family3 import catalog as catalog_mod
@@ -26,6 +27,8 @@ _binding = binding_mod.load(config.TRACE_BINDING_PATH)
 _visibility = visibility_mod.load(config.VISIBILITY_PROFILE_PATH)
 _rule_pack = rulepack_mod.load(config.RULE_PACK_PATH)
 _catalog = catalog_mod.load(config.INTENT_CATALOG_PATH)
+_packs = compliance_mod.load_packs(config.FRAMEWORK_PACKS_DIR)
+_overlay = compliance_mod.load_overlay(config.COMPLIANCE_OVERLAY_PATH)
 worker = Worker(_binding, _visibility, _rule_pack, _catalog)
 _started_at = datetime.now(timezone.utc)
 
@@ -75,7 +78,13 @@ async def status(since: int = 0):
             "rule_pack": {"path": config.RULE_PACK_PATH or "(not configured)", "rule_count": len(_rule_pack.rules)},
             "intent_catalog": {"path": config.INTENT_CATALOG_PATH or "(not configured)",
                               "intent_count": len(_catalog.intents)},
+            "compliance_overlay": {"path": config.COMPLIANCE_OVERLAY_PATH or "(not configured)",
+                                   "configured": _overlay.configured, "deployment": _overlay.deployment,
+                                   "frameworks": list(_overlay.frameworks),
+                                   "data_classes": {k: len(v) for k, v in _overlay.data_classes.items()}},
+            "framework_packs": sorted(_packs),
         },
+        "retention_days": config.RETENTION_DAYS,
         "engine_version": config.ENGINE_VERSION,
         "mode": config.EVAL_MODE,
         "started_at": _started_at.isoformat(),
@@ -109,6 +118,57 @@ async def coverage(since: int = 0):
             "never_fired_ids": [r["rule_id"] for r in never],
             "rules": rules,
         },
+    }
+
+
+@app.get("/eval/compliance")
+async def compliance(since: int = 0, framework: str = ""):
+    """Framework evidence: every control of every selected pack, resolved to
+    evidenced / violated / indeterminate / no_evidence / unbound /
+    not_configured over the window's verdicts (compliance_design.md §2.3).
+    A view over existing verdicts - nothing is evaluated or stored here.
+    With no overlay configured every pack is reported and every data class
+    is unbound, which is the truthful state, not an error (Hard Rule 9)."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    rows, truncated = await asyncio.to_thread(store.verdict_rows_for_report, since, config.COMPLIANCE_ROW_CAP) if ok else ([], False)
+    retention = await asyncio.to_thread(store.retention_facts) if ok else {}
+    facts = {
+        "clickhouse_ok": ok,
+        "rule_pack_configured": bool(_rule_pack.rules),
+        "catalog_configured": bool(_catalog.intents),
+        "retention": retention,
+        "retention_days": config.RETENTION_DAYS,
+        "engine_version": config.ENGINE_VERSION,
+        "mode": config.EVAL_MODE,
+        "shadow": config.EVAL_MODE != "inline",
+        "worker": {"polls": worker.polls, "evaluated_total": worker.evaluated_total, "last_error": worker.last_error},
+        "row_cap": config.COMPLIANCE_ROW_CAP,
+        "truncated": truncated,
+    }
+    return compliance_mod.build_report(packs=_packs, overlay=_overlay, verdict_rows=rows, since=since,
+                                       facts=facts, only=framework)
+
+
+@app.get("/eval/compliance/packs")
+async def compliance_packs():
+    """The loaded Layer A packs, in full - what a deployment's overlay can
+    select from, and the reference for authoring an extra pack."""
+    return {
+        "packs": [
+            {
+                "framework": p.framework, "title": p.title, "version": p.version,
+                "out_of_scope": list(p.out_of_scope),
+                "controls": [
+                    {"id": c.id, "title": c.title, "control_class": c.control_class,
+                     "data_class": c.data_class, "note": c.note,
+                     "check_ids": list(compliance_mod.CONTROL_CLASS_CHECKS.get(c.control_class, ()))}
+                    for c in p.controls
+                ],
+            }
+            for p in _packs.values()
+        ],
+        "control_classes": {k: list(v) for k, v in compliance_mod.CONTROL_CLASS_CHECKS.items()},
+        "field_aware_checks": sorted(compliance_mod.FIELD_AWARE_CHECKS),
     }
 
 

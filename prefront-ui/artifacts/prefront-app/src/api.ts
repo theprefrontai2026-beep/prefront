@@ -339,3 +339,16 @@ export function saveSeverityRules(demo: string, rules: SeverityRule[]) {
 export function resetSeverityRules(demo: string) {
   return fetch(`/api/settings/severity?demo=${encodeURIComponent(demo)}`, { method: "DELETE" }).then(jsonOrThrow);
 }
+
+// Compliance (compliance_design.md, Layer B): draft a CANDIDATE overlay from
+// the PII scan's per-column entities. semantic-layer never writes it anywhere.
+export function suggestComplianceOverlay(body: {
+  deployment: string; policy_document: string;
+  fields: { table: string; column: string; entity: string }[]; frameworks: string[];
+}): Promise<{ overlay: any; yaml: string; unmapped: { column: string; entity: string }[]; bound: number }> {
+  return fetch("/design/semantic/compliance/overlay/suggest", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(jsonOrThrow);
+}
