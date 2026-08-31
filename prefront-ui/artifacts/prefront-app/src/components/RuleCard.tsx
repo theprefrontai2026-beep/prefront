@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+import CopyLink from "./CopyLink";
 import { localTime } from "../util";
 import type { Reviewer } from "../hooks/useReviewSync";
 import RuleProvenance from "./RuleProvenance";
@@ -32,18 +34,34 @@ interface Props {
   focusers?: Reviewer[];
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
+  /** App-relative link to this rule, for the header's Copy link button. */
+  shareHref?: string;
+  /** True when a shared /policy/<doc>?rule=<key> link points at this card. */
+  highlighted?: boolean;
 }
 
-export default function RuleCard({ row, onApprove, onReject, busy, validation, focusers = [], onMouseEnter, onMouseLeave }: Props) {
+export default function RuleCard({ row, onApprove, onReject, busy, validation, focusers = [], onMouseEnter, onMouseLeave, shareHref, highlighted = false }: Props) {
   const rule = row.rule || {};
   const effect = rule.effect || {};
   const status = row.review_status || "pending";
   const decided = status === "approved" || status === "rejected";
   const confidence = Math.round((row.confidence ?? rule.confidence ?? 0) * 100);
 
+  // Scroll a linked rule into view once — guarded by the key it last scrolled
+  // to, so the list re-rendering (a keystroke in the filter box, a websocket
+  // presence update) doesn't yank the page back.
+  const ref = useRef<HTMLElement | null>(null);
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlighted || scrolledTo.current === rule.rule_key) return;
+    scrolledTo.current = rule.rule_key;
+    ref.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlighted, rule.rule_key]);
+
   return (
     <article
-      className={`pf-rule-card status-${status}`}
+      ref={ref}
+      className={`pf-rule-card status-${status} ${highlighted ? "pf-rule-linked" : ""}`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
@@ -64,7 +82,10 @@ export default function RuleCard({ row, onApprove, onReject, busy, validation, f
           <span className="pf-badge type">{rule.rule_type}</span>
         </div>
         <div className="pf-rule-meta">
-          <span className={`pf-badge review-${status}`}>{status}</span>
+          <div className="pf-rule-meta-row">
+            {shareHref && <CopyLink href={shareHref} title="Copy a link to this rule" />}
+            <span className={`pf-badge review-${status}`}>{status}</span>
+          </div>
           {row.created_at && (
             <span className="pf-rule-generated" title={`generated ${row.created_at} UTC`}>
               {localTime(row.created_at)}

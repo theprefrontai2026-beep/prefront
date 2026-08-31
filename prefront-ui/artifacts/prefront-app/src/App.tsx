@@ -10,7 +10,10 @@ import Semantic from "./components/Semantic";
 import Observability from "./components/Observability";
 import Settings from "./components/Settings";
 import DemoChooser from "./components/DemoChooser";
+import CopyLink from "./components/CopyLink";
 import { useDemo } from "./DemoContext";
+import { useLoc } from "./lib/router";
+import { TAB_PATH, tabFromPath, navTo, findingsHref } from "./routes";
 import { parseKV } from "./util";
 import { useReviewSync, type ReviewEvent } from "./hooks/useReviewSync";
 
@@ -172,14 +175,34 @@ function ReviewerDot({ name, color, focused }: { name: string; color: string; fo
 
 export default function App() {
   const { demo, demoId, openChooser } = useDemo();
-  const [tab, setTab] = useState("dashboard");
+  // The active tab is DERIVED from the URL, not held in state — that is what
+  // makes every page directly reachable by link. `tabFromPath` falls back to
+  // the Overview for anything unknown, so PAGE_META below can't be undefined.
+  const loc = useLoc();
+  const tab = tabFromPath(loc.segs);
+
+  // Where you last were inside each tab. Tab bodies never unmount, so before
+  // routing existed a sub-view (Observability's Sessions, an open session)
+  // simply survived navigating away and back; remembering the last URL per
+  // tab keeps that true now that the sub-view lives in the path.
+  const lastPath = useRef<Record<string, string>>({});
+  useEffect(() => { lastPath.current[tab] = loc.key; }, [tab, loc.key]);
   // Lifted so the Overview can deep-link into Decision Traces > Findings,
   // optionally prefiltered by effect (block / approval_required / flag).
   const [tracesSection, setTracesSection] = useState<TracesSection>("decisions");
   const [findingsEffect, setFindingsEffect] = useState("");
   const [findingsSeverity, setFindingsSeverity] = useState("");
-  const [graphMounted, setGraphMounted] = useState(false);
-  const [bizGraphMounted, setBizGraphMounted] = useState(false);
+  // Both graphs are mounted lazily (they are the two expensive subtrees) and
+  // the latch is one-way, so they never unmount once opened. Keyed off the
+  // DERIVED tab rather than the nav click, so a deep link / Back-forward
+  // mounts them too — a /data-graph link rendered blank when this lived in
+  // the sidebar's onClick.
+  const [graphMounted, setGraphMounted] = useState(() => tab === "graph");
+  const [bizGraphMounted, setBizGraphMounted] = useState(() => tab === "bizgraph");
+  useEffect(() => {
+    if (tab === "graph") setGraphMounted(true);
+    if (tab === "bizgraph") setBizGraphMounted(true);
+  }, [tab]);
   const [rules, setRules] = useState<any[]>([]);
   const [domain, setDomain] = useState("");
   const [schema, setSchema] = useState<any>(() => loadJSON(schemaKey(demoId)));
@@ -239,6 +262,9 @@ export default function App() {
   useEffect(() => {
     if (prevDemo.current === demoId) return;
     prevDemo.current = demoId;
+    // Artifact ids are demo-scoped, so the remembered per-tab URLs from the
+    // previous demo are meaningless now.
+    lastPath.current = {};
     setSchema(loadJSON(schemaKey(demoId)));
     try { setIntents(localStorage.getItem(intentsKey(demoId)) || ""); } catch { setIntents(""); }
     setRules([]);
@@ -255,7 +281,7 @@ export default function App() {
   // The Data Graph renders two different things depending on what's connected —
   // a table/relationship map, or an MCP server's tools — so its subtitle can't
   // be a constant without describing the wrong one half the time.
-  const baseMeta = PAGE_META[tab];
+  const baseMeta = PAGE_META[tab] ?? PAGE_META.dashboard;
   const meta = (tab === "graph" && schema?.sourceType === "mcp")
     ? { ...baseMeta, desc: "Every tool this MCP server declares — parameters, declared outputs, behaviour annotations, and applied governance policies." }
     : baseMeta;
@@ -293,7 +319,7 @@ export default function App() {
             <button
               key={t.id}
               className={`pf-nav-item ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
-              onClick={() => { setTab(t.id); if (t.id === "graph") setGraphMounted(true); if (t.id === "bizgraph") setBizGraphMounted(true); }}
+              onClick={() => navTo(lastPath.current[t.id] ?? TAB_PATH[t.id])}
               title={t.label}
             >
               <Icon />
@@ -306,7 +332,7 @@ export default function App() {
         {/* Bottom utility icons */}
         <div className="pf-sidebar-bottom">
           <button className="pf-nav-item" title="Notifications"><IconBell /></button>
-          <button className={`pf-nav-item ${tab === "settings" ? "active" : ""}`} title="Settings" onClick={() => setTab("settings")}><IconSettings /></button>
+          <button className={`pf-nav-item ${tab === "settings" ? "active" : ""}`} title="Settings" onClick={() => navTo(lastPath.current.settings ?? TAB_PATH.settings)}><IconSettings /></button>
         </div>
       </aside>
 
@@ -324,6 +350,8 @@ export default function App() {
           </div>
 
           <div className="pf-page-actions">
+            {/* Share the page you are on (each artifact has its own button) */}
+            <CopyLink label="Copy link" compact={false} title="Copy a link to this page" />
             {/* Live presence */}
             <div className="pf-presence">
               {connected ? (
@@ -353,11 +381,11 @@ export default function App() {
         <div className="pf-body" key={demoId}>
           <div className={tab === "dashboard" ? "" : "tab-hidden"}>
             <Overview demo={demo} active={tab === "dashboard"}
-                      onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setFindingsSeverity(""); setTracesSection("findings"); setTab("traces"); }}
-                      onOpenFindingsSeverity={(sev) => { setFindingsSeverity(sev ?? ""); setFindingsEffect(""); setTracesSection("findings"); setTab("traces"); }}
-                      onOpenDecisions={() => { setTracesSection("decisions"); setTab("traces"); }}
-                      onOpenObservability={() => setTab("oob")}
-                      onOpenSettings={() => setTab("settings")} />
+                      onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setFindingsSeverity(""); setTracesSection("findings"); navTo(findingsHref()); }}
+                      onOpenFindingsSeverity={(sev) => { setFindingsSeverity(sev ?? ""); setFindingsEffect(""); setTracesSection("findings"); navTo(findingsHref()); }}
+                      onOpenDecisions={() => { setTracesSection("decisions"); navTo(TAB_PATH.traces); }}
+                      onOpenObservability={() => navTo(TAB_PATH.oob)}
+                      onOpenSettings={() => navTo(TAB_PATH.settings)} />
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
             <DecisionTraces active={tab === "traces"} demo={demo} section={tracesSection} onSection={setTracesSection} findingsEffect={findingsEffect} findingsSeverity={findingsSeverity} />

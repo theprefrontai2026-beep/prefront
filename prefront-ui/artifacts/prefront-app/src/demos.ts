@@ -107,6 +107,9 @@ export const DEMOS: DemoConfig[] = [
 // LoanPro is the active demo — SecureBank is profile-disabled in docker-compose.
 export const DEFAULT_DEMO: DemoId = "loanpro";
 
+// Falls back to DEFAULT_DEMO, not DEMOS[0] — an unrecognised id (a stale
+// localStorage value, or a bad ?demo= in a shared link) must land on the
+// demo the rest of the app defaults to, not silently on a different one.
 export function getDemo(id: string | null | undefined): DemoConfig {
-  return DEMOS.find((d) => d.id === id) ?? DEMOS[0];
+  return DEMOS.find((d) => d.id === id) ?? DEMOS.find((d) => d.id === DEFAULT_DEMO) ?? DEMOS[0];
 }

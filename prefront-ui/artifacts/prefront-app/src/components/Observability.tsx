@@ -17,6 +17,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CopyLink from "./CopyLink";
+import { setParams, useLoc } from "../lib/router";
+import { navTo, obsViewHref, onTab, sessionHref, traceHref } from "../routes";
 
 /* ── types (mirror oobingest/ch.py) ─────────────────────────────────────── */
 
@@ -489,14 +492,21 @@ function TracesView({ since, project, facets, refreshKey, initialTrace, onOpenTr
 function TraceDetail({ traceId, onClose }: { traceId: string; onClose: () => void }) {
   const [spans, setSpans] = useState<Span[]>([]);
   const [err, setErr] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  // The inspected span is `?span=` when one was picked (or arrived in a shared
+  // link), else the root the fetch defaults to. Only an explicit pick is
+  // written to the URL, so a plain trace link stays short — and CopyLink
+  // below shares the EFFECTIVE span, i.e. what you are actually looking at.
+  const [autoRoot, setAutoRoot] = useState<string | null>(null);
+  const spanParam = useLoc().query.get("span");
+  const selected = spanParam ?? autoRoot;
+  const setSelected = (id: string) => setParams({ span: id }, { replace: true });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let alive = true;
-    setSpans([]); setSelected(null); setErr("");
+    setSpans([]); setAutoRoot(null); setErr("");
     getJSON<{ spans: Span[] }>(`/oob/traces/${encodeURIComponent(traceId)}`)
-      .then((d) => { if (alive) { setSpans(d.spans); setSelected(d.spans.find((s) => !s.parent_span_id)?.span_id ?? d.spans[0]?.span_id ?? null); } })
+      .then((d) => { if (alive) { setSpans(d.spans); setAutoRoot(d.spans.find((s) => !s.parent_span_id)?.span_id ?? d.spans[0]?.span_id ?? null); } })
       .catch((e) => { if (alive) setErr(String(e?.message || e)); });
     return () => { alive = false; };
   }, [traceId]);
@@ -537,7 +547,10 @@ function TraceDetail({ traceId, onClose }: { traceId: string; onClose: () => voi
           <h3>{root ? <><KindBadge kind={root.kind} /> {root.name}</> : "Trace"}</h3>
           <div className="pf-oob-subtle mono">trace {traceId} · {spans.length} spans · {ms(total)} · {llm.length} LLM calls · {num(tokens)} tokens{errors ? ` · ${errors} errors` : ""}</div>
         </div>
-        <button className="pf-btn sm" onClick={onClose}>Close</button>
+        <div className="pf-oob-actions">
+          <CopyLink href={traceHref(traceId, selected)} title="Copy a link to this trace" />
+          <button className="pf-btn sm" onClick={onClose}>Close</button>
+        </div>
       </div>
       {err && <div className="pf-oob-error">{err}</div>}
       <div className="pf-oob-detail-body">
@@ -977,6 +990,7 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
       <div className="pf-oob-detail-footer">
         <div className="pf-oob-subtle mono">
           session {sessionId}
+          {" "}<CopyLink href={sessionHref(sessionId)} title="Copy a link to this session" />
           {" "}· {root?.user_role || root?.attributes["app.user.role"] || "?"} · user {root?.user_id || root?.attributes["user.id"] || "?"} · {root?.channel || root?.attributes["app.channel"] || "?"}
           {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
           {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turn{spans.filter((s) => /^turn /.test(s.name)).length === 1 ? "" : "s"}
@@ -1022,9 +1036,10 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */
-export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, findingStatus, refreshKey, onClose }: {
+export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, findingStatus, refreshKey, shareHref, onClose }: {
   sessionId: string; initialSpanId?: string | null; eventId?: string | null;
   findingDetail?: string; findingSource?: string; findingStatus?: string; refreshKey: number;
+  shareHref?: string;   // app-relative link to whatever opened this flyout
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -1041,6 +1056,7 @@ export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail
             {eventId ? `${findingStatus === "satisfied" ? "evidence" : "finding"} ${eventId}` : "Trace detail"}
           </div>
           <div className="pf-oob-actions">
+            <CopyLink href={shareHref ?? sessionHref(sessionId)} title="Copy a link to this record" />
             <button className="pf-btn sm" onClick={onClose}>Close ✕</button>
           </div>
         </div>
@@ -1187,8 +1203,16 @@ export const STATUS_TONE: Record<string, string> = { violated: "red", satisfied:
 /* ── root ───────────────────────────────────────────────────────────────── */
 
 export default function Observability({ active = true }: { active?: boolean }) {
-  const [view, setView] = useState<View>("overview");
-  const [openSess, setOpenSess] = useState<string | null>(null);
+  // View and open artifact both come from the URL:
+  //   /observability/<view>, /observability/sessions/<id>,
+  //   /observability/traces/<id>?span=<span_id>
+  // so any of them can be linked to directly. "goTrace also switches the
+  // view" now falls out of the path shape rather than being a side effect.
+  const loc = useLoc();
+  const here = onTab(loc.segs, "oob");
+  const view: View = here && (VIEWS as readonly string[]).includes(loc.segs[1] ?? "") ? (loc.segs[1] as View) : "overview";
+  const openSess = here && view === "sessions" ? loc.segs[2] ?? null : null;
+  const openTrace = here && view === "traces" ? loc.segs[2] ?? null : null;
   const [since, setSince] = useState<number>(86400);
   const [project, setProject] = useState("");
   const [auto, setAuto] = useState(true);
@@ -1198,7 +1222,6 @@ export default function Observability({ active = true }: { active?: boolean }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [llm, setLlm] = useState<LlmView | null>(null);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
-  const [openTrace, setOpenTrace] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const timer = useRef<number | null>(null);
@@ -1226,8 +1249,8 @@ export default function Observability({ active = true }: { active?: boolean }) {
     return () => { if (timer.current) window.clearInterval(timer.current); };
   }, [auto, active, refresh]);
 
-  const goTrace = (id: string | null) => { setOpenTrace(id); if (id) setView("traces"); };
-  const goSession = (id: string | null) => { setOpenSess(id); if (id) setView("sessions"); };
+  const goTrace = (id: string | null) => navTo(id ? traceHref(id) : obsViewHref("traces"));
+  const goSession = (id: string | null) => navTo(id ? sessionHref(id) : obsViewHref("sessions"));
 
   const sync = async () => {
     setBusy(true);
@@ -1250,7 +1273,8 @@ export default function Observability({ active = true }: { active?: boolean }) {
         fetch("/eval/verdicts", { method: "DELETE" }),
       ]);
       if (!phoenix.ok) setErr(`ClickHouse cleared, but Phoenix purge failed (${phoenix.statusText || phoenix.status}) — its traces will be re-pulled on the next poll.`);
-      setOpenTrace(null);
+      // The trace we were looking at no longer exists — drop it from the URL.
+      if (openTrace) navTo(obsViewHref("traces"), { replace: true });
       refresh();
     } finally { setBusy(false); }
   };
@@ -1260,7 +1284,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
     <div className="pf-oob">
       <div className="pf-oob-toolbar">
         <div className="pf-oob-views">
-          {VIEWS.map((v) => <button key={v} className={`pf-oob-view ${view === v ? "active" : ""}`} onClick={() => setView(v)}>{VIEW_LABEL[v]}</button>)}
+          {VIEWS.map((v) => <button key={v} className={`pf-oob-view ${view === v ? "active" : ""}`} onClick={() => navTo(obsViewHref(v))}>{VIEW_LABEL[v]}</button>)}
         </div>
         <div className="pf-oob-controls">
           <span className={`pf-oob-health ${ok ? "ok" : "bad"}`} title={status ? `ClickHouse ${ok ? "connected" : "unreachable"} · Phoenix ${status.phoenix.last_error ? "error" : `synced ${ago(status.phoenix.last_sync)}`}` : "connecting…"}>

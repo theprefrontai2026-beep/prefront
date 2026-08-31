@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import CopyLink from "./CopyLink";
+import { useLoc } from "../lib/router";
+import { TAB_PATH, bizNodeHref, navTo, onTab } from "../routes";
 import ReactFlow, {
   Background,
   Controls,
@@ -559,7 +562,7 @@ const NODE_TYPES = {
 };
 
 // ── Detail Panel ──────────────────────────────────────────────────────────────
-function DetailPanel({ node, onClose }: { node: BizEntity; onClose: () => void }) {
+function DetailPanel({ node, shareHref, onClose }: { node: BizEntity; shareHref?: string; onClose: () => void }) {
   const d = DOMAIN[node.domain] ?? DOMAIN.governance;
   const kindLabel = node.kind === "entity" ? "Business Entity" : node.kind === "process" ? "Business Process" : node.kind === "role" ? "Actor / Role" : "Governance";
 
@@ -576,7 +579,10 @@ function DetailPanel({ node, onClose }: { node: BizEntity; onClose: () => void }
             </div>
           </div>
         </div>
-        <button className="dg-detail-close" onClick={onClose}>×</button>
+        <div className="dg-detail-actions">
+          {shareHref && <CopyLink href={shareHref} title="Copy a link to this node" />}
+          <button className="dg-detail-close" onClick={onClose}>×</button>
+        </div>
       </div>
 
       <div className="dg-detail-body">
@@ -770,7 +776,10 @@ interface Props {
 
 export default function BusinessGraph({ catalog, datasourceId, rules = [], intents = "", domain }: Props) {
   const [bound, setBound] = useState<any>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The open node is the URL: /business-graph/<ent-|proc-|role-|gov-…> key.
+  const loc = useLoc();
+  const onBizTab = onTab(loc.segs, "bizgraph");
+  const selectedId = onBizTab ? loc.segs[1] ?? null : null;
 
   // Authoritative bound policy bundle for this datasource (best-effort).
   useEffect(() => {
@@ -816,8 +825,13 @@ export default function BusinessGraph({ catalog, datasourceId, rules = [], inten
   useEffect(() => {
     setNodes(rfNodes);
     setEdges(rfEdges);
-    setSelectedId((prev) => (prev && graph.nodes.some((n) => n.id === prev) ? prev : null));
-  }, [rfNodes, rfEdges, graph.nodes, setNodes, setEdges]);
+    // Only strip an unknown id once the graph HAS nodes — this view is gated
+    // on catalog + policy both arriving, and a cold deep link must not lose
+    // its node while it waits for them.
+    if (onBizTab && graph.nodes.length && selectedId && !graph.nodes.some((n) => n.id === selectedId)) {
+      navTo(TAB_PATH.bizgraph, { replace: true });
+    }
+  }, [rfNodes, rfEdges, graph.nodes, setNodes, setEdges, selectedId, onBizTab]);
 
   const styledNodes = useMemo(
     () => nodes.map((n) => ({ ...n, data: { ...n.data, selected: n.id === selectedId } })),
@@ -867,7 +881,7 @@ export default function BusinessGraph({ catalog, datasourceId, rules = [], inten
             nodeTypes={NODE_TYPES}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
-            onNodeClick={(_, node) => setSelectedId(prev => prev === node.id ? null : node.id)}
+            onNodeClick={(_, node) => navTo(node.id === selectedId ? TAB_PATH.bizgraph : bizNodeHref(node.id))}
             fitView
             fitViewOptions={{ padding: 0.1 }}
             minZoom={0.3}
@@ -881,7 +895,7 @@ export default function BusinessGraph({ catalog, datasourceId, rules = [], inten
         </div>
 
         {SHOW_DETAIL_PANEL && (selectedNode ? (
-          <DetailPanel node={selectedNode} onClose={() => setSelectedId(null)} />
+          <DetailPanel node={selectedNode} shareHref={bizNodeHref(selectedNode.id)} onClose={() => navTo(TAB_PATH.bizgraph)} />
         ) : (
           <div className="dg-detail-panel dg-detail-empty" style={{ width: 280, minWidth: 280 }}>
             <div className="dg-detail-empty-icon">

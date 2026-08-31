@@ -475,6 +475,34 @@ select { cursor: pointer; }
 
 .pf-btn.sm { padding: 5px 12px; font-size: 12px; }
 
+/* ── Copy link (the share affordance) ────────────────────────────────────── */
+.pf-copylink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+.pf-copylink.compact { padding: 4px 6px; }
+.pf-copylink:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-light); }
+.pf-copylink.copied { border-color: var(--green); color: var(--green); background: var(--green-light); }
+/* In a table row the button stays quiet until the row is hovered. */
+tr .pf-copylink { border-color: transparent; background: transparent; opacity: 0; }
+tr:hover .pf-copylink, tr .pf-copylink.copied, tr .pf-copylink:focus-visible { opacity: 1; }
+td.pf-tr-share { width: 34px; text-align: right; }
+
+/* A rule reached by a shared /policy/<doc>?rule=<key> link. */
+.pf-rule-linked { box-shadow: 0 0 0 2px var(--blue); border-color: var(--blue) !important; }
+
 /* ── Status / error ─────────────────────────────────────────────────────── */
 .pf-status { color: var(--green); font-size: 13px; margin: 12px 0 0; display: flex; align-items: center; gap: 6px; }
 .pf-error { color: var(--red); font-size: 13px; margin: 12px 0 0; }
@@ -594,6 +622,7 @@ select { cursor: pointer; }
 }
 .pf-rule-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 .pf-rule-generated { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.pf-rule-meta-row { display: flex; align-items: center; gap: 6px; }
 
 .pf-rule-body { display: grid; gap: 10px; }
 .pf-label {
@@ -956,6 +985,7 @@ select { cursor: pointer; }
   cursor: pointer; color: var(--muted); padding: 0 4px; border-radius: 4px;
 }
 .dg-detail-close:hover { background: var(--red-light); color: var(--red); }
+.dg-detail-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .dg-detail-tags { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 18px 0; }
 .dg-detail-tag {
   font-size: 11px; padding: 2px 9px; border-radius: 999px;
@@ -1586,6 +1616,7 @@ select { cursor: pointer; }
 .pf-find-table th:nth-child(6), .pf-find-table td:nth-child(6) { width: 140px; }  /* Effect - fits "APPROVAL_REQUIRED" on one line */
 .pf-find-table th:nth-child(7), .pf-find-table td:nth-child(7) { width: 20%; }    /* User query */
 .pf-find-table th:nth-child(8), .pf-find-table td:nth-child(8) { width: auto; }   /* Policy / detail */
+.pf-find-table th:nth-child(9), .pf-find-table td:nth-child(9) { width: 40px; }   /* Copy link */
 .pf-tr-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .pf-tr-truncate.narrow { max-width: 90px; }
 

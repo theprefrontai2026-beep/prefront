@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { setParams, useLoc } from "../lib/router";
 import { introspect, introspectMcp, parseSchema, resetDatasources, analyzePii } from "../api";
 import type { DemoConfig } from "../demos";
 
@@ -55,9 +56,14 @@ function mcpDatasourceId(url: string): string {
 }
 
 export default function DataConnector({ demo, onSchema, onDisconnect, restored }: Props) {
-  const [sourceType, setSourceType] = useState<"postgres" | "mcp">(
-    restored?.sourceType === "mcp" ? "mcp" : "postgres"
-  );
+  // The source tab is in the URL (?source=) so /data?source=mcp opens on the
+  // right form. Nothing else here is — a DSN or pasted DDL must never end up
+  // in a link someone can share.
+  const sourceParam = useLoc().query.get("source");
+  const sourceType: "postgres" | "mcp" =
+    sourceParam === "mcp" || sourceParam === "postgres" ? sourceParam
+    : restored?.sourceType === "mcp" ? "mcp" : "postgres";
+  const setSourceType = (v: "postgres" | "mcp") => setParams({ source: v }, { replace: true });
   // Prefilled as a real, editable value (not just a placeholder) so the field is
   // ready to Connect immediately for a demo that ships a default target — the
   // user can still clear/replace it before connecting.

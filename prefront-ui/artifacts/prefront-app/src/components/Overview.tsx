@@ -15,6 +15,7 @@
  */
 
 import { useState, type ReactNode } from "react";
+import CopyLink from "./CopyLink";
 import type { DemoConfig } from "../demos";
 import {
   useOverviewData, byEffect, byRule, familySpread, severityBreakdown,
@@ -197,6 +198,8 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         <div className="pf-ov2-hero-main">
           <div className="pf-ov2-eyebrow">
             Shadow evaluation · last {winLabel}{ev && <> · engine {ev.engine_version}</>}
+            {/* The Overview omits the app header, so its share button lives here. */}
+            {" "}<CopyLink title="Copy a link to this dashboard" />
           </div>
           <h1 className="pf-ov2-headline">
             {d.loading && !ev ? "…" : num(sessionsEvaluated)} sessions evaluated.{" "}

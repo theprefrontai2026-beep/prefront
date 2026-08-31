@@ -10,6 +10,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import CopyLink from "./CopyLink";
+import { useLoc } from "../lib/router";
+import { findingHref, findingsHref, navTo, onTab } from "../routes";
 import type { FeedDecision, Trace } from "../hooks/useDecisionFeed";
 import type { DemoConfig } from "../demos";
 import { SessionFlyout, parseSource, type EvalVerdict } from "./Observability";
@@ -150,13 +153,71 @@ const OUTCOME_ORDER = ["violated", "indeterminate", "satisfied"];
 // re-applies whenever it changes so a second click from the Overview isn't
 // ignored. `rules` is the customer's severity mapping (severity is derived per
 // row from family+effect, first-match-wins).
+type LinkedFinding = { sessionId: string; spanId: string | null; eventId: string | null;
+                      detail: string; source: string; status: string };
+
+/**
+ * Reconstruct the open finding from the URL, for a link someone was sent.
+ *
+ * `event_id` is not server-resolvable on its own — /eval/verdicts takes only
+ * status|check_id|family|limit|offset|since — so resolution is three-tiered:
+ *   (a) find it in the newest-1000 rows this table already fetched;
+ *   (b) otherwise GET /eval/sessions/{sid}/verdicts and match the event id
+ *       (covers a finding older than that window);
+ *   (c) otherwise open the session anyway with no finding banner. The flyout
+ *       fetches /oob/sessions/{id} itself and the eval pipeline is eventually
+ *       consistent, so the id STAYS in the URL and the page self-heals.
+ */
+function useLinkedFinding(
+  sessionId: string | null,
+  eventId: string | null,
+  spanId: string | null,
+  rows: EvalVerdict[],
+  listStatus: "loading" | "ready" | "error",
+): LinkedFinding | null {
+  const [fetched, setFetched] = useState<EvalVerdict | null>(null);
+  const [tried, setTried] = useState("");
+
+  const inList = useMemo(
+    () => (sessionId && eventId ? rows.find((r) => r.event_id === eventId) ?? null : null),
+    [rows, sessionId, eventId],
+  );
+
+  useEffect(() => {
+    const key = `${sessionId}|${eventId}`;
+    // `tried` keeps a re-render (this component re-renders on every keystroke
+    // in the filter row) from re-issuing the lookup.
+    if (!sessionId || !eventId || inList || listStatus !== "ready" || tried === key) return;
+    setTried(key);
+    let alive = true;
+    fetch(`/eval/sessions/${encodeURIComponent(sessionId)}/verdicts`)
+      .then((r) => r.json())
+      .then((j) => { if (alive) setFetched((j.verdicts || []).find((v: EvalVerdict) => v.event_id === eventId) ?? null); })
+      .catch(() => { /* tier (c) */ });
+    return () => { alive = false; };
+  }, [sessionId, eventId, inList, listStatus, tried]);
+
+  if (!sessionId) return null;
+  const r = inList ?? fetched;
+  return r
+    ? { sessionId, spanId: r.evidence_span_ids?.[0] ?? spanId, eventId: r.event_id || null,
+        detail: r.detail, source: r.source, status: r.status }
+    : { sessionId, spanId, eventId, detail: "", source: "", status: "" };
+}
+
 function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true }: {
   initialEffect?: string; initialSeverity?: string; rules: SeverityRule[]; active?: boolean;
 }) {
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
-  const [flyout, setFlyout] = useState<{ sessionId: string; spanId: string | null; eventId: string | null; detail: string; source: string; status: string } | null>(null);
+  // The open finding is URL state, not component state: /traces/findings/
+  // <session_id>?event=<event_id>&span=<span_id>. That id trio is what a
+  // shared link carries, and the flyout is reconstructed from it below.
+  const loc = useLoc();
+  const here = onTab(loc.segs, "traces");
+  const openSession = here ? loc.segs[2] ?? null : null;
+  const openEvent = here ? loc.query.get("event") : null;
 
   // ── Filters, one per displayed column ──
   const [range, setRange] = useState<number | null>(86400);
@@ -248,6 +309,9 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       || SEVERITY_META[sevOf(b)].rank - SEVERITY_META[sevOf(a)].rank
       || new Date(b.evaluated_at).getTime() - new Date(a.evaluated_at).getTime());
   }, [rows, range, eventId, family, checkId, outcome, effect, severity, policyNum, q, sevOf]);
+
+  // The open finding, resolved from the URL (see useLinkedFinding above).
+  const flyout = useLinkedFinding(openSession, openEvent, loc.query.get("span"), rows, status);
 
   // Distribution over the selected time range only (independent of the column
   // filters), so the family/severity charts always show the full breakdown for
@@ -356,7 +420,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
                width-capped (.pf-tr-truncate) with the full value on hover
                (native title tooltip) so long text never blows out the layout. */}
             <thead>
-              <tr><th>Event</th><th>When</th><th>Outcome</th><th>Severity</th><th>Family</th><th>Effect</th><th>User query</th><th>Policy / detail</th></tr>
+              <tr><th>Event</th><th>When</th><th>Outcome</th><th>Severity</th><th>Family</th><th>Effect</th><th>User query</th><th>Policy / detail</th><th aria-label="Share" /></tr>
             </thead>
             <tbody>
               {filtered.map((r, i) => {
@@ -365,7 +429,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
                 const satisfied = r.status === "satisfied";
                 return (
                 <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
-                    onClick={() => setFlyout({ sessionId: r.session_id, spanId: r.evidence_span_ids?.[0] ?? null, eventId: r.event_id || null, detail: r.detail, source: r.source, status: r.status })}>
+                    onClick={() => navTo(findingHref(r.session_id, r.event_id, r.evidence_span_ids?.[0] ?? null))}>
                   <td className="mono pf-tr-truncate narrow" title={r.event_id || undefined}>{r.event_id || "—"}</td>
                   <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
                   <td><span className={`pf-dash-chip ${om.tone}`}>{om.label}</span></td>
@@ -375,6 +439,9 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
                   <td>{r.effect ? <span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span> : <span className="muted">—</span>}</td>
                   <td className="pf-tr-truncate" title={r.user_query || undefined}>{r.user_query || <span className="muted">—</span>}</td>
                   <td><WhatWentWrong r={r} /></td>
+                  {/* Share THIS event — the link opens straight into its flyout. */}
+                  <td className="pf-tr-share"><CopyLink href={findingHref(r.session_id, r.event_id, r.evidence_span_ids?.[0] ?? null)}
+                                                        title="Copy a link to this event" /></td>
                 </tr>
               );})}
             </tbody>
@@ -385,7 +452,8 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       {flyout && (
         <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId}
                        findingDetail={flyout.detail} findingSource={flyout.source} findingStatus={flyout.status} refreshKey={0}
-                       onClose={() => setFlyout(null)} />
+                       shareHref={findingHref(flyout.sessionId, flyout.eventId, flyout.spanId)}
+                       onClose={() => navTo(findingsHref())} />
       )}
     </>
   );
@@ -408,6 +476,13 @@ export default function DecisionTraces({ active = true, demo, section: controlle
   const section = "findings" as TracesSection;
   void rawSection;
   void setSection;
+  // Canonicalise a bare /traces to /traces/findings (replace — it is an app
+  // correction, not a place the user navigated to, so Back skips it). The URL
+  // grammar already has /traces/decisions for when that view comes back.
+  const tracesLoc = useLoc();
+  useEffect(() => {
+    if (active && tracesLoc.segs[0] === "traces" && !tracesLoc.segs[1]) navTo(findingsHref(), { replace: true });
+  }, [active, tracesLoc.segs]);
   const roleAgents = demo.roleAgents;
   const { rules: severityRules } = useSeverityRules(demo.id, active);
   const [traces, setTraces] = useState<Trace[]>([]);

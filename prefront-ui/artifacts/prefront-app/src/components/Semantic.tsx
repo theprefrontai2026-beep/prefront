@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { setParams, useLoc } from "../lib/router";
 import * as api from "../api";
 import { parseKV } from "../util";
 
@@ -20,7 +21,12 @@ export default function Semantic({
   rules, domain, schema, metricsText, setMetricsText,
   callerScopeText, setCallerScopeText, intents, setIntents,
 }: Props) {
-  const [tab, setTab] = useState<"build" | "dbt" | "templates" | "publish">("build");
+  // Sub-view in the URL (?tab=), same as Policy Studio. This tab has no nav
+  // entry — /semantic is its only way in.
+  const SEM_TABS = ["build", "dbt", "templates", "publish"] as const;
+  const tabParam = useLoc().query.get("tab") ?? "";
+  const tab = (SEM_TABS as readonly string[]).includes(tabParam) ? (tabParam as typeof SEM_TABS[number]) : "build";
+  const setTab = (t: typeof SEM_TABS[number]) => setParams({ tab: t === "build" ? null : t }, { replace: true });
   const [modelId, setModelId] = useState("semantic_model");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");

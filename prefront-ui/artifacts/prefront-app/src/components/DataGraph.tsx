@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import CopyLink from "./CopyLink";
+import { useLoc } from "../lib/router";
+import { TAB_PATH, graphNodeHref, navTo, onTab } from "../routes";
 import ReactFlow, {
   Background,
   Controls,
@@ -502,7 +505,10 @@ function ToolDetailPanel({ tool, onClose }: { tool: ToolDef; onClose: () => void
             {tool.policies.length} polic{tool.policies.length !== 1 ? "ies" : "y"}
           </div>
         </div>
-        <button className="dg-detail-close" onClick={onClose}>×</button>
+        <div className="dg-detail-actions">
+          <CopyLink href={graphNodeHref(tool.id)} title="Copy a link to this tool" />
+          <button className="dg-detail-close" onClick={onClose}>×</button>
+        </div>
       </div>
 
       <div className="dg-detail-tags">
@@ -654,7 +660,10 @@ function DetailPanel({ table, onClose }: { table: TableDef; onClose: () => void 
           <div className="dg-detail-title" style={{ color }}>{table.icon} {table.label}</div>
           <div className="dg-detail-sub">{table.columns.length} columns · {table.policies.length} policies</div>
         </div>
-        <button className="dg-detail-close" onClick={onClose}>×</button>
+        <div className="dg-detail-actions">
+          <CopyLink href={graphNodeHref(table.id)} title="Copy a link to this table" />
+          <button className="dg-detail-close" onClick={onClose}>×</button>
+        </div>
       </div>
 
       {table.tags.length > 0 && (
@@ -902,7 +911,11 @@ interface Props {
 
 export default function DataGraph({ catalog, datasourceId, rules = [], pii, sourceType, mcpTools }: Props) {
   const [bound, setBound] = useState<any>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The open node is the URL: /data-graph/<table or tool name>. Those ids are
+  // human-readable names, not indices, so they survive a reload and a share.
+  const loc = useLoc();
+  const onGraphTab = onTab(loc.segs, "graph");
+  const selectedId = onGraphTab ? loc.segs[1] ?? null : null;
   const piiMap = useMemo<PiiIndex>(() => new Map(Object.entries(pii || {})), [pii]);
 
   // Fetch the authoritative bound policy bundle for this datasource (best-effort).
@@ -944,8 +957,14 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii, sour
   useEffect(() => {
     setNodes(built.nodes);
     setEdges(built.edges);
-    setSelectedId((prev) => (prev && built.defs.some((t: any) => t.id === prev) ? prev : null));
-  }, [built, setNodes, setEdges]);
+    // Drop a node id the graph doesn't have — but ONLY once the graph is
+    // actually built. On a cold deep link the catalog is still loading and
+    // `defs` is empty, and stripping then would erase the shared id before it
+    // ever resolved. `replace`, because this is a correction, not navigation.
+    if (onGraphTab && built.defs.length && selectedId && !built.defs.some((t: any) => t.id === selectedId)) {
+      navTo(TAB_PATH.graph, { replace: true });
+    }
+  }, [built, setNodes, setEdges, selectedId, onGraphTab]);
 
   const selected = useMemo(
     () => (selectedId ? built.defs.find((t: any) => t.id === selectedId) ?? null : null),
@@ -953,8 +972,8 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii, sour
   );
 
   const onNodeClick = useCallback((_: any, node: any) => {
-    setSelectedId((prev) => (prev === node.id ? null : node.id));
-  }, []);
+    navTo(node.id === selectedId ? TAB_PATH.graph : graphNodeHref(node.id));
+  }, [selectedId]);
 
   const styledNodes = useMemo(
     () => nodes.map((n) => ({ ...n, selected: n.id === selectedId })),
@@ -1009,8 +1028,8 @@ export default function DataGraph({ catalog, datasourceId, rules = [], pii, sour
 
         {selected ? (
           isMcp
-            ? <ToolDetailPanel tool={selected as ToolDef} onClose={() => setSelectedId(null)} />
-            : <DetailPanel table={selected as TableDef} onClose={() => setSelectedId(null)} />
+            ? <ToolDetailPanel tool={selected as ToolDef} onClose={() => navTo(TAB_PATH.graph)} />
+            : <DetailPanel table={selected as TableDef} onClose={() => navTo(TAB_PATH.graph)} />
         ) : (
           <div className="dg-empty-detail">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: "var(--muted)", marginBottom: 10 }}>

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buildHref, currentLoc, setParams, useLoc } from "../lib/router";
+import { TAB_PATH, navTo, onTab, policyDocHref, ruleHref } from "../routes";
 import * as api from "../api";
 import { localTime } from "../util";
 import RuleCard from "./RuleCard";
@@ -22,13 +24,50 @@ interface Props {
   remoteRuleUpdates: ReviewEvent[];
 }
 
+const POLICY_TABS = ["rules", "ledger", "atoms", "validation", "unresolved", "audit", "activity"] as const;
+type PolicyTab = typeof POLICY_TABS[number];
+
 export default function PolicyStudio({
   onRules, schema, metrics, intents, setIntents,
   reviewers, myId, onFocusRule, broadcastRuleStatus, remoteRuleUpdates,
 }: Props) {
   const [docs, setDocs] = useState<any[]>([]);
-  const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"rules" | "ledger" | "atoms" | "validation" | "unresolved" | "audit" | "activity">("rules");
+  // Both the open document and the sub-view live in the URL:
+  //   /policy/<document_id>?tab=<sub-view>&rule=<rule_key>
+  // so a reviewer can be sent straight to one rule of one document.
+  const loc = useLoc();
+  const here = onTab(loc.segs, "policy");
+  // The open document is held in state AND mirrored to the URL, rather than
+  // read straight off the path: every tab stays mounted, so the path belongs
+  // to whichever tab is showing. State keeps the selection while you are
+  // elsewhere; the sync effects below make the URL the authority whenever
+  // this tab is the one on screen.
+  const [docState, setDocState] = useState<string | null>(null);
+  const urlDoc = here ? loc.segs[1] ?? null : null;
+  const activeDocId = urlDoc ?? docState;
+  const tab = here && (POLICY_TABS as readonly string[]).includes(loc.query.get("tab") ?? "")
+    ? (loc.query.get("tab") as PolicyTab) : "rules";
+  const linkedRule = here ? loc.query.get("rule") : null;
+  // `rules` is the default, so it stays out of the URL — shared links stay short.
+  // Both writers are no-ops on the URL unless this tab is the one showing.
+  // Every tab body stays mounted, so an async callback here (the initial
+  // document list resolving, a publish finishing) would otherwise rewrite the
+  // address bar of whatever page the user is actually looking at.
+  const setTab = useCallback((t: PolicyTab) => {
+    if (onTab(currentLoc().segs, "policy")) setParams({ tab: t === "rules" ? null : t, rule: null }, { replace: true });
+  }, []);
+  const setActiveDocId = useCallback((id: string | null, opts: { replace?: boolean } = {}) => {
+    setDocState(id);
+    if (!onTab(currentLoc().segs, "policy")) return;   // state only; the effect below syncs the URL on arrival
+    navTo(id ? policyDocHref(id, tab) : buildHref(TAB_PATH.policy, { tab: tab === "rules" ? null : tab }), opts);
+  }, [tab]);
+  // Coming back to a bare /policy with a document already open — put it back
+  // in the URL so the address bar stays shareable.
+  useEffect(() => {
+    if (here && docState && !urlDoc) navTo(policyDocHref(docState, tab), { replace: true });
+  }, [here, docState, urlDoc, tab]);
+  // A shared /policy/<id> link (or Back onto one): adopt it as the selection.
+  useEffect(() => { if (urlDoc && urlDoc !== docState) setDocState(urlDoc); }, [urlDoc, docState]);
   const [auditRefreshKey, setAuditRefreshKey] = useState(0);
   // Free-text filter over the extracted rules — matched against rule key, type,
   // conditions, effect, intents, message and source text (see filteredRules).
@@ -130,7 +169,7 @@ export default function PolicyStudio({
     api.listDocuments().then(res => {
       const list = Array.isArray(res) ? res : (res.documents || []);
       setDocs(list);
-      if (list.length && !activeDocId) setActiveDocId(list[0].document_id);
+      if (list.length && !activeDocId) setActiveDocId(list[0].document_id, { replace: true });
     }).catch(() => {});
   }, []); // eslint-disable-line
 
@@ -358,7 +397,7 @@ export default function PolicyStudio({
     setDocs(prev => prev.filter(d => d.document_id !== docId));
     if (activeDocId === docId) {
       const remaining = docs.filter(d => d.document_id !== docId);
-      setActiveDocId(remaining[0]?.document_id || null);
+      setActiveDocId(remaining[0]?.document_id || null, { replace: true });
     }
   }
 
@@ -751,6 +790,8 @@ export default function PolicyStudio({
                               focusers={focusMap[ruleKey] || []}
                               onMouseEnter={() => handleRuleFocus(ruleKey)}
                               onMouseLeave={() => handleRuleFocus(null)}
+                              shareHref={ruleHref(activeDocId, ruleKey)}
+                              highlighted={!!linkedRule && linkedRule === ruleKey}
                             />
                           );
                         })}

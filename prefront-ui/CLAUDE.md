@@ -13,7 +13,92 @@ Package/workspace shape (pnpm workspace, the `verdict` second app, the shared
 
 ## Tab architecture (`artifacts/prefront-app/src/`)
 
-`App.tsx` owns a single `useState("dashboard")` for the active tab (in the `TABS` array — the source of truth for nav order). All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Decision Traces → Intent Flows → Observability**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Decision Traces → Intent Flows → Observability**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+
+
+## Routing & shareable links (`lib/router.ts`, `routes.ts`, `components/CopyLink.tsx`)
+
+Every page is directly viewable by URL, and every artifact worth showing
+someone has a **Copy link** button. Three small files, no router library.
+
+- **`lib/router.ts` is a URL *mirror*, not a rendering authority** — `useLoc()`
+  (a `useSyncExternalStore` over a module-level snapshot read at import time,
+  plus a `popstate` listener), `navigate`, `buildHref`, `setParams`, `absUrl`.
+  `wouter` sat unused in devDependencies and was removed: its value is
+  `<Route>` conditional rendering, which would **unmount** tabs and destroy the
+  keep-everything-mounted design above. The snapshot is read synchronously at
+  module init, so a deep link never flashes the Overview first.
+  `navigate` **no-ops when the target equals the current URL** — that one guard
+  is what stops a URL → state → URL cycle from looping.
+- **History policy, one rule**: `pushState` when the *path* changes (tab,
+  sub-view, opening/closing an artifact); `replaceState` for app-performed
+  corrections (Policy Studio's first-doc auto-select, dropping a stale node id,
+  canonicalising `/traces` → `/traces/findings`, `?span=`).
+- **`routes.ts` is the grammar**, shared by navigation and `CopyLink`:
+
+  ```
+  /  /data  /policy  /business-graph  /data-graph  /traces  /flows
+  /observability  /settings  /semantic          (the last still has no nav entry)
+  /traces/findings/{session_id}?event=&span=    ← a finding, the shareable "event"
+  /observability/{overview|sessions|traces|llm|ingestion}
+  /observability/sessions/{session_id} · /observability/traces/{trace_id}?span=
+  /data-graph/{table or MCP tool name} · /business-graph/{ent-|proc-|role-|gov-…}
+  /policy/{document_id}?tab=&rule={rule_key}
+  ```
+
+  Path = what you are looking at; query = the ids that qualify it. Filters,
+  searches, time ranges and pagination stay in memory **by design** — a link
+  reproduces a page and an artifact, not a transient view of a table.
+- **The Observability tab's path is `/observability`, never `/oob`.** nginx
+  proxies `/oob/` with a trailing slash, but Vite's dev proxy matches the
+  **bare** prefix with `startsWith` — a route named `/oob` would work in prod
+  and proxy to oob-ingest in dev. `routes.ts` asserts on the reserved list
+  (`/api /design /oob /eval /pii /assets`) in DEV so a future rename can't
+  reintroduce that.
+- **Three traps that every path-derived value has to respect**, all of them
+  consequences of tabs staying mounted:
+  1. **`onTab(segs, tabId)` gates every derivation.** A component reading
+     `segs[1]` unguarded reads *another page's* artifact id — the Data Graph
+     saw `"sessions"` while you were on `/observability/sessions/<id>` and
+     "corrected" the URL out from under it.
+  2. **A mounted-but-hidden tab must not WRITE the URL either.** Policy
+     Studio's document auto-select fired as soon as its document list resolved
+     and navigated to `/policy/<id>` from whatever page you were actually on;
+     both its writers now check `onTab(currentLoc().segs, "policy")` first.
+  3. **Never strip an id before its data has loaded.** Both graphs revalidate
+     the selected node against the rebuilt graph — guarded on `built.defs.length`,
+     or a cold deep link erases its own node while the catalog is still loading.
+     Same rule for the eventual-consistency case: an unresolvable session id
+     stays in the URL and the page self-heals.
+- **`graphMounted`/`bizGraphMounted` flip in an effect on the derived tab**, not
+  in the sidebar's `onClick` where they used to live — otherwise `/data-graph`
+  renders blank on a deep link or a Back/forward.
+- **A finding is addressed by `session_id`, not `event_id`.** `event_id` is not
+  server-resolvable: `/eval/verdicts` takes only
+  `status|check_id|family|limit|offset|since`, and the only by-id endpoint is
+  `/eval/sessions/{sid}/verdicts`. `useLinkedFinding` (`DecisionTraces.tsx`)
+  resolves in three tiers — the newest-1000 rows the table already has, then
+  that per-session endpoint matched on `event_id`, then the session alone with
+  no finding banner.
+- **`?demo=` rides on every link.** The same path renders different content per
+  demo (`/api/*` is demo-scoped, localStorage caches are namespaced), so
+  `CopyLink` always injects it and `DemoContext.loadDemoId` reads it **before**
+  localStorage, returning `chosen: true` so the first-run chooser overlay
+  doesn't swallow a shared link. Answering that chooser is not a *switch*, so
+  it keeps the deep path; actually switching demos cuts the path back to the
+  tab, since an artifact id from one demo is meaningless in the other.
+- **`App.tsx` remembers the last URL per tab** (`lastPath` ref, cleared on demo
+  switch) so clicking the sidebar returns you to the sub-view/artifact you left
+  — the behaviour tab-state-survives-navigation gave for free before the
+  sub-view lived in the path.
+- **`CopyLink` copies an ABSOLUTE URL and needs its non-clipboard fallback.**
+  `navigator.clipboard` is undefined on a non-secure origin and this app is
+  served over plain HTTP on :5173 — which is why `PolicyStudio.tsx`'s "Copy
+  log" silently does nothing there. Falls back to a hidden textarea +
+  `execCommand`, then `window.prompt`. It also `stopPropagation()`s, since rows,
+  cards and graph nodes are themselves clickable. It renders in the page header,
+  the Overview hero, every findings row, the session flyout, trace detail,
+  session detail, both graph detail panels, and each rule card.
 
 **`Overview.tsx` (the "dashboard" tab) is a buyer-facing dashboard with five plain-titled sections** — Decisions before execution / Rules applied / Business-context controls / Decision context / Decision evidence (copy in its `SECTIONS` const). Each maps to one buyer concern from the positioning doc (Head of AI "is this another layer?", CIO "too many governance tools", CISO "IAM already answers who can access what", Data Governance "we already have catalogs", Compliance "evidence gathering is manual") but reads as a dashboard, not a pitch — a first cut used the quoted objections as headings and was rejected for reading like a sales script. Each section is backed by **live data only** from `hooks/useOverviewData.ts`: eval-engine's shadow evaluation (`/eval/status` for the hero totals and rule-pack/catalog coverage, `/eval/findings?limit=500` grouped by effect/rule/family, and the new `GET /eval/conformance` for cross-session positive evidence) plus oob-ingest (`/oob/overview`, `/oob/sessions` for off-catalog calls and distinct intents). It replaced `Dashboard.tsx`, which read only the `decision_*` store (`useDecisionFeed`, `/api/*`) — **structurally empty for LoanPro**, since `api-server`'s `toInsert` (`routes/decisions.ts`) requires a `governed` key LoanPro's ungoverned orchestrator never emits, so every panel showed zeros and the "populate from the demo" button both timed out (115 s abort, 34 live-LLM scenarios) and inserted nothing. That store now backs only Decision Traces › Decisions and a conditional "Governed runtime" section at the bottom of the Overview, rendered **only when `/api/stats.total > 0`** — never a zero-panel implying inline enforcement that didn't happen; the populate button is gone from the UI (`populate()` stays in the hook for API completeness). Truthfulness rule the page is built on: LoanPro is ungoverned, so every finding is labelled shadow evaluation — "what Prefront would have decided before execution" — and nothing is ever called "blocked". Drill-ins: the hero Findings counter and the effect tiles open Decision Traces › Findings (the effect tiles prefiltered — `App.tsx` lifts `tracesSection`/`findingsEffect` state and `DecisionTraces` takes `section`/`onSection`/`findingsEffect` props, `FindingsSection` an `initialEffect`); evidence rows open the same `SessionFlyout` the Findings table uses. The one check-vocabulary special case (`entitlement` = the only role-only check, everything else "business context IAM has no concept of") is flagged in `useOverviewData.ts`; sensitive-field names come from `demos.ts`, never the component — `grep -in "loan\|applicant\|underwrit"` over `Overview.tsx`/`useOverviewData.ts` must stay empty. `Observability.tsx` now exports its formatters (`num`/`ms`/`pct`/`ago`), `getJSON`/`qs`, `Kpi`/`Bars`/`Empty`, and the `Overview`/`Status`/`SessionRow`/`PopulationRow`/`EvalStatus` types for it. Caveat: `/oob/*` and `/eval/*` are not demo-scoped, so re-enabling SecureBank alongside LoanPro would mix demos on this page (out of scope). `DecisionTraces.tsx` is the filterable decision log (Decisions | Findings sub-nav).
 
