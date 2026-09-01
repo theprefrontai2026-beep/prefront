@@ -1473,6 +1473,10 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-ov2-hero { display: grid; grid-template-columns: 1fr 320px; gap: 44px; align-items: start; padding-bottom: 26px; border-bottom: 1px solid var(--w-line); }
 .pf-ov2-headline { font-family: var(--w-display); font-size: 30px; line-height: 1.22; letter-spacing: -0.02em; color: var(--w-ink); font-weight: 700; margin: 14px 0 14px; }
 .pf-ov2-accent { color: var(--w-alarm); }
+/* The positive half of the headline. The page reports how many sessions came
+   back clean alongside how many carried findings, so the two counts get the
+   two semantic colours rather than findings owning the only coloured number. */
+.pf-ov2-ok { color: var(--green); }
 .pf-ov2-lede { font-size: 14px; line-height: 1.6; color: var(--w-ink-soft); max-width: 62ch; margin: 0; }
 /* window toggle (24h / 7d) — same shape as .pf-oob-ranges */
 .pf-ov2-seg { display: inline-flex; border: 1px solid var(--w-line); border-radius: 6px; overflow: hidden; margin-bottom: 16px; }

@@ -130,7 +130,15 @@ export type ConformanceTag = {
 // page's hero. Every field optional-safe: a stack with no rule pack/catalog
 // configured reports rule_count/intent_count 0 and `configured: false`.
 export type EvalStatus = {
-  clickhouse: { ok: boolean; verdicts?: number; findings?: number; conformance_tags?: number; sessions_evaluated?: number };
+  clickhouse: {
+    ok: boolean; verdicts?: number; findings?: number; conformance_tags?: number;
+    sessions_evaluated?: number;
+    // The evaluated set split by outcome, straight from ClickHouse and
+    // uncapped: sessions_clean + sessions_with_findings == sessions_evaluated.
+    // Optional because an older eval-engine won't send them - a caller must
+    // treat undefined as "unknown" and say nothing, not render 0 clean.
+    sessions_clean?: number; sessions_with_findings?: number;
+  };
   worker: {
     polls: number; evaluated_total: number; skipped_total: number; last_poll: string | null; last_error: string;
     quiet_seconds: number; poll_seconds: number;

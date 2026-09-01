@@ -19,8 +19,7 @@ import CopyLink from "./CopyLink";
 import type { DemoConfig } from "../demos";
 import {
   useOverviewData, byEffect, byRule, familySpread, severityBreakdown,
-  severityHistogram, topRulesShare, sessionsWithFindings,
-  type SeverityRow, type SeverityBucket,
+  severityHistogram, topRulesShare, type SeverityRow, type SeverityBucket,
 } from "../hooks/useOverviewData";
 import { useSeverityRules } from "../hooks/useSeverityRules";
 import { SEVERITY_META, SEVERITY_ORDER, type SeverityLevel } from "../severity";
@@ -160,7 +159,13 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const sparkBars = hist.map((b, i) => ({ label: b.label, count: b.total, today: i === hist.length - 1 }));
   const sparkPeak = hist.reduce((m, b) => Math.max(m, b.total), 0);
   const topShare = topRulesShare(byRule(findings, 3), total, 3);
-  const withFindings = sessionsWithFindings(findings);
+  // The evaluated set split by outcome, from eval-engine rather than derived
+  // here: both halves are uncapped ClickHouse counts that reconcile exactly
+  // (clean + flagged == evaluated), where a client derivation would subtract
+  // a CAPPED findings fetch from an uncapped session count. `undefined` means
+  // an engine too old to send them - render nothing rather than a zero.
+  const sessionsClean = ch?.sessions_clean;
+  const sessionsFlagged = ch?.sessions_with_findings;
   const offCatalog = d.sessions.reduce((n, s) => n + (s.off_catalog_calls || 0), 0);
   // Evaluation scope, summed across the sessions the engine evaluated.
   const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
@@ -217,20 +222,25 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
               allowed by the engine's own precedence, and `approval_required`
               would have gone to a human. The KPI row below splits those three
               properly, so the headline states the counts and leaves the verdict
-              to the cards. */}
+              to the cards.
+
+              It also reports the CLEAN sessions, not only the flagged ones. A
+              report that can only ever say how much it found puts the onus on
+              finding something, and reads as though the tool's worth scales
+              with its complaint count. The engine already takes the opposite
+              position - Hard Rule 15 makes satisfied verdicts first-class
+              output, "never dropped as no finding" - so a page that showed
+              only findings was contradicting its own engine. */}
           <h1 className="pf-ov2-headline">
             {d.loading && !ev ? "…" : num(sessionsEvaluated)} session{sessionsEvaluated === 1 ? "" : "s"} evaluated.{" "}
             {total === 0
-              ? "No findings."
+              ? (sessionsEvaluated > 0 ? <span className="pf-ov2-ok">All clean.</span> : "No findings.")
               : (
                 <>
+                  {sessionsClean != null && <><span className="pf-ov2-ok">{num(sessionsClean)} clean</span>, </>}
                   <span className="pf-ov2-accent">{num(total)} finding{total === 1 ? "" : "s"}</span>
-                  {/* Guard the nonsensical case rather than printing it: the
-                      findings fetch is capped, so a very busy window could in
-                      principle report more finding-carrying sessions than the
-                      status totals counted as evaluated. */}
-                  {withFindings > 0 && withFindings <= sessionsEvaluated
-                    ? <> across {num(withFindings)} of them.</>
+                  {sessionsFlagged
+                    ? <> across {sessionsClean != null ? "the other " : ""}{num(sessionsFlagged)}.</>
                     : "."}
                 </>
               )}

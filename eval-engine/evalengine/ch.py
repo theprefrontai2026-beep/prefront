@@ -640,7 +640,19 @@ def totals(since: int = 0) -> dict[str, Any]:
     artifact versions holds a row per version - a plain `count()` reported
     "183 sessions evaluated" for 122 sessions the first time a version key
     changed. Latent before (only an ENGINE_VERSION bump or a republished rule
-    pack moved the key); routine now that toggling a check does."""
+    pack moved the key); routine now that toggling a check does.
+
+    `sessions_clean` / `sessions_with_findings` split that denominator, so a
+    surface can report how many sessions came back with nothing wrong instead
+    of only ever reporting problems - the read-side counterpart of Hard Rule
+    15 (satisfied verdicts are first-class output, never dropped as "no
+    finding"). Computed as a NOT IN over the evaluated set rather than
+    subtracted by the caller: the two live in different tables, and a client
+    subtracting a CAPPED findings fetch from an uncapped session count can
+    go negative. The violated subquery carries the same disabled-check filter
+    as everything else, so a session whose only findings came from a check
+    that is now off counts as clean - which is what "clean" means under the
+    current settings."""
     sess_t = f"{config.CLICKHOUSE_DB}.eval_evaluated_sessions FINAL"
     params: dict[str, Any] = {}
     t = ""
@@ -654,7 +666,13 @@ def totals(since: int = 0) -> dict[str, Any]:
           (SELECT count() FROM {VERDICTS_T} WHERE 1=1{t}{d}) AS verdicts,
           (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated'{t}{d}) AS findings,
           (SELECT count() FROM {TAGS_T} WHERE 1=1{t}{d}) AS conformance_tags,
-          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}) AS sessions_evaluated
+          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}) AS sessions_evaluated,
+          (SELECT uniqExact(session_id) FROM {VERDICTS_T}
+             WHERE status = 'violated'{t}{d}) AS sessions_with_findings,
+          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}
+             AND session_id NOT IN (
+               SELECT session_id FROM {VERDICTS_T} WHERE status = 'violated'{t}{d}
+             )) AS sessions_clean
         """,
         params,
     )
