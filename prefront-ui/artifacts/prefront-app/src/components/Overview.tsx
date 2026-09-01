@@ -159,13 +159,13 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const sparkBars = hist.map((b, i) => ({ label: b.label, count: b.total, today: i === hist.length - 1 }));
   const sparkPeak = hist.reduce((m, b) => Math.max(m, b.total), 0);
   const topShare = topRulesShare(byRule(findings, 3), total, 3);
-  // The evaluated set split by outcome, from eval-engine rather than derived
-  // here: both halves are uncapped ClickHouse counts that reconcile exactly
-  // (clean + flagged == evaluated), where a client derivation would subtract
-  // a CAPPED findings fetch from an uncapped session count. `undefined` means
-  // an engine too old to send them - render nothing rather than a zero.
+  // How many evaluated sessions came back with nothing found, from eval-engine
+  // rather than derived here: it is an uncapped ClickHouse count that
+  // reconciles exactly against its `sessions_with_findings` sibling (the two
+  // sum to sessions_evaluated), where a client derivation would subtract a
+  // CAPPED findings fetch from an uncapped session count. `undefined` means an
+  // engine too old to send it - render nothing rather than a zero.
   const sessionsClean = ch?.sessions_clean;
-  const sessionsFlagged = ch?.sessions_with_findings;
   const offCatalog = d.sessions.reduce((n, s) => n + (s.off_catalog_calls || 0), 0);
   // Evaluation scope, summed across the sessions the engine evaluated.
   const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
@@ -238,10 +238,7 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
               : (
                 <>
                   {sessionsClean != null && <><span className="pf-ov2-ok">{num(sessionsClean)} clean</span>, </>}
-                  <span className="pf-ov2-accent">{num(total)} finding{total === 1 ? "" : "s"}</span>
-                  {sessionsFlagged
-                    ? <> across {sessionsClean != null ? "the other " : ""}{num(sessionsFlagged)}.</>
-                    : "."}
+                  <span className="pf-ov2-accent">{num(total)} finding{total === 1 ? "" : "s"}</span>.
                 </>
               )}
           </h1>
