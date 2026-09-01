@@ -166,6 +166,11 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   // CAPPED findings fetch from an uncapped session count. `undefined` means an
   // engine too old to send it - render nothing rather than a zero.
   const sessionsClean = ch?.sessions_clean;
+  // Its sibling, so the headline can talk in ONE unit: clean sessions and
+  // flagged sessions, never "N sessions, M findings" (M counts a different
+  // thing and routinely exceeds N). The finding count gets its own line
+  // underneath, where the relationship can be stated instead of implied.
+  const sessionsFlagged = ch?.sessions_with_findings;
   const offCatalog = d.sessions.reduce((n, s) => n + (s.off_catalog_calls || 0), 0);
   // Evaluation scope, summed across the sessions the engine evaluated.
   const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
@@ -187,15 +192,48 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const noEval = d.errors.eval;
   const nothingYet = !noEval && sessionsEvaluated === 0;
 
+  // How many SESSIONS an effect's findings are spread across. The cards count
+  // findings, and "14" beside a headline that counts sessions still reads as
+  // 14 sessions to anyone skimming — so the two effect cards name both units
+  // and the relationship between them outright.
+  const sessionsWith = (effect: string) =>
+    new Set(findings.filter((f) => f.effect === effect).map((f) => f.session_id)).size;
+  const blockSessions = sessionsWith("block");
+  const approvalSessions = sessionsWith("approval_required");
+  // ...and how many CALLS, which is what "would have blocked" actually
+  // pertains to: the tool call the finding cites as its evidence. Two rules
+  // can both block one call, so this is never just the finding count — the
+  // card names all three numbers rather than leaving the reader to assume
+  // they are the same.
+  const callsWith = (effect: string) =>
+    new Set(findings.filter((f) => f.effect === effect)
+                    .map((f) => f.evidence_span_ids?.[0]).filter(Boolean)).size;
+  const blockCalls = callsWith("block");
+  const approvalCalls = callsWith("approval_required");
+  // "13.3 Retrieve Risk Profile Before Pricing" -> "13.3" for the card, full
+  // text on hover: the card has three numbers to fit already.
+  const blockSectionNum = (blockSection.match(/^[\d.]+/) || [])[0] || blockSection;
+
+  // Every card's sub-line OPENS with the unit its number counts. Four cards
+  // side by side, three different units (findings, rules, tool calls) — read
+  // as a row they invite arithmetic that doesn't work, so each says what it is
+  // counting before it says anything else.
+  // Each label NAMES the thing it counts, and the big number is that thing —
+  // "Tool calls Prefront would have blocked: 14" would be a lie when 14 is the
+  // finding count and the calls number 10 (two rules can block one call). The
+  // findings are still one line down, and still what the drill-in opens.
   const KPIS: { label: string; value: string; sub: ReactNode; accent?: boolean; onClick?: () => void }[] = [
-    { label: "Would have blocked", value: num(effects.block), accent: effects.block > 0,
-      sub: blockSection ? <>Policy · §{blockSection}</> : "action not allowed", onClick: () => onOpenFindings("block") },
-    { label: "Needs a human", value: num(effects.approval_required),
-      sub: "approval required", onClick: () => onOpenFindings("approval_required") },
+    { label: "Tool calls would have blocked", value: num(blockCalls), accent: blockCalls > 0,
+      sub: <>from {num(effects.block)} finding{effects.block === 1 ? "" : "s"} in {num(blockSessions)} session{blockSessions === 1 ? "" : "s"}
+           {blockSection && <> · <span title={`Most cite Policy §${blockSection}`}>§{blockSectionNum}</span></>}</>,
+      onClick: () => onOpenFindings("block") },
+    { label: "Sessions needing a human", value: num(approvalSessions),
+      sub: <>from {num(effects.approval_required)} finding{effects.approval_required === 1 ? "" : "s"} on {num(approvalCalls)} call{approvalCalls === 1 ? "" : "s"}</>,
+      onClick: () => onOpenFindings("approval_required") },
     { label: "Rules live", value: num(rp?.rule_count),
-      sub: ic?.configured ? <>{num(ic.intent_count)} intents in catalog</> : "no catalog configured" },
+      sub: ic?.configured ? <>rules in the pack · {num(ic.intent_count)} intents in the catalog</> : "rules in the pack · no catalog configured" },
     { label: "Off-catalog calls", value: num(offCatalog),
-      sub: "tools no intent declares", onClick: onOpenObservability },
+      sub: "tool calls no intent declares", onClick: onOpenObservability },
   ];
 
   return (
@@ -231,44 +269,53 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
               position - Hard Rule 15 makes satisfied verdicts first-class
               output, "never dropped as no finding" - so a page that showed
               only findings was contradicting its own engine. */}
+          {/* One unit per sentence. The headline used to read "15 sessions
+              evaluated. 4 clean, 27 findings." — three numbers, two units, and
+              the reader is left to work out that 4 + 27 means nothing. It now
+              splits the evaluated sessions into clean and flagged (both
+              sessions, and they sum to the total), and the finding count moves
+              to its own line where its relationship to sessions can be SAID
+              rather than implied. */}
           <h1 className="pf-ov2-headline">
             {d.loading && !ev ? "…" : num(sessionsEvaluated)} session{sessionsEvaluated === 1 ? "" : "s"} evaluated.{" "}
             {total === 0
               ? (sessionsEvaluated > 0 ? <span className="pf-ov2-ok">All clean.</span> : "No findings.")
-              : (
-                <>
-                  {sessionsClean != null && <><span className="pf-ov2-ok">{num(sessionsClean)} clean</span>, </>}
-                  <span className="pf-ov2-accent">{num(total)} finding{total === 1 ? "" : "s"}</span>.
-                </>
-              )}
+              : sessionsClean != null && sessionsFlagged != null
+                ? (
+                  <>
+                    <span className="pf-ov2-ok">{num(sessionsClean)} clean</span>,{" "}
+                    <span className="pf-ov2-accent">{num(sessionsFlagged)} with findings</span>.
+                  </>
+                )
+                // An engine too old to send the split still gets a truthful
+                // headline; it just has to name the unit itself.
+                : <><span className="pf-ov2-accent">{num(total)} finding{total === 1 ? "" : "s"}</span> across them.</>}
           </h1>
-          {/* Two claims in here used to overreach, both in the same sentence.
+          {total > 0 && sessionsFlagged != null && (
+            <p className="pf-ov2-count-line">
+              <b className="pf-ov2-accent">{num(total)}</b> finding{total === 1 ? "" : "s"} in
+              {" "}{sessionsFlagged === 1 ? "that session" : <>those {num(sessionsFlagged)} sessions</>} — one
+              session can carry several, and several can land on a single call.
+            </p>
+          )}
+          {/* There is deliberately NO explanatory paragraph here — it was
+              removed as page-filler, and everything load-bearing in it already
+              had a home: the shadow framing is the eyebrow above ("Shadow
+              evaluation") plus the counterfactual card labels ("Would have
+              blocked"), and the live rule/intent counts are the "Rules live"
+              card. If a lede ever comes back, it inherits the two overclaims
+              that had to be fixed out of the last one: evaluation is OUT OF
+              BAND, after the fact, never "before execution"; and only Family 1
+              always cites a clause — Integrity never does and Conformance only
+              where the catalog entry declares one.
 
-              "Prefront evaluated every action BEFORE execution" is the wrong
-              tense for what this page shows: evaluation is out of band, after
-              the session ran, over the spans it left behind. The counterfactual
-              is the whole point ("would have"), and this file's own header says
-              the framing is always that — so the sentence contradicted the rule
-              it is written under.
-
-              "each finding carries ... the clause it breached" is false for a
-              whole family. Only the rule pack's own `source` block yields a
-              citation (Hard Rule 17), so Integrity (Family 2) findings never
-              carry one, and Conformance (Family 3) only where the catalog entry
-              declares a clause. It happened to look true on the window that
-              prompted this — 47 of 48 findings were cited, because none of them
-              were Family 2 — which is exactly how a structural overclaim
-              survives review. */}
-          <p className="pf-ov2-lede">
-            Prefront replayed each session and judged every action as if it had run before
-            execution — nothing here was stopped in production. Every finding carries the
-            conversation that produced it and the trace, and cites a policy clause when the
-            rule or intent behind it declares one; Integrity findings are built-in
-            invariants, so they never do.
-            {rp?.configured
-              ? <> {num(rp.rule_count)} rules{ic?.configured && <> and {num(ic.intent_count)} intents</>} are live.</>
-              : <> No rule pack is configured — Family&nbsp;1/3 checks are idle.</>}
-          </p>
+              The one thing that lost its only home is the not-configured
+              warning, so it stays as a line of its own. */}
+          {!rp?.configured && (
+            <p className="pf-ov2-count-line">
+              No rule pack is configured — Family&nbsp;1/3 checks are idle.
+            </p>
+          )}
           {noEval && <div className="pf-ov2-error">eval-engine unreachable: {noEval}</div>}
           {nothingYet && <EmptyHint text={`No sessions evaluated yet — eval-engine polls every ${ev?.worker?.poll_seconds ?? "few"}s.`} />}
         </div>
@@ -314,6 +361,11 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
             : <div key={kpi.label} className="pf-ov2-kpi">{inner}</div>;
         })}
       </div>
+      {/* No caption under this row, deliberately. What it used to carry now
+          lives in the labels themselves — each names its subject ("Tool calls
+          would have blocked", "Sessions needing a human") and keeps the
+          counterfactual tense — with "Shadow evaluation" in the eyebrow above.
+          Anything re-added here must not restate those. */}
 
       {/* ── Rule-evaluation band ── */}
       <div className="pf-ov2-band">
@@ -321,13 +373,13 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
           <div className="pf-ov2-eyebrow">Rule evaluations</div>
           <div className="pf-ov2-band-value">{num(ch?.verdicts)}</div>
           <div className="pf-ov2-kpi-sub">
-            {num(rp?.rule_count)} live rules{cov?.configured && <> · {cov.fired}/{cov.total} ever hit</>}
+            verdicts · {num(rp?.rule_count)} live rules{cov?.configured && <> · {cov.fired}/{cov.total} ever hit</>}
           </div>
         </div>
         <div className="pf-ov2-band-mid">
           <div className="pf-ov2-band-head">
             <span className="pf-ov2-eyebrow">Findings by family</span>
-            <span className="pf-ov2-kpi-sub">{num(total)} total · top 3 checks carry {topShare}%</span>
+            <span className="pf-ov2-kpi-sub">{num(total)} findings · top 3 checks carry {topShare}%</span>
           </div>
           <div className="pf-ov2-stack">
             {fam.map((f, i) => f.count > 0 && (
@@ -346,7 +398,10 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         <div className="pf-ov2-band-tail">
           <div className="pf-ov2-eyebrow">Satisfied</div>
           <div className="pf-ov2-band-value quiet">{num(ch?.conformance_tags)}</div>
-          <div className="pf-ov2-kpi-sub">rules applied, policy cited</div>
+          {/* Not "the rest of the rule evaluations": a conformance tag is
+             written only where a rule applied, held AND cites its clause, so
+             this deliberately does not complete the arithmetic beside it. */}
+          <div className="pf-ov2-kpi-sub">conformance tags · rule applied and held, clause cited</div>
         </div>
       </div>
 

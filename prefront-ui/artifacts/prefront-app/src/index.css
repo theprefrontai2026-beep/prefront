@@ -1524,6 +1524,10 @@ td.pf-tr-share { width: 34px; text-align: right; }
    two semantic colours rather than findings owning the only coloured number. */
 .pf-ov2-ok { color: var(--green); }
 .pf-ov2-lede { font-size: 14px; line-height: 1.6; color: var(--w-ink-soft); max-width: 62ch; margin: 0; }
+/* The finding count, on its own line under the headline — the headline counts
+   SESSIONS, this counts findings, and the two are never mixed in one sentence. */
+.pf-ov2-count-line { font-size: 14px; line-height: 1.6; color: var(--w-ink-soft); max-width: 62ch; margin: 0 0 10px; }
+.pf-ov2-count-line b { font-weight: 700; }
 /* window toggle (24h / 7d) — same shape as .pf-oob-ranges */
 .pf-ov2-seg { display: inline-flex; border: 1px solid var(--w-line); border-radius: 6px; overflow: hidden; margin-bottom: 16px; }
 .pf-ov2-seg button { border: none; background: var(--surface); color: var(--w-muted); font: inherit; font-size: 12.5px; padding: 6px 14px; cursor: pointer; transition: color 0.12s ease, background 0.12s ease; }
