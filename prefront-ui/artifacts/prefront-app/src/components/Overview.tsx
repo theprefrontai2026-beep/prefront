@@ -1,5 +1,5 @@
 /*
- * Overview — the buyer-facing home screen, editorial layout.
+ * Overview — the buyer-facing home screen: a single-glance report page.
  *
  * A single-glance shadow-evaluation report: what Prefront WOULD have decided
  * before each action ran, for the demo's (ungoverned) agent. Every number is
@@ -203,7 +203,9 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
           </div>
           <h1 className="pf-ov2-headline">
             {d.loading && !ev ? "…" : num(sessionsEvaluated)} sessions evaluated.{" "}
-            <span className="pf-ov2-accent">{num(total)} would not have been allowed.</span>
+            {/* The accent is now the app's semantic red, so it is applied only when
+                there is something to alarm about — a zero reads as a clean window. */}
+            <span className={total > 0 ? "pf-ov2-accent" : ""}>{num(total)} would not have been allowed.</span>
           </h1>
           <p className="pf-ov2-lede">
             Prefront evaluated every action before execution. Nothing was stopped in production —
