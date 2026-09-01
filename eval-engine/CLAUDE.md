@@ -412,6 +412,48 @@ than after the poll interval. `configured` per family (rule pack for Family
 "idle because nothing is configured" - two states that would otherwise both
 render as a silent check.
 
+**Disabling never deletes.** Point 4 hides rows; nothing in the enablement
+path writes a DELETE. The only two things that remove a verdict are the
+dev-only `DELETE /eval/verdicts` (`store.truncate`) and the
+`EVAL_RETENTION_DAYS` TTL. Say so when asked - "is my history gone?" is the
+obvious fear about a switch that empties a table on screen, and the answer
+is no.
+
+**`include_disabled=true` is the one deliberate way past the read filter**
+(`ch._disabled_clause`'s own docstring says so), and it is offered on the
+FEED ONLY - `GET /eval/verdicts`, through `list_feed`/`list_verdicts`. Never
+on anything that counts: `totals`, `rule_fire_counts`,
+`verdict_rows_for_report`, `/eval/compliance` and the Overview's
+distributions all stay filtered unconditionally, because an aggregate that
+silently mixed in checks the deployment turned off would be wrong rather
+than merely surprising. When it is set, `list_feed` also returns
+`disabled_checks` - the set in effect - so the UI can mark each such row as
+belonging to a check that is currently off instead of showing it as live.
+That pair (show the rows, name why they are there) is what lets the UI offer
+"show hidden events" without lying about the current configuration.
+
+## What a finding is timestamped with: `occurred_at` vs `evaluated_at`
+
+`evaluated_at` is when the ENGINE ran, and it is a poor "when" for a reader:
+evaluation is out of band and batched, so a whole catalogue of sessions
+shares one timestamp to the second, and any re-evaluation - which every
+settings change triggers, see the version key above - moves every one of
+them to the new run's time. Sorting a feed by it produces a wall of
+identical times that reshuffles whenever a check is toggled.
+
+So `ch._occurred_at` stamps each row with `occurred_at`, the time the
+ACTIVITY happened, resolved from the shared `spans` table in one pass over
+the page: the first cited evidence span's `start_time`, else the start of
+the session the verdict is about. It is called from `list_findings` and
+`list_feed` - the two reader-facing feeds - not from the counting paths.
+
+**It is best-effort and deliberately empty when unknown.** A session whose
+spans have aged out (`OOB_RETENTION_DAYS`) leaves `occurred_at` as `""`
+rather than falling back to `evaluated_at`, so a caller can tell "we don't
+know when this happened" from "it happened then". Any UI that sorts by it
+has to handle the empty case explicitly rather than letting `Date.parse`
+turn it into `NaN`.
+
 ## Two staleness traps in the new ClickHouse tables (step 20)
 
 Root `CLAUDE.md`'s "Engine mechanics that bite" section already documents the

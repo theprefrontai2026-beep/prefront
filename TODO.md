@@ -220,33 +220,53 @@ check id is rejected at load rather than silently matching nothing.
 
 ---
 
-## 8. Per-application settings: turn individual checks on/off within a family
+## 8. Per-APPLICATION settings: scope check enablement to a subject app
 
-Not started. Related to entry 7 but a different mechanism — that one waives
-*findings* reactively, per tool, with a reason; this one configures *which
-checks run at all* for a given subject application. Build them so they share
-the check-id vocabulary and the version-key discipline, not so one is a special
-case of the other.
+**Half built.** The per-check half shipped; the per-application half did not.
+Related to entry 7 but a different mechanism — that one waives *findings*
+reactively, per tool, with a reason; this one configures *which checks run at
+all*. They share the check-id vocabulary and the version-key discipline; one
+is not a special case of the other.
 
-### What exists today
+### What exists today — per-check enablement, deployment-wide
 
-Neither half of this is expressible:
+Everything below is live (`eval-engine/evalengine/checks.py`, and
+`eval-engine/CLAUDE.md` § "Check enablement" for the full contract):
 
-- **No per-check granularity, at any level.** `evaluate.py:47-49` runs
-  `evaluate_family2` → `evaluate_family1` → `evaluate_family3` unconditionally.
-  Families 1 and 3 can only be turned off wholesale, and only by *removing
-  their artifact* (Hard Rule 9's degrade-to-zero). **Family 2 cannot be turned
-  off at all** — it is built in and always runs. There is no switch for one
-  check.
-- **No per-application concept in eval-engine.** Configuration is entirely
-  env-var driven and single-tenant: one `EVAL_RULE_PACK_PATH`, one
+- **`checks.REGISTRY` — 30 check ids**, each with its family and a one-line
+  description. `tests/test_checks.py` asserts the registry is exactly the ids
+  the modules emit, so adding a check without registering it fails the suite.
+- **One post-filter in `evaluate_session`** (`CheckSettings.keep`), applied
+  after all three families have run — so **Family 2 is now switchable too**,
+  and no check ever learns that settings exist.
+- **`checks@{version}` is in the evaluation version key** (`evaluate.py:50-52`),
+  so toggling invalidates the prior evaluation and re-enabling backfills the
+  sessions evaluated while a check was off. Deliberately NOT in `VersionStamp`.
+- **Reads filter too** (`ch._disabled_clause`) — hiding, never deleting, which
+  is what makes it reversible. `include_disabled=true` on the feed is the one
+  deliberate way past it, and it returns the disabled set alongside the rows.
+- **`GET/PUT/DELETE /eval/checks`**, persisted as an `eval_settings` row in
+  ClickHouse and edited from the UI's Settings panel; unknown ids are dropped
+  and reported as `unknown` rather than 400-ing. `PUT`/`DELETE` wake the
+  worker so re-evaluation starts immediately.
+
+### What is still missing
+
+- **No per-application concept in eval-engine.** The stored set is
+  deployment-wide: one `eval_settings` row, and configuration is otherwise
+  env-var driven and single-tenant — one `EVAL_RULE_PACK_PATH`, one
   `EVAL_INTENT_CATALOG_PATH` per deployment (`config.py:32-39`). Nothing in
   `eval_verdicts` identifies an application.
-
-Surface to cover: **27 check ids** in `KNOWN_CHECKS`
-(`preflight.py:42`) — 6 Family 1, 10 Family 2, 11 Family 3 — plus the three
-population checks, which are a separate on-demand path
-(`family3/population.py`) and need their own answer.
+- **The three population checks** (`family3/population.py`) are in `REGISTRY`
+  and gated like the rest, but they are a separate on-demand path over many
+  sessions; whether a per-app setting means the same thing there is unsettled.
+- **The inline path is still unaddressed.** `semantic-mcp-server` re-runs a
+  subset of these checks on the governed path (Phase D / step 18) and reads
+  none of this — today's deployment-wide set does not reach it either, which
+  is the "silently differing" case the design question below warns about.
+- **The settings live in a table, not a versioned artifact.** Fine for a
+  deployment-wide switch edited at runtime; an application's configuration
+  is domain vocabulary and should be an artifact (see the constraints below).
 
 ### Design questions to settle first
 
@@ -255,35 +275,37 @@ population checks, which are a separate on-demand path
   `trace_binding.yaml` (a new subject app ships its own), so that is the
   natural anchor — but sessions would still need to resolve to one, and
   `eval_verdicts` would need the column.
-- **Does "off" mean "don't run", or "run and mark"?** Same tension as entry 7,
-  and it may deserve the opposite answer: a deliberate per-app setting is not a
-  per-finding waiver, and not running is genuinely cheaper. But then a session
-  with no findings is indistinguishable from one that was never checked. The
-  engine already has a vocabulary for exactly this distinction —
-  `indeterminate` + `missing_capture`, resolved to `visibility_gap` by the
-  combinator — so the cheap honest option is to **record the disabled set on
-  the session** (version stamp or its own column) so "clean" and "not checked"
-  never read the same, even if the checks genuinely don't run.
-- **Does it apply inline?** `semantic-mcp-server` re-runs a subset of these
-  checks on the governed path (Phase D / step 18). A per-app setting either
-  applies there too or explicitly does not; silently differing between OOB and
-  inline is the worst of the three.
+- **Does "off" mean "don't run", or "run and mark"?** Settled one way for the
+  deployment-wide switch — checks don't run, and the version key plus the
+  read-time filter keep "off" reversible — but a per-app setting may deserve
+  the opposite answer, since a session with no findings would otherwise be
+  indistinguishable from one that was never checked. The engine already has a
+  vocabulary for exactly this (`indeterminate` + `missing_capture`, resolved
+  to `visibility_gap` by the combinator); the cheap honest option is to
+  **record the disabled set on the session** so "clean" and "not checked"
+  never read the same.
+- **Does it apply inline?** Either it applies to `semantic-mcp-server` too or
+  it explicitly does not; silently differing between OOB and inline is the
+  worst of the three. Unanswered for the current switch as well.
 
 ### Constraints carried from entry 7
 
 - **Artifact, not engine code** — an application id is domain vocabulary
   (Hard Rule 1). And per that entry: do not rely on the domain-noun guard to
   catch a violation here.
-- **Version it into the version key** (`evaluate.py:27`), so toggling a check
-  re-evaluates affected sessions instead of leaving them stamped with results
-  from a different configuration.
-- **Validate ids against `KNOWN_CHECKS`** at load; an unknown check id must be
-  rejected, never silently ignored.
+- **Version it into the version key** — already true of the deployment-wide
+  set; an app-scoped one has to fold in the same way, per application.
+- **Validate ids against `checks.REGISTRY`** at load (the engine's own table —
+  `preflight.py:42`'s `KNOWN_CHECKS` is a *separate* 27-id copy in
+  `semantic-layer`, which deliberately omits the three population checks and
+  is not importable across the Docker build boundary). An unknown check id
+  must be rejected or reported, never silently ignored.
 
-**Done when** an application can enable/disable any individual check within any
-family from a versioned artifact, Family 2 included; a disabled check is
-distinguishable from a check that passed; toggling re-evaluates; unknown ids
-are rejected at load; and the inline path's behaviour is explicit either way.
+**Done when** an *application* can enable/disable any individual check within
+any family from a versioned artifact; a disabled check is distinguishable from
+a check that passed; toggling re-evaluates that application's sessions only;
+unknown ids are rejected at load; and the inline path's behaviour is explicit
+either way.
 
 ---
 

@@ -14,7 +14,7 @@ docker compose -f loanpro-demo/docker-compose.yml up --build -d   # the ACTIVE D
 make test                                                   # every offline suite + vendoring drift check
 ```
 
-**`oob` is the live branch, not `main`.** It is ~90 commits ahead — all of
+**`oob` is the live branch, not `main`.** It is far ahead of it — all of
 eval-engine (Phases A-D), the OOB pipeline, Verdict, and the current UI live
 there and have never been merged down. `main` is an older SecureBank-era tree,
 so branching from it silently drops nearly everything this file documents.
@@ -85,7 +85,8 @@ This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml`
 | semantic-layer-api | `semantic-layer/semanticlayer`| 8010| design-time API: schema introspect/parse, build/publish templates, bind+publish policy. Also owns `intent_catalog.py` (Family 3's schema/generator) and `preflight.py` (LLM-proposed candidate test scenarios — see `eval-engine/CLAUDE.md` § step 19) |
 | semantic-mcp-server | `semantic-mcp-server/semanticmcp`| 8090| **runtime**: loads published templates as governed MCP tools (HTTP/SSE); per call runs `governance/rules.py`/`decide.py` over `policy.yaml`, **plus** eval-engine's single-call-safe checks inline (`governance/inline_checks.py` — what runs inline and why `param_provenance` cannot, in `eval-engine/CLAUDE.md` § Phase D). Bundled to serve the SecureBank example from `/artifacts/securebank-demo/`. **Behind compose profile `mcp` — `docker compose up` does NOT start it**; each demo runs its own MCP (`securebank-mcp` :8100, `loanpro-mcp` :8101) |
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
-| ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/pii/` → :8020 |
+| pii-analyzer | `pii-analyzer/app.py` | 8020 | **design-time PII guesser** (FastAPI + Presidio): `POST /pii/analyze` takes a list of `{table, column, type}` and returns a best-guess PII entity + confidence per column. It reads **column NAMES only, never row data** — the built-in Presidio recognizers match values (a real SSN, a real email), which never appear in a bare column name, so the registry is custom name-matching `PatternRecognizer`s instead. Feeds the Data Connector's PII scan and, through it, the candidate compliance overlay (`/design/semantic/compliance/overlay/suggest`). Guesses are candidates for a human, like everything else an inference step emits. |
+| ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/eval/` → :8120, `/pii/` → :8020 (`prefront-ui/nginx.conf` is the list — it caches upstream IPs at startup, see "nginx caches upstream IPs" below) |
 | verdict | `prefront-ui/artifacts/verdict`| 5180| **Verdict** — standalone "business decision evaluator": runs LoanPro's scenario catalogue interactively and shows each session's transcript beside its expected findings. Its own Vite/React app sharing no code or stylesheet with `prefront-app` (a style change meant for both must be made twice, by hand). Talks to `loanpro-orchestrator` by absolute URL; deployed from `loanpro-demo/docker-compose.yml` |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
@@ -742,6 +743,7 @@ Top-level design docs, each answering a different question:
 | `TODO.md` | open work not carried by a design doc's own status marker — an index, not a second plan (deep plans stay where they are; entries carry file:line evidence) |
 | `design.md` | positioning + the LLM-at-design-time-only principle |
 | `prefront_semantic_layer_design.md` | the semantic-contract artifact set |
+| `governance_layer_design` | the INLINE governance pipeline's design (note: no file extension, which is why grep for `*.md` misses it) — the per-stage contract behind `semantic-mcp-server/semanticmcp/governance/` documented under "Runtime governance pipeline" above, and an explicit out-of-scope list (authN/token validation, OPA or any external policy engine, persisted approval workflow) with the sockets left for all three |
 | `prefront-check-families.md` | the three OOB check families (learnt rules / integrity invariants / intent conformance) — the WHAT |
 | `autonomous_build.md` | the phased build order for the eval engine — the HOW |
 | `intent_learning_design.md` | **PLANNED, not built** (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog from observed traces, for customers with no policy document to compile |
