@@ -280,9 +280,9 @@ def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
 
 # --- disabled-check filtering ------------------------------------------------
 
-def _disabled_clause(params: dict[str, Any]) -> str:
+def _disabled_clause(params: dict[str, Any], include_disabled: bool = False) -> str:
     """` AND check_id NOT IN (...)` for the deployment's disabled checks, or
-    "" when everything is on.
+    "" when everything is on (or when the caller opted into seeing them).
 
     Disabling a check has to hide the rows it ALREADY wrote, not just stop
     new ones: a check turned off in Settings whose old findings kept showing
@@ -294,7 +294,17 @@ def _disabled_clause(params: dict[str, Any]) -> str:
 
     Every read path that counts or lists verdicts goes through this. Adding a
     new one means adding this clause to it.
+
+    `include_disabled` is the one deliberate way past it, and ONLY the
+    unified feed (list_verdicts/list_feed, GET /eval/verdicts) offers it:
+    hiding must not mean a reader cannot find out what is being hidden, so
+    the UI can ask for those rows explicitly and label them as coming from a
+    disabled check. Nothing that COUNTS - /eval/status, the compliance
+    report, conformance tags - takes the flag: an aggregate that silently
+    included disabled checks would contradict every other number on the page.
     """
+    if include_disabled:
+        return ""
     disabled = sorted(checks_mod.current().disabled)
     if not disabled:
         return ""
@@ -490,7 +500,8 @@ TAGS_T = f"{config.CLICKHOUSE_DB}.eval_conformance_tags FINAL"
 
 
 def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", family: str = "",
-                  limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
+                  limit: int = 100, offset: int = 0, since: int = 0,
+                  include_disabled: bool = False) -> dict[str, Any]:
     where = ["1 = 1"]
     params: dict[str, Any] = {}
     if session_id:
@@ -508,7 +519,7 @@ def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", fa
     if since and int(since) > 0:
         where.append("evaluated_at >= now() - INTERVAL %(since)s SECOND")
         params["since"] = int(since)
-    where_sql = " AND ".join(where) + _disabled_clause(params)
+    where_sql = " AND ".join(where) + _disabled_clause(params, include_disabled)
     params["limit"] = max(1, min(int(limit), 2000))
     params["offset"] = max(0, int(offset))
     total = one(f"SELECT count() AS n FROM {VERDICTS_T} WHERE {where_sql}", params).get("n", 0)
@@ -543,27 +554,75 @@ def _first_user_messages(session_ids: list[str]) -> dict[str, str]:
     return {r["session_id"]: r["user_query"] for r in data if r.get("user_query")}
 
 
+def _occurred_at(items: list[dict[str, Any]]) -> None:
+    """Stamp each row with `occurred_at` - when the ACTIVITY happened - in
+    place.
+
+    `evaluated_at` is when the engine ran, and it is a poor "when" for a
+    reader: evaluation is out of band and batched, so a whole catalogue of
+    sessions shares one timestamp to the second, and re-evaluating (which any
+    settings change triggers - see checks.CheckSettings.version) moves every
+    one of them to the new run's time. The moment a reader cares about is the
+    span the verdict cites, or failing that the start of the session it is
+    about; both live in the shared `spans` table, read the same way
+    _first_user_messages reads the user's first turn.
+
+    Best-effort: a session whose spans have aged out leaves `occurred_at`
+    empty rather than substituting the evaluation time, so a caller can tell
+    the difference instead of being shown a plausible wrong answer."""
+    if not items:
+        return
+    span_ids = sorted({sids[0] for r in items if (sids := r.get("evidence_span_ids"))})
+    session_ids = sorted({r["session_id"] for r in items if r.get("session_id")})
+    by_span: dict[str, Any] = {}
+    if span_ids:
+        by_span = {r["span_id"]: r["t"] for r in rows(
+            f"SELECT span_id, min(start_time) AS t FROM {SPANS_T} WHERE span_id IN %(ids)s GROUP BY span_id",
+            {"ids": span_ids},
+        )}
+    by_session: dict[str, Any] = {}
+    if session_ids:
+        by_session = {r["session_id"]: r["t"] for r in rows(
+            f"SELECT session_id, min(start_time) AS t FROM {SPANS_T} WHERE session_id IN %(ids)s GROUP BY session_id",
+            {"ids": session_ids},
+        )}
+    for r in items:
+        sids = r.get("evidence_span_ids") or []
+        r["occurred_at"] = (by_span.get(sids[0]) if sids else None) or by_session.get(r.get("session_id"), "")
+
+
 def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
     result = list_verdicts(status="violated", check_id=check_id, family=family, limit=limit, offset=offset, since=since)
     result["findings"] = result.pop("verdicts")
     queries = _first_user_messages(sorted({f["session_id"] for f in result["findings"]}))
     for f in result["findings"]:
         f["user_query"] = queries.get(f["session_id"], "")
+    _occurred_at(result["findings"])
     return result
 
 
-def list_feed(status: str = "", check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
+def list_feed(status: str = "", check_id: str = "", family: str = "", limit: int = 100, offset: int = 0,
+              since: int = 0, include_disabled: bool = False) -> dict[str, Any]:
     """Cross-session verdicts of EVERY status (or one, when `status` is set),
     newest first, with each session's first user turn joined in - the unified
     Decision Traces feed. Unlike list_findings (violated only) this also returns
     the `satisfied` rows, so a clean session surfaces associated with the
     policy/rule it satisfied (its `source` citation carries the section/clause),
     not only the sessions that had a violation. Same shape/cap as list_findings,
-    keyed `verdicts`."""
-    result = list_verdicts(status=status, check_id=check_id, family=family, limit=limit, offset=offset, since=since)
+    keyed `verdicts`.
+
+    `include_disabled` also returns the rows a disabled check wrote before it
+    was turned off (see _disabled_clause) and names that set in
+    `disabled_checks`, so a caller can label them rather than mixing them in
+    silently. Default off: the hide rule stands unless asked."""
+    result = list_verdicts(status=status, check_id=check_id, family=family, limit=limit, offset=offset,
+                           since=since, include_disabled=include_disabled)
+    if include_disabled:
+        result["disabled_checks"] = sorted(checks_mod.current().disabled)
     queries = _first_user_messages(sorted({v["session_id"] for v in result["verdicts"]}))
     for v in result["verdicts"]:
         v["user_query"] = queries.get(v["session_id"], "")
+    _occurred_at(result["verdicts"])
     return result
 
 

@@ -1344,6 +1344,19 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-dash-chip.crit  { color: #fff;          background: var(--red); }
 .pf-dash-chip.gold  { color: #92400e;       background: #fef9c3; }
 .pf-dash-chip.slate { color: var(--muted);  background: #eef1f5; }
+
+/* A record whose check has since been disabled in Settings: shown only when
+   the reader asks for it (Findings' "Show N hidden by disabled checks"), and
+   dimmed so it never reads as a live finding. */
+.pf-find-table tr.pf-find-off td { opacity: 0.62; }
+/* Outcome + the "check off" tag stay on ONE line: wrapped, the tag doubled
+   every revealed row's height and read as a second outcome. */
+.pf-find-table td.pf-find-outcome-cell { white-space: nowrap; }
+.pf-find-off-tag { font-size: 9px; padding: 1px 4px; margin-left: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+/* Fixed-layout table: the Outcome column is sized for "indeterminate", so it
+   needs the extra room while the tag is on screen. */
+.pf-find-table.showing-off th:nth-child(3), .pf-find-table.showing-off td:nth-child(3) { width: 152px; }
+.pf-find-table tr.pf-find-off:hover td { opacity: 1; }
 .pf-dash-feed-status { font-size: 12px; color: var(--muted); padding: 14px 0; }
 .pf-dash-feed-status.error { color: var(--red); }
 
@@ -1414,6 +1427,35 @@ td.pf-tr-share { width: 34px; text-align: right; }
   padding: 1px 6px; border-radius: 4px;
 }
 .pf-chk-detail { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+/* Worked example per check (Settings › Checks). The "?" sits outside the row's
+   <label> — inside it, clicking it would flip the switch too. */
+.pf-chk-item { border-bottom: 1px solid var(--line-soft); }
+.pf-chk-item:last-child { border-bottom: none; }
+.pf-chk-item .pf-chk-row { border-bottom: none; flex: 1; }
+.pf-chk-item-row { display: flex; align-items: flex-start; gap: 6px; }
+.pf-chk-item.open { background: var(--surface-alt); }
+.pf-chk-help-btn {
+  flex: none; margin-top: 10px; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  font-size: 12px; line-height: 1; cursor: pointer;
+}
+.pf-chk-help-btn:hover { color: var(--ink); border-color: var(--blue); }
+.pf-chk-help-btn[aria-expanded="true"] { background: var(--blue); border-color: var(--blue); color: #fff; }
+.pf-chk-help { padding: 2px 30px 12px 44px; display: flex; flex-direction: column; gap: 5px; }
+.pf-chk-help-line { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); }
+.pf-chk-help-k {
+  display: inline-block; min-width: 84px; margin-right: 6px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); vertical-align: 1px;
+}
+.pf-chk-help code { font-family: var(--app-font-mono); font-size: 11.5px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 4px; padding: 0 4px; }
+/* The verdict line the example produces, in the engine's own words. */
+.pf-chk-help-emits {
+  margin: 2px 0 0; padding: 6px 10px; border-left: 2px solid var(--line);
+  background: var(--surface); border-radius: 0 6px 6px 0;
+  font-family: var(--app-font-mono); font-size: 11.5px; line-height: 1.5; color: var(--ink-soft);
+}
 
 /* iOS-style switch built on a real checkbox, so it keeps keyboard focus,
    the label association and the disabled state for free. */
@@ -2087,6 +2129,16 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-find-flyout-top.ok { border-left-color: var(--green); background: var(--green-light); }
 .pf-find-flyout-label { display: block; margin-bottom: 4px; }
 .pf-find-flyout-oneliner { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+
+/* "Which check said this, and where its expectation is declared" — the
+   provenance line under the finding, on the same tinted card. Deliberately
+   quieter than the one-liner: it answers a follow-up question, it isn't the
+   finding. */
+.pf-find-origin { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(15, 23, 42, 0.08); font-size: 11.5px; line-height: 1.5; }
+.pf-find-origin code { font-size: 11px; background: rgba(15, 23, 42, 0.06); border-radius: 4px; padding: 0 4px; }
+.pf-find-origin-check { display: block; font-weight: 600; color: var(--ink); }
+.pf-find-origin-what { display: block; color: var(--ink-soft); }
+.pf-find-origin-where { display: block; margin-top: 2px; }
 
 /* ── Findings: session fly-out panel ────────────────────────────────────── */
 /* Same pattern as Verdict's SessionFlyout (artifacts/verdict/src/index.css) -

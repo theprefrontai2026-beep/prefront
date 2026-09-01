@@ -31,6 +31,7 @@ import {
   FAMILY_OPTIONS, EFFECT_OPTIONS,
   type SeverityLevel, type SeverityRule,
 } from "../severity";
+import { CHECK_HELP } from "../checkHelp";
 
 function Pick({ value, options, onChange }: {
   value: string; options: { value: string; label: string }[]; onChange: (v: string) => void;
@@ -44,28 +45,76 @@ function Pick({ value, options, onChange }: {
 
 /* ── Checks: enable/disable each check, per family ────────────────────────── */
 
-/** One check row: a switch, its name and id, and what it asserts. */
-function CheckRow({ c, disabled, onToggle }: {
-  c: CheckInfo; disabled: boolean; onToggle: (on: boolean) => void;
+/** The worked example for one check: what has to be configured for it to run
+ *  at all, what makes it fire, and one concrete case with the line the engine
+ *  writes for it. Content lives in ../checkHelp.ts (see its header for why the
+ *  examples are hypothetical rather than read from the deployment). A check the
+ *  engine adds before the help does still renders — with a note, never a gap. */
+// `backticked` spans in the help text become real <code>, so a config key or a
+// tool name reads as one instead of as literal backticks. Deliberately just
+// this one rule — the help is prose with identifiers in it, not markdown.
+function withCode(text: string) {
+  return text.split(/`([^`]+)`/).map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part));
+}
+
+function CheckExplainer({ checkId }: { checkId: string }) {
+  const help = CHECK_HELP[checkId];
+  if (!help) {
+    return (
+      <div className="pf-chk-help">
+        <p className="pf-chk-help-line">
+          No worked example for <code>{checkId}</code> yet — the engine describes it above.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="pf-chk-help">
+      <p className="pf-chk-help-line"><span className="pf-chk-help-k">Needs</span>{withCode(help.needs)}</p>
+      <p className="pf-chk-help-line"><span className="pf-chk-help-k">Flags when</span>{withCode(help.flags)}</p>
+      <p className="pf-chk-help-line"><span className="pf-chk-help-k">Example</span>{withCode(help.given)}</p>
+      {/* The verdict this example produces, in the engine's own words - the
+         same sentence the reader will meet in Findings. */}
+      <p className="pf-chk-help-emits">→ {help.emits}</p>
+    </div>
+  );
+}
+
+/** One check row: a switch, its name and id, what it asserts, and a toggle for
+ *  the worked example. The explainer button sits OUTSIDE the <label> — inside
+ *  it, every click would also flip the switch. */
+function CheckRow({ c, disabled, open, onOpen, onToggle }: {
+  c: CheckInfo; disabled: boolean; open: boolean; onOpen: (open: boolean) => void; onToggle: (on: boolean) => void;
 }) {
   return (
-    <label className={`pf-chk-row ${c.enabled ? "" : "off"}`}>
-      <input type="checkbox" role="switch" className="pf-chk-switch"
-             checked={c.enabled} disabled={disabled}
-             onChange={(e) => onToggle(e.target.checked)} />
-      <span className="pf-chk-body">
-        <span className="pf-chk-head">
-          <span className="pf-chk-title">{c.title}</span>
-          <code className="pf-chk-id">{c.check_id}</code>
-          {c.population && (
-            <span className="pf-dash-chip teal" title="Computed on demand across many sessions (POST /eval/population), not during a session's own evaluation">
-              on demand
+    <div className={`pf-chk-item ${open ? "open" : ""}`}>
+      <div className="pf-chk-item-row">
+        <label className={`pf-chk-row ${c.enabled ? "" : "off"}`}>
+          <input type="checkbox" role="switch" className="pf-chk-switch"
+                 checked={c.enabled} disabled={disabled}
+                 onChange={(e) => onToggle(e.target.checked)} />
+          <span className="pf-chk-body">
+            <span className="pf-chk-head">
+              <span className="pf-chk-title">{c.title}</span>
+              <code className="pf-chk-id">{c.check_id}</code>
+              {c.population && (
+                <span className="pf-dash-chip teal" title="Computed on demand across many sessions (POST /eval/population), not during a session's own evaluation">
+                  on demand
+                </span>
+              )}
             </span>
-          )}
-        </span>
-        <span className="pf-chk-detail">{c.detail}</span>
-      </span>
-    </label>
+            <span className="pf-chk-detail">{c.detail}</span>
+          </span>
+        </label>
+        <button type="button" className="pf-chk-help-btn" aria-expanded={open}
+                aria-label={`${open ? "Hide" : "Show"} the example for ${c.title}`}
+                title="What configures this check, and a worked example"
+                onClick={() => onOpen(!open)}>
+          {open ? "✕" : "?"}
+        </button>
+      </div>
+      {open && <CheckExplainer checkId={c.check_id} />}
+    </div>
   );
 }
 
@@ -73,6 +122,11 @@ function ChecksSection() {
   const [data, setData] = useState<ChecksResponse | null>(null);
   const [disabledIds, setDisabledIds] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  // Which checks have their worked example open. `explainAll` opens every one
+  // at once (read the whole reference top to bottom); the per-check set is
+  // what the individual "?" buttons edit.
+  const [explained, setExplained] = useState<Set<string>>(new Set());
+  const [explainAll, setExplainAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
@@ -142,6 +196,13 @@ function ChecksSection() {
         <span className="pf-dash-subtle">
           {status === "ready" ? `${enabledCount} of ${total} enabled · deployment-wide` : "…"}
         </span>
+        <div className="pf-dash-panel-actions">
+          <button className="pf-dash-link" type="button"
+                  onClick={() => { setExplainAll((v) => !v); setExplained(new Set()); }}
+                  title="What configures each check, what makes it fire, and a worked example with the line the engine writes">
+            {explainAll ? "Hide examples" : "Explain every check"}
+          </button>
+        </div>
       </div>
       <p className="pf-hint" style={{ marginTop: 0 }}>
         Which of the engine’s checks this deployment runs. A disabled check
@@ -180,7 +241,14 @@ function ChecksSection() {
                 <div className="pf-chk-list">
                   {fam.checks.map((c) => (
                     <CheckRow key={c.check_id} c={{ ...c, enabled: isOn(c.check_id) }}
-                              disabled={saving} onToggle={(v) => toggle(c.check_id, v)} />
+                              disabled={saving}
+                              open={explainAll || explained.has(c.check_id)}
+                              onOpen={(open) => setExplained((prev) => {
+                                const next = new Set(prev);
+                                if (open) next.add(c.check_id); else next.delete(c.check_id);
+                                return next;
+                              })}
+                              onToggle={(v) => toggle(c.check_id, v)} />
                   ))}
                 </div>
               </div>

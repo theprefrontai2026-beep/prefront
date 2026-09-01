@@ -213,6 +213,20 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
   const traces = Array.from(new Set(spans.map((s) => s.trace_id)));
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
   const policy = parseList(root?.attributes["scenario.policy"] ?? "");
+  // Same rollup as the main app's Decision-evidence table and session flyout:
+  // one scenario runs every check, so listing each satisfied one beside two
+  // real violations buries them. If this session went wrong, show what went
+  // wrong and roll every satisfied check up behind the disclosure; if it came
+  // back clean, keep ONE visible as the evidence it was checked at all.
+  // Nothing is dropped — the rest are one click away.
+  const failed = verdicts.filter((v) => v.status !== "satisfied");
+  const satisfiedLead = failed.length ? [] : tags.slice(0, 1);
+  const satisfiedRest = tags.slice(satisfiedLead.length);
+  const tagChip = (t: ConformanceTag, key: string) => (
+    <span key={key} className="pf-oob-chip green" title={t.clause_text || t.check_id}>
+      {t.check_id}{t.section ? ` · §${t.section}` : ""} ✓
+    </span>
+  );
   return (
     <section className="pf-panel pf-oob-detail">
       <div className="pf-oob-panel-head">
@@ -226,13 +240,20 @@ export function SessionDetail({ sessionId, refreshKey, onClose, onOpenTrace }: {
           {checks.length > 0 && <div style={{ marginTop: 4 }}>{checks.map((c) => <span key={c} className="pf-oob-chip amber">{c}</span>)}{policy.map((c) => <span key={c} className="pf-oob-chip">§{c}</span>)}<span className="pf-oob-subtle"> ← checks this scenario is built to trigger and the policy sections they attribute to (from the harness, not a verdict)</span></div>}
           {(verdicts.length > 0 || tags.length > 0) && (
             <div style={{ marginTop: 4 }}>
-              {verdicts.filter((v) => v.status !== "satisfied").map((v, i) => (
+              {failed.map((v, i) => (
                 <span key={"v" + i} className={`pf-oob-chip ${STATUS_TONE[v.status] || ""}`} title={v.detail}>{v.check_id} · {v.status}</span>
               ))}
-              {tags.map((t, i) => (
-                <span key={"t" + i} className="pf-oob-chip green" title={t.clause_text || t.check_id}>{t.check_id}{t.section ? ` · §${t.section}` : ""} ✓</span>
-              ))}
+              {satisfiedLead.map((t, i) => tagChip(t, "lead" + i))}
               <span className="pf-oob-subtle"> ← eval-engine's actual verdicts for this session (green = satisfied/conformance, red/amber = violated/indeterminate)</span>
+              {satisfiedRest.length > 0 && (
+                <details className="pf-oob-details" style={{ marginTop: 4 }}>
+                  <summary>
+                    {satisfiedRest.length} {satisfiedLead.length ? "more " : ""}
+                    check{satisfiedRest.length === 1 ? "" : "s"} satisfied
+                  </summary>
+                  <div>{satisfiedRest.map((t, i) => tagChip(t, "t" + i))}</div>
+                </details>
+              )}
             </div>
           )}
         </div>

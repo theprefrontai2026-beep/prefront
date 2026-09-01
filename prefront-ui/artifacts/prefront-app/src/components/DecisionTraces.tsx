@@ -88,6 +88,15 @@ const FINDING_RANGES: { label: string; seconds: number | null }[] = [
   { label: "All", seconds: null },
 ];
 
+// When a record happened, for display AND for ordering: the activity's own
+// time, falling back to the evaluation time only when the spans are gone (see
+// EvalVerdict.occurred_at). Both are ISO-8601 with a zone, so a string parse
+// is safe; an unparseable/empty value sorts last rather than to 1970.
+function whenOf(r: EvalVerdict): number {
+  const t = Date.parse(r.occurred_at || r.evaluated_at);
+  return Number.isNaN(t) ? -Infinity : t;
+}
+
 function findingWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
@@ -155,7 +164,13 @@ const OUTCOME_ORDER = ["violated", "indeterminate", "satisfied"];
 // ignored. `rules` is the customer's severity mapping (severity is derived per
 // row from family+effect, first-match-wins).
 type LinkedFinding = { sessionId: string; spanId: string | null; eventId: string | null;
-                      detail: string; source: string; status: string };
+                      detail: string; source: string; status: string;
+                      // The whole verdict when it resolved, so the flyout can
+                      // name the check and where its expectation is declared
+                      // without re-finding the row — and can still do it for a
+                      // record whose check is disabled, which its own
+                      // per-session fetch would filter out.
+                      verdict: EvalVerdict | null };
 
 /**
  * Reconstruct the open finding from the URL, for a link someone was sent.
@@ -202,8 +217,8 @@ function useLinkedFinding(
   const r = inList ?? fetched;
   return r
     ? { sessionId, spanId: r.evidence_span_ids?.[0] ?? spanId, eventId: r.event_id || null,
-        detail: r.detail, source: r.source, status: r.status }
-    : { sessionId, spanId, eventId, detail: "", source: "", status: "" };
+        detail: r.detail, source: r.source, status: r.status, verdict: r }
+    : { sessionId, spanId, eventId, detail: "", source: "", status: "", verdict: null };
 }
 
 function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true }: {
@@ -232,6 +247,16 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   const [severity, setSeverity] = useState(initialSeverity);
   const [policyNum, setPolicyNum] = useState("");
   const [q, setQ] = useState("");
+  // Not a filter — a rollup of the satisfied rows (see `displayed` below).
+  const [collapse, setCollapse] = useState(true);
+  // Records written by a check that has since been DISABLED in Settings.
+  // eval-engine hides them on every normal read (they are hidden, never
+  // deleted — disabling is reversible), so the feed is fetched with
+  // `include_disabled` and they are hidden HERE instead, behind a control
+  // that says how many there are. Otherwise the only way to find out what a
+  // disabled check is holding back is to turn it back on.
+  const [disabledChecks, setDisabledChecks] = useState<string[]>([]);
+  const [showHidden, setShowHidden] = useState(false);
   useEffect(() => { setEffect(initialEffect); if (initialEffect) setRange(null); }, [initialEffect]);
   useEffect(() => { setSeverity(initialSeverity); if (initialSeverity) setRange(null); }, [initialSeverity]);
 
@@ -250,10 +275,11 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       // deployment emits far more satisfied rows than violations, and we don't
       // want those to push older violations past the window (violations still
       // sort to the top regardless).
-      const res = await fetch("/eval/verdicts?limit=1000");
+      const res = await fetch("/eval/verdicts?limit=1000&include_disabled=true");
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
       setRows(json.verdicts || []);
+      setDisabledChecks(json.disabled_checks || []);
       setStatus("ready");
     } catch (e: any) {
       setError(String(e?.message || e));
@@ -298,11 +324,20 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
     [rows],
   );
 
-  const filtered = useMemo(() => {
+  const isHidden = useCallback((r: EvalVerdict) => disabledChecks.includes(r.check_id), [disabledChecks]);
+
+  // Everything matching the column filters, INCLUDING the disabled-check
+  // records — `filtered` below drops those unless they're being shown, and
+  // the difference between the two is the count the control offers.
+  const matched = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const cutoff = range ? Date.now() - range * 1000 : null;
     const out = rows.filter((r) => {
-      if (cutoff && new Date(r.evaluated_at).getTime() < cutoff) return false;
+      // Windowed on when it HAPPENED (whenOf), the same clock the When column
+      // shows — filtering on the evaluation time would make "last 1h" mean
+      // "evaluated in the last hour", which after any re-evaluation is
+      // everything the engine still has.
+      if (cutoff && whenOf(r) < cutoff) return false;
       if (eventId.trim() && !r.event_id.includes(eventId.trim())) return false;
       if (family && famOf(r) !== family) return false;
       if (checkId && r.check_id !== checkId) return false;
@@ -322,14 +357,52 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       }
       return true;
     });
-    // Triage order in the unified feed: violations first (then indeterminate,
-    // then satisfied), most-severe first within an outcome, then most-recent —
-    // so sharing the table with clean/satisfied rows never buries a violation.
+    // Chronological, newest first, oldest at the bottom — full stop. This used
+    // to lead with a triage order (violations, then severity, then time),
+    // which reads as a ranking rather than a log and scatters one session's
+    // records across the table; the satisfied rollup above is what keeps a
+    // violation from being buried now. Ties (same instant, common inside one
+    // session) fall back to the event id, which is a monotonic serial, so the
+    // order is total and stable rather than dependent on the sort's stability.
     return out.sort((a, b) =>
-      outcomeMeta(a.status).rank - outcomeMeta(b.status).rank
-      || SEVERITY_META[sevOf(b)].rank - SEVERITY_META[sevOf(a)].rank
-      || new Date(b.evaluated_at).getTime() - new Date(a.evaluated_at).getTime());
+      whenOf(b) - whenOf(a)
+      || (Number(b.event_id || 0) - Number(a.event_id || 0)));
   }, [rows, range, eventId, family, checkId, outcome, effect, severity, policyNum, q, sevOf]);
+
+  const hiddenMatches = useMemo(() => matched.filter(isHidden).length, [matched, isHidden]);
+  const filtered = useMemo(
+    () => (showHidden ? matched : matched.filter((r) => !isHidden(r))),
+    [matched, showHidden, isHidden],
+  );
+
+  // ── One session's satisfied checks collapse to a single row ────────────
+  // Every check that ran emits a verdict, so ONE scenario lands ~10 rows here
+  // and its two real violations read as a minority of a mostly-green list.
+  // Per session: if something went wrong, the satisfied rows are noise beside
+  // it — drop them; if nothing did, keep exactly ONE as the evidence that the
+  // session was checked and came back clean (dropping them all would make a
+  // clean session look unevaluated, which is the opposite of this table's
+  // point). Grouping is per session because that's the unit a check runs
+  // over — a feed of many sessions still shows every session.
+  // Skipped whenever Outcome is filtered explicitly: someone who asked for
+  // satisfied rows and got one per session would read that as a bug.
+  const collapsing = collapse && !outcome;
+  const { displayed, collapsed } = useMemo(() => {
+    if (!collapsing) return { displayed: filtered, collapsed: 0 };
+    // Both halves read the ENABLED rows only, so revealing the disabled-check
+    // records can only ever add rows to the table, never silently remove one
+    // (a hidden violation deciding that a session's satisfied row must go
+    // would make the reveal toggle change things it has no business changing).
+    const dirty = new Set(filtered.filter((r) => r.status !== "satisfied" && !isHidden(r)).map((r) => r.session_id));
+    const kept = new Set<string>();
+    const out = filtered.filter((r) => {
+      if (r.status !== "satisfied" || isHidden(r)) return true;
+      if (dirty.has(r.session_id) || kept.has(r.session_id)) return false;
+      kept.add(r.session_id);
+      return true;
+    });
+    return { displayed: out, collapsed: filtered.length - out.length };
+  }, [filtered, collapsing, isHidden]);
 
   // The open finding, resolved from the URL (see useLinkedFinding above).
   const flyout = useLinkedFinding(openSession, openEvent, loc.query.get("span"), rows, status);
@@ -337,11 +410,17 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   // Distribution over the selected time range only (independent of the column
   // filters), so the family/severity charts always show the full breakdown for
   // the chosen period.
+  // Never counts a disabled check's records, even while they're being shown:
+  // eval-engine keeps them out of every aggregate it serves (/eval/status, the
+  // compliance report), and a chart here that disagreed with those would be
+  // worse than the one missing row. Revealing them is for reading individual
+  // records, not for restating the deployment's numbers.
   const rangeRows = useMemo(() => {
-    if (!range) return rows;
+    const live = rows.filter((r) => !isHidden(r));
+    if (!range) return live;
     const cutoff = Date.now() - range * 1000;
-    return rows.filter((r) => new Date(r.evaluated_at).getTime() >= cutoff);
-  }, [rows, range]);
+    return live.filter((r) => whenOf(r) >= cutoff);
+  }, [rows, range, isHidden]);
   const familyDist = useMemo(
     () => FAMILY_DIST.map((f) => ({ label: f.label, tone: f.tone, count: rangeRows.filter((r) => r.family === f.key).length })),
     [rangeRows],
@@ -386,7 +465,9 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
         <p className="pf-hint" style={{ marginTop: 0 }}>
           eval-engine's shadow evaluation of every ingested session — <strong>every outcome</strong>, not
           only violations (see eval-engine/CLAUDE.md). A clean session isn't absent: it shows as
-          <em> satisfied</em>, associated with the policy or business rule it was checked against.
+          one <em>satisfied</em> row, associated with the policy or business rule it was checked
+          against — a session that has violations shows those instead, its satisfied checks rolled
+          up into the count below.
           Never on the request path; nothing here blocked anything — it's what the checks found after
           the fact.
         </p>
@@ -431,8 +512,31 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
 
         <div className="pf-tr-summary">
           <span className="pf-tr-count">
-            {filtered.length}<span className="muted"> of {rows.length}</span> records
+            {displayed.length}<span className="muted"> of {showHidden ? rows.length : rows.filter((r) => !isHidden(r)).length}</span> records
           </span>
+          {collapsing && collapsed > 0 && (
+            <button className="pf-dash-link" type="button" onClick={() => setCollapse(false)}
+                    title="Show every satisfied check, one row per check that ran">
+              Show {collapsed} more satisfied {collapsed === 1 ? "check" : "checks"}
+            </button>
+          )}
+          {!collapse && (
+            <button className="pf-dash-link" type="button" onClick={() => setCollapse(true)}>
+              Collapse satisfied checks
+            </button>
+          )}
+          {/* Records a disabled check wrote before it was switched off. They
+              are hidden, NOT deleted — re-enabling the check brings them back
+              on its own — so the honest control is one that says how many
+              there are and shows them on request. */}
+          {hiddenMatches > 0 && (
+            <button className="pf-dash-link" type="button" onClick={() => setShowHidden((v) => !v)}
+                    title={`Written by ${disabledChecks.join(", ")} — disabled in Settings › Checks, so normally hidden. Nothing was deleted; re-enabling the check restores them everywhere.`}>
+              {showHidden
+                ? `Hide ${hiddenMatches} from disabled check${disabledChecks.length === 1 ? "" : "s"}`
+                : `Show ${hiddenMatches} hidden by disabled check${disabledChecks.length === 1 ? "" : "s"}`}
+            </button>
+          )}
           {activeFilters > 0 && (
             <button className="pf-dash-link" type="button" onClick={clearAll}>
               Clear filters ✕ ({activeFilters})
@@ -443,13 +547,15 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
 
       <section className="pf-panel" style={{ marginTop: 14 }}>
         {status === "error" && <div className="pf-dash-feed-status error">Couldn’t load decision evidence ({error}).</div>}
-        {status !== "error" && filtered.length === 0 && (
+        {status !== "error" && displayed.length === 0 && (
           <div className="pf-dash-feed-status">
             {rows.length === 0 ? "No evaluated sessions yet — run a scenario against a demo agent, then eval-engine's shadow evaluation appears here." : "Nothing matches these filters."}
           </div>
         )}
-        {filtered.length > 0 && (
-          <table className="pf-dash-table pf-tr-table pf-find-table">
+        {displayed.length > 0 && (
+          <table className={`pf-dash-table pf-tr-table pf-find-table ${showHidden && hiddenMatches > 0 ? "showing-off" : ""}`}>
+            {/* `showing-off` widens the Outcome column for the "off" tag — the
+               table is fixed-layout, so the tag would be clipped otherwise. */}
             {/* Check and Policy stay filterable above (families/checks/policies
                dropdowns) but aren't shown as columns here - narrower table,
                less redundant with the one-liner + flyout. Every column is
@@ -459,16 +565,27 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
               <tr><th>Event</th><th>When</th><th>Outcome</th><th>Severity</th><th>Family</th><th>Effect</th><th>User query</th><th>Policy / detail</th><th aria-label="Share" /></tr>
             </thead>
             <tbody>
-              {filtered.map((r, i) => {
+              {displayed.map((r, i) => {
                 const sev = sevOf(r);
                 const om = outcomeMeta(r.status);
                 const satisfied = r.status === "satisfied";
+                const hidden = isHidden(r);
                 return (
-                <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className="clickable"
+                <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className={`clickable ${hidden ? "pf-find-off" : ""}`}
                     onClick={() => navTo(findingHref(r.session_id, r.event_id, r.evidence_span_ids?.[0] ?? null))}>
                   <td className="mono pf-tr-truncate narrow" title={r.event_id || undefined}>{r.event_id || "—"}</td>
-                  <td className="pf-tr-when">{findingWhen(r.evaluated_at)}</td>
-                  <td><span className={`pf-dash-chip ${om.tone}`}>{om.label}</span></td>
+                  <td className="pf-tr-when"
+                      title={`${r.occurred_at ? `Happened ${findingWhen(r.occurred_at)}` : "Time unknown — the session's spans are no longer stored"} · evaluated ${findingWhen(r.evaluated_at)}`}>
+                    {findingWhen(r.occurred_at || r.evaluated_at)}
+                  </td>
+                  <td className="pf-find-outcome-cell">
+                    <span className={`pf-dash-chip ${om.tone}`}>{om.label}</span>
+                    {hidden && (
+                      <span className="pf-dash-chip slate pf-find-off-tag" title={`${r.check_id} is disabled in Settings › Checks — this record is normally hidden everywhere, but it was never deleted.`}>
+                        off
+                      </span>
+                    )}
+                  </td>
                   {/* Severity is a violation-triage rating; a satisfied row has none. */}
                   <td>{satisfied ? <span className="muted">—</span> : <span className={`pf-dash-chip ${SEVERITY_META[sev].tone}`}>{SEVERITY_META[sev].label}</span>}</td>
                   <td className="pf-tr-truncate" title={famOf(r)}>{famOf(r)}</td>
@@ -487,7 +604,8 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
 
       {flyout && (
         <SessionFlyout sessionId={flyout.sessionId} initialSpanId={flyout.spanId} eventId={flyout.eventId}
-                       findingDetail={flyout.detail} findingSource={flyout.source} findingStatus={flyout.status} refreshKey={0}
+                       findingDetail={flyout.detail} findingSource={flyout.source} findingStatus={flyout.status}
+                       findingVerdict={flyout.verdict} refreshKey={0}
                        shareHref={findingHref(flyout.sessionId, flyout.eventId, flyout.spanId)}
                        onClose={() => navTo(findingsHref())} />
       )}

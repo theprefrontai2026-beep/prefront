@@ -235,11 +235,19 @@ async def findings(check_id: str = "", family: str = "", limit: int = 100, offse
 
 
 @app.get("/eval/verdicts")
-async def verdicts(status: str = "", check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0):
+async def verdicts(status: str = "", check_id: str = "", family: str = "", limit: int = 100, offset: int = 0,
+                   since: int = 0, include_disabled: bool = False):
     """The unified feed: every verdict regardless of status (satisfied included),
     so a clean session shows up beside the violations, associated with the
-    policy/rule it satisfied. `status` narrows to one outcome when set."""
-    return await asyncio.to_thread(store.list_feed, status=status, check_id=check_id, family=family, limit=limit, offset=offset, since=since)
+    policy/rule it satisfied. `status` narrows to one outcome when set.
+
+    `include_disabled=true` additionally returns the records a check wrote
+    before it was disabled - normally hidden on every read (ch._disabled_clause)
+    - and names that set in `disabled_checks` so the caller can label them.
+    Disabling a check has never DELETED anything; this is how a reader sees
+    what the switch is hiding without having to turn the check back on."""
+    return await asyncio.to_thread(store.list_feed, status=status, check_id=check_id, family=family,
+                                   limit=limit, offset=offset, since=since, include_disabled=include_disabled)
 
 
 @app.get("/eval/conformance")

@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyLink from "./CopyLink";
 import { setParams, useLoc } from "../lib/router";
 import { navTo, obsViewHref, onTab, sessionHref, traceHref } from "../routes";
-import { CLEAR_ALL_CONFIRM, clearAllTraceData } from "../api";
+import { CLEAR_ALL_CONFIRM, clearAllTraceData, getChecks, type CheckInfo } from "../api";
 import { DEMOS } from "../demos";
 
 /* ── types (mirror oobingest/ch.py) ─────────────────────────────────────── */
@@ -110,6 +110,14 @@ export type EvalVerdict = {
   evidence_excerpt: string; source: string; mode: string; engine_version: string;
   binding_profile_version: string; visibility_profile_version: string;
   rule_pack_version: string; catalog_version: string; evaluated_at: string;
+  // When the evaluated ACTIVITY happened (the cited span's start, else the
+  // session's first span), joined in from the shared `spans` table at read
+  // time — NOT when the engine evaluated it. `evaluated_at` is the wrong
+  // "when" for a reader: evaluation is batched, so a whole run of sessions
+  // shares one timestamp to the second, and any re-evaluation moves every
+  // row to the new pass's time. "" when the spans have aged out (the engine
+  // never substitutes evaluated_at — see ch._occurred_at).
+  occurred_at?: string;
   // A monotonic serial number (decimal string, e.g. "42"), assigned at
   // PERSIST time (ch.py's insert_verdicts) - "" on any row written before
   // this field existed, or a leftover uuid4 from the brief window it was
@@ -824,8 +832,23 @@ function stepsOf(spans: Span[]): Step[] {
   return out;
 }
 
-export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDetail, findingSource, findingStatus, onClose }: {
+// Where a check's expectation is DECLARED, per family — the question a
+// finding's one-liner can't answer on its own. "field(s) ['version'] exceed
+// the approved set" names neither who approved that set nor which file to
+// edit to change it; this does, without the engine having to carry a new
+// column (family + the version stamp are already on every verdict).
+const FAMILY_ORIGIN: Record<string, { what: string; envVar: string; version: (v: EvalVerdict) => string }> = {
+  family1: { what: "the learnt rule pack", envVar: "EVAL_RULE_PACK_PATH", version: (v) => v.rule_pack_version },
+  family2: { what: "", envVar: "", version: () => "" },  // built in: nothing declares it
+  family3: { what: "the approved-intent catalog", envVar: "EVAL_INTENT_CATALOG_PATH", version: (v) => v.catalog_version },
+};
+
+export function SessionDetail({ sessionId, refreshKey, initialSpanId, eventId, findingDetail, findingSource, findingStatus, findingVerdict, onClose }: {
   sessionId: string; refreshKey: number; initialSpanId?: string | null;
+  // The open finding's event id, when opened from a Decision-evidence row —
+  // used to pick THIS finding's verdict out of the session's verdicts below,
+  // for the "which check, declared where" line under the one-liner.
+  eventId?: string | null;
   // Set only when opened from a Findings row (SessionFlyout below) - the
   // finding's own one-liner + policy citation, shown prominently at the TOP
   // instead of being buried among session meta. Absent for the plain
@@ -833,6 +856,10 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   // to lead with. `findingStatus` flips the heading between a violation and a
   // satisfied row (which is positive evidence, not "what was wrong").
   findingDetail?: string; findingSource?: string; findingStatus?: string;
+  // The finding's own verdict row when the caller already has it — preferred
+  // over the per-session fetch below, which cannot see a record whose check
+  // is disabled (the engine hides those on that read, by design).
+  findingVerdict?: EvalVerdict | null;
   onClose: () => void;
 }) {
   const [spans, setSpans] = useState<Span[]>([]);
@@ -846,11 +873,25 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   const [traceOpen, setTraceOpen] = useState(!!initialSpanId);
   const [verdicts, setVerdicts] = useState<EvalVerdict[]>([]);
   const [tags, setTags] = useState<ConformanceTag[]>([]);
+  // The engine's own check registry (the same list Settings › Checks renders),
+  // for the open finding's title + what it asserts. Best-effort and only
+  // fetched when a finding is actually open.
+  const [checkInfo, setCheckInfo] = useState<Record<string, CheckInfo>>({});
 
+  // Reset on the SESSION changing — not on initialSpanId. It used to key on
+  // both, which emptied the panel for good on a deep link: DecisionTraces
+  // resolves the cited span asynchronously (useLinkedFinding returns null for
+  // it until the verdict list lands), so initialSpanId flips null -> id AFTER
+  // the fetch below has resolved, and this wiped spans/verdicts/tags while the
+  // fetch effect — keyed on sessionId/refreshKey — never re-ran. Symptom: a
+  // link to /traces/findings/<sid>?event=<n> (no span= in it) opened a flyout
+  // stuck on "Full trace (… steps) / Loading…" with no verdict chips.
   useEffect(() => {
-    setSpans([]); setErr(""); setVerdicts([]); setTags([]);
-    setExpanded(new Set()); setTraceOpen(!!initialSpanId);
-  }, [sessionId, initialSpanId]);
+    setSpans([]); setErr(""); setVerdicts([]); setTags([]); setExpanded(new Set());
+  }, [sessionId]);
+  // Opening the trace is what initialSpanId is for; a late-arriving one still
+  // opens it (this is the only writer besides the reader's own toggle).
+  useEffect(() => { if (initialSpanId) setTraceOpen(true); }, [initialSpanId]);
   // A session just run (e.g. via Verdict) may not be ingested yet (the OTLP
   // tap batches for a few seconds; the orchestrator's root arrives via the
   // Phoenix poll). Re-fetch on every refresh tick until it lands.
@@ -867,6 +908,21 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
       .then((d) => { if (alive) setTags(d.conformance_tags); }).catch(() => {});
     return () => { alive = false; };
   }, [sessionId, refreshKey]);
+
+  const opened = !!(findingDetail || eventId);
+  useEffect(() => {
+    if (!opened) return;
+    let alive = true;
+    getChecks()
+      .then((d) => {
+        if (!alive) return;
+        const by: Record<string, CheckInfo> = {};
+        for (const fam of d.families) for (const c of fam.checks) by[c.check_id] = c;
+        setCheckInfo(by);
+      })
+      .catch(() => { /* the line degrades to check id only */ });
+    return () => { alive = false; };
+  }, [opened]);
 
   const steps = useMemo(() => stepsOf(spans), [spans]);
   // One (asked, answered) pair per turn, from the turn/answer steps stepsOf
@@ -889,7 +945,27 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
   const checks = parseList(root?.attributes["scenario.checks"] ?? "");
   const policy = parseList(root?.attributes["scenario.policy"] ?? "");
   const violated = verdicts.filter((v) => v.status !== "satisfied");
+  // Same rollup as the Decision-evidence table (DecisionTraces.tsx's
+  // `displayed`): a session that went wrong shows what went wrong — its
+  // satisfied checks are noise beside it and all roll up behind the
+  // disclosure. A clean one keeps ONE visible, as the evidence that it was
+  // checked at all. Nothing is dropped either way (Hard Rule 15 — satisfied
+  // verdicts are first-class output); the rest are one click away.
+  const satisfiedLead = violated.length ? [] : tags.slice(0, 1);
+  const satisfiedRest = tags.slice(satisfiedLead.length);
   const findingSrc = findingSource ? parseSource(findingSource) : null;
+  // This finding's own verdict row, for the provenance line below. Matched on
+  // the event id (the flyout's own title) and, for a row written before event
+  // ids existed, on the one-liner the caller passed down.
+  const openVerdict = useMemo(() => {
+    if (!opened) return null;
+    return findingVerdict
+        ?? (eventId ? verdicts.find((v) => v.event_id === eventId) : null)
+        ?? (findingDetail ? verdicts.find((v) => v.detail === findingDetail) : null)
+        ?? null;
+  }, [opened, eventId, findingDetail, verdicts, findingVerdict]);
+  const origin = openVerdict ? FAMILY_ORIGIN[openVerdict.family] : undefined;
+  const originVersion = openVerdict && origin ? origin.version(openVerdict) : "";
   return (
     <section className="pf-panel pf-oob-detail">
       {err && <div className="pf-oob-error">{err}</div>}
@@ -918,7 +994,7 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           reads as a narrative - asked -> answered -> verdict - with the trace and
           session meta below as supporting detail. A satisfied row leads with the
           policy/rule it satisfied (positive evidence), not "what was wrong". ── */}
-      {(findingDetail || findingSrc?.section || findingSrc?.text) && (
+      {(findingDetail || findingSrc?.section || findingSrc?.text || openVerdict) && (
         <div className={`pf-find-flyout-top ${findingStatus === "satisfied" ? "ok" : ""}`}>
           <span className="pf-oob-convo-who pf-find-flyout-label">
             {findingStatus === "satisfied" ? "Satisfied policy / rule" : "What was wrong"}
@@ -936,6 +1012,30 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           )}
           {!findingSrc?.text && findingSrc?.section && (
             <div className="pf-find-cite muted">Policy reference: {findingSrc.document} · §{findingSrc.section}</div>
+          )}
+          {/* Which check said so, and where its expectation is DECLARED. The
+              one-liner above states what the check found; on its own it names
+              neither the check (the row in Settings › Checks that turns it off)
+              nor the artifact whose contents it compared against — so "the
+              approved set" reads as if it came from nowhere. */}
+          {openVerdict && (
+            <div className="pf-find-origin">
+              <span className="pf-find-origin-check">
+                <code>{openVerdict.check_id}</code>
+                {checkInfo[openVerdict.check_id] && <> · {checkInfo[openVerdict.check_id].title}</>}
+                {openVerdict.family_label && <> · {openVerdict.family_label}</>}
+              </span>
+              {checkInfo[openVerdict.check_id] && (
+                <span className="pf-find-origin-what">{checkInfo[openVerdict.check_id].detail}</span>
+              )}
+              <span className="pf-find-origin-where muted">
+                {origin?.what
+                  ? <>Declared in {origin.what} (<code>{origin.envVar}</code>){originVersion ? <> · version {originVersion}</> : null}
+                     {openVerdict.rule_id ? <> · rule <code>{openVerdict.rule_id}</code></> : null}</>
+                  : <>Built into the engine — an integrity invariant, nothing declares it</>}
+                {" · Turn this check off in Settings › Checks."}
+              </span>
+            </div>
           )}
         </div>
       )}
@@ -1005,7 +1105,7 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
           {root?.scenario_id && <> · scenario {root.scenario_id}</>}{root?.attributes["app.variant"] && <> · {root.attributes["app.variant"]}</>}
           {" "}· {spans.filter((s) => /^turn /.test(s.name)).length} turn{spans.filter((s) => /^turn /.test(s.name)).length === 1 ? "" : "s"}
         </div>
-        {(checks.length > 0 || violated.length > 0) && (
+        {(checks.length > 0 || violated.length > 0 || satisfiedLead.length > 0) && (
           <div className="pf-oob-footer-row">
             <span className="pf-oob-footer-label" title="What this scenario is built to trigger, and eval-engine's actual verdicts for this session (from the harness / the engine, respectively - not the same thing).">
               Checks
@@ -1016,13 +1116,22 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
             {violated.map((v, i) => (
               <span key={"v" + i} className={`pf-oob-chip ${STATUS_TONE[v.status] || ""}`} title={v.detail}>{v.check_id} · {v.status}</span>
             ))}
+            {satisfiedLead.map((t, i) => (
+              <span key={"lead" + i} className="pf-oob-chip green"
+                   title={`${t.check_id}${t.section ? ` · §${t.section}` : ""}${t.clause_text ? ` — ${t.clause_text}` : ""}`}>
+                {t.check_id} ✓
+              </span>
+            ))}
           </div>
         )}
-        {tags.length > 0 && (
+        {satisfiedRest.length > 0 && (
           <details className="pf-oob-footer-collapse">
-            <summary>{tags.length} check{tags.length === 1 ? "" : "s"} satisfied</summary>
+            <summary>
+              {satisfiedRest.length} {satisfiedLead.length ? "more " : ""}
+              check{satisfiedRest.length === 1 ? "" : "s"} satisfied
+            </summary>
             <div className="pf-oob-footer-row">
-              {tags.map((t, i) => (
+              {satisfiedRest.map((t, i) => (
                 <span key={"t" + i} className="pf-oob-chip green"
                      title={`${t.check_id}${t.section ? ` · §${t.section}` : ""}${t.clause_text ? ` — ${t.clause_text}` : ""}`}>
                   {t.check_id} ✓
@@ -1046,9 +1155,10 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, findingDet
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */
-export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, findingStatus, refreshKey, shareHref, onClose }: {
+export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail, findingSource, findingStatus, findingVerdict, refreshKey, shareHref, onClose }: {
   sessionId: string; initialSpanId?: string | null; eventId?: string | null;
-  findingDetail?: string; findingSource?: string; findingStatus?: string; refreshKey: number;
+  findingDetail?: string; findingSource?: string; findingStatus?: string;
+  findingVerdict?: EvalVerdict | null; refreshKey: number;
   shareHref?: string;   // app-relative link to whatever opened this flyout
   onClose: () => void;
 }) {
@@ -1071,8 +1181,9 @@ export function SessionFlyout({ sessionId, initialSpanId, eventId, findingDetail
           </div>
         </div>
         <div className="pf-flyout-body">
-          <SessionDetail sessionId={sessionId} refreshKey={refreshKey} initialSpanId={initialSpanId}
-                        findingDetail={findingDetail} findingSource={findingSource} findingStatus={findingStatus} onClose={onClose} />
+          <SessionDetail sessionId={sessionId} refreshKey={refreshKey} initialSpanId={initialSpanId} eventId={eventId}
+                        findingDetail={findingDetail} findingSource={findingSource} findingStatus={findingStatus}
+                        findingVerdict={findingVerdict} onClose={onClose} />
         </div>
       </aside>
     </>

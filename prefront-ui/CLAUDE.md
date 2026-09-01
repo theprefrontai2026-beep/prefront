@@ -382,6 +382,17 @@ thing to remember:
   Policy, a catalog for Conformance) gets a "not configured" chip, so "you
   turned this off" and "idle anyway" are distinguishable. The three
   population checks carry an "on demand" chip.
+  **Every check has a worked example** behind a "?" (or all at once via
+  "Explain every check"): what has to be CONFIGURED for it to run, what makes
+  it fire, one concrete case, and the detail line the engine writes for that
+  case — quoted from the check's own f-string, so the example and the real
+  Findings row are recognisable as each other. Content is `src/checkHelp.ts`,
+  keyed by check id; a check the engine adds before the help does renders a
+  note, never a gap. The examples are deliberately HYPOTHETICAL (a made-up
+  support desk) — the engine names no domain, so no check has one to
+  illustrate, and reading the deployment's own artifacts is not this panel's
+  job. The "?" button sits OUTSIDE the row's `<label>`: inside it, clicking it
+  would flip the switch too.
 - **Finding severity** — the ordered family+effect → severity rule list.
   Talks to **api-server** (`/api/settings/severity`) and **is** per demo,
   because severity is a display-layer rating the engine never sees.
