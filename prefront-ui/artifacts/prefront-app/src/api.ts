@@ -405,3 +405,66 @@ export function saveChecks(disabled: string[]): Promise<ChecksResponse> {
 export function resetChecks(): Promise<ChecksResponse> {
   return fetch("/eval/checks", { method: "DELETE" }).then(jsonOrThrow);
 }
+
+// ── Clear every store that holds observed-run data ───────────────────────────
+// One implementation, two call sites (Observability › Ingestion, and Decision
+// Traces): a second copy of this sequence would drift, and the ordering below
+// is load-bearing rather than incidental.
+
+/** Human-readable warning for the confirm dialog.
+ *
+ *  It names what SURVIVES as well as what goes. An early draft said "nothing
+ *  is retained", which a live run disproved in about a second: the cumulative
+ *  counters behind `/api/stats` (`decision_stat`, `decision_agent`,
+ *  `decision_policy`, `decision_intent`) are lifetime totals BY DESIGN - the
+ *  root CLAUDE.md calls them "persistent FOREVER, never pruned, never reset by
+ *  Clear" - and `DELETE /api/decisions` only ever touched `decision_trace`. A
+ *  full clear really does leave "5 agents active" standing, so the dialog says
+ *  so rather than promising a clean slate it cannot deliver. */
+export const CLEAR_ALL_CONFIRM =
+  "Delete ALL observed-run data?\n\n" +
+  "Cleared:\n" +
+  "• Phoenix projects\n" +
+  "• ClickHouse spans + ingest state\n" +
+  "• eval-engine verdicts, conformance tags, evaluated-session records\n" +
+  "• the governed decision log, for every demo\n\n" +
+  "Kept, by design: the lifetime counters (agents seen, per-policy and per-intent\n" +
+  "totals) — they are cumulative, and no Clear has ever reset them.\n\n" +
+  "Findings only reappear when new sessions run.";
+
+export type ClearAllResult = {
+  /** False only when Phoenix refused; the ClickHouse/Postgres truncates still ran. */
+  ok: boolean;
+  /** Set when Phoenix refused — its traces get re-pulled on the next poll. */
+  phoenixError: string;
+};
+
+/**
+ * Order matters. Phoenix goes FIRST and is awaited: it is the source
+ * oob-ingest re-pulls from, so truncating ClickHouse while Phoenix still
+ * holds the spans is a pause, not a clear — they come back within a poll.
+ * A Phoenix failure must NOT abort the rest, or a purge that half-worked
+ * leaves stale findings on screen with no way to shift them; it is reported
+ * instead, and the truncates run regardless.
+ *
+ * The three truncates then run in parallel — they touch different stores and
+ * nothing reads across them mid-clear.
+ *
+ * `/api/decisions` is the one demo-scoped store (the other three are global),
+ * so every known demo is cleared rather than only the active one. A button
+ * that says "everything" and silently spares another demo's rows would be
+ * lying about the one store where the distinction exists.
+ */
+export async function clearAllTraceData(demoIds: string[]): Promise<ClearAllResult> {
+  const phoenix = await fetch("/oob/phoenix", { method: "DELETE" })
+    .catch((e) => ({ ok: false, status: 0, statusText: String(e) } as Response));
+  await Promise.all([
+    fetch("/oob/spans", { method: "DELETE" }),
+    fetch("/eval/verdicts", { method: "DELETE" }),
+    ...demoIds.map((id) => fetch(`/api/decisions?demo=${encodeURIComponent(id)}`, { method: "DELETE" })),
+  ]);
+  return {
+    ok: phoenix.ok,
+    phoenixError: phoenix.ok ? "" : (phoenix.statusText || String(phoenix.status)),
+  };
+}

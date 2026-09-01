@@ -20,6 +20,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyLink from "./CopyLink";
 import { setParams, useLoc } from "../lib/router";
 import { navTo, obsViewHref, onTab, sessionHref, traceHref } from "../routes";
+import { CLEAR_ALL_CONFIRM, clearAllTraceData } from "../api";
+import { DEMOS } from "../demos";
 
 /* ── types (mirror oobingest/ch.py) ─────────────────────────────────────── */
 
@@ -1182,7 +1184,7 @@ function IngestionView({ status, scenarios, onSync, onClear, busy }: {
           <h3>Scenario coverage</h3>
           <div className="pf-oob-actions">
             <button className="pf-btn sm" onClick={onSync} disabled={busy}>Sync from Phoenix now</button>
-            <button className="pf-btn sm reject" onClick={onClear} disabled={busy} title="Phoenix projects + every ClickHouse table (spans, findings, conformance). Nothing retained.">Clear all trace data</button>
+            <button className="pf-btn sm reject" onClick={onClear} disabled={busy} title="Phoenix projects, every ClickHouse table (spans, findings, conformance) and the governed decision log. The lifetime counters behind /api/stats are cumulative by design and survive.">Clear all trace data</button>
           </div>
         </div>
         {scenarios.length ? (
@@ -1265,22 +1267,15 @@ export default function Observability({ active = true }: { active?: boolean }) {
     try { await fetch("/oob/sync", { method: "POST" }); refresh(); } finally { setBusy(false); }
   };
   const clear = async () => {
-    if (!window.confirm("Delete ALL trace data — Phoenix's projects, every ClickHouse table (spans, ingest state), AND eval-engine's verdicts/conformance tags/evaluated-sessions? Nothing is retained; findings only reappear when new sessions run.")) return;
+    // The sequence (and why Phoenix goes first) lives in api.ts's
+    // clearAllTraceData - shared with Decision Traces' own button so the two
+    // cannot drift into clearing different things. It also now clears the
+    // governed decision log, which this button used to leave behind.
+    if (!window.confirm(CLEAR_ALL_CONFIRM)) return;
     setBusy(true);
     try {
-      // Phoenix FIRST (it's the source oob-ingest re-pulls from - clearing
-      // ClickHouse alone is only a pause), then the two ClickHouse truncates
-      // in parallel: /oob/spans (spans + ingest_state) and /eval/verdicts
-      // (eval_verdicts + eval_conformance_tags + eval_evaluated_sessions).
-      // Phoenix can take a few seconds (the purge waits for any in-flight
-      // poll to finish) or be unreachable - either way still truncate
-      // ClickHouse; a Phoenix failure must not leave stale findings behind.
-      const phoenix = await fetch("/oob/phoenix", { method: "DELETE" }).catch((e) => ({ ok: false, statusText: String(e) } as Response));
-      await Promise.all([
-        fetch("/oob/spans", { method: "DELETE" }),
-        fetch("/eval/verdicts", { method: "DELETE" }),
-      ]);
-      if (!phoenix.ok) setErr(`ClickHouse cleared, but Phoenix purge failed (${phoenix.statusText || phoenix.status}) — its traces will be re-pulled on the next poll.`);
+      const res = await clearAllTraceData(DEMOS.map((d) => d.id));
+      if (!res.ok) setErr(`Everything else cleared, but the Phoenix purge failed (${res.phoenixError}) — its traces will be re-pulled on the next poll.`);
       // The trace we were looking at no longer exists — drop it from the URL.
       if (openTrace) navTo(obsViewHref("traces"), { replace: true });
       refresh();

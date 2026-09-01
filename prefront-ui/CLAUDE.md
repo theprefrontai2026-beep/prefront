@@ -332,6 +332,37 @@ observability" section. What follows is the UI over it.
   retention, and is what the confirm dialog now says explicitly.
 
 
+## Clearing data: one sequence, two buttons
+
+`api.ts`'s **`clearAllTraceData(demoIds)`** + **`CLEAR_ALL_CONFIRM`** are the
+single implementation, called from Observability › Ingestion ("Clear all
+trace data") and from Decision Traces' panel head ("Clear all data"). Two
+copies of this would drift, and three details in it are load-bearing:
+
+- **Phoenix goes first, and is awaited.** It is the source oob-ingest
+  re-pulls from, so truncating ClickHouse while Phoenix still holds the
+  spans is a *pause*, not a clear — the rows are back within a poll. This
+  is why a "clear just the findings" button would have been a bug rather
+  than a feature.
+- **A Phoenix failure does not abort the rest.** It is reported and the
+  truncates run anyway; a half-purge that left stale findings on screen
+  with no way to shift them is the worse outcome. The three truncates then
+  run in parallel.
+- **`/api/decisions` is the one demo-scoped store**, so every id in `DEMOS`
+  is cleared, not just the active demo. The other three are global, and a
+  button saying "everything" that spared another demo's rows would be lying
+  about the one store where the distinction exists.
+
+**The lifetime counters survive, and the dialog says so.** `decision_stat` /
+`decision_agent` / `decision_policy` / `decision_intent` are cumulative by
+design (root CLAUDE.md: "persistent FOREVER, never pruned, never reset by
+Clear") and `DELETE /api/decisions` only ever touched `decision_trace`. An
+early draft of the confirm text promised "nothing is retained"; a live run
+disproved it in seconds — everything else went to zero while "5 agents
+active" stood. If a future change should reset them too, it needs a new
+api-server endpoint and a deliberate reversal of that documented property,
+not a quiet extension of this helper.
+
 ## Settings tab (`components/Settings.tsx`, route `/settings`)
 
 Two sections, persisted in two different services, and the split is the

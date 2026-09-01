@@ -1201,6 +1201,10 @@ td.pf-tr-share { width: 34px; text-align: right; }
   margin-bottom: 16px;
 }
 .pf-dash-panel-head h2 { margin: 0; }
+/* The head is space-between, so a panel with more than one control groups
+   them here rather than adding a spacer - a bare flex spacer would push the
+   title away from the first control too. */
+.pf-dash-panel-actions { display: flex; align-items: center; gap: 14px; }
 .pf-dash-subtle { font-size: 11px; color: var(--muted); }
 .pf-dash-link {
   background: none; border: none; cursor: pointer;

@@ -11,13 +11,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import CopyLink from "./CopyLink";
-import { useLoc } from "../lib/router";
+import { currentLoc, useLoc } from "../lib/router";
 import { findingHref, findingsHref, navTo, onTab } from "../routes";
 import type { FeedDecision, Trace } from "../hooks/useDecisionFeed";
-import type { DemoConfig } from "../demos";
+import { DEMOS, type DemoConfig } from "../demos";
 import { SessionFlyout, parseSource, type EvalVerdict } from "./Observability";
 import { severityOf, SEVERITY_META, SEVERITY_ORDER, type SeverityLevel, type SeverityRule } from "../severity";
 import { useSeverityRules } from "../hooks/useSeverityRules";
+import { CLEAR_ALL_CONFIRM, clearAllTraceData } from "../api";
 
 const DECISIONS: FeedDecision[] = ["ALLOWED", "MASKED", "APPROVAL", "BLOCKED"];
 
@@ -211,6 +212,8 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState("");
   // The open finding is URL state, not component state: /traces/findings/
   // <session_id>?event=<event_id>&span=<span_id>. That id trio is what a
   // shared link carries, and the flyout is reconstructed from it below.
@@ -257,6 +260,24 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       setStatus("error");
     }
   }, []);
+
+  const clearData = useCallback(async () => {
+    if (!window.confirm(CLEAR_ALL_CONFIRM)) return;
+    setClearing(true);
+    setClearError("");
+    try {
+      const res = await clearAllTraceData(DEMOS.map((demo) => demo.id));
+      if (!res.ok) {
+        setClearError(`Everything else cleared, but the Phoenix purge failed (${res.phoenixError}) — its traces will be re-pulled on the next poll.`);
+      }
+      // A finding flyout open on a row that no longer exists would sit there
+      // resolving nothing, so close it before reloading.
+      if (onTab(currentLoc().segs, "traces")) navTo(findingsHref(), { replace: true });
+      await load();
+    } catch (e: any) {
+      setClearError(String(e?.message || e));
+    } finally { setClearing(false); }
+  }, [load]);
 
   // Re-fetch whenever the tab becomes visible again, not just on mount.
   // App.tsx keeps every tab MOUNTED and toggles `tab-hidden` (so tab state
@@ -343,10 +364,25 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       <section className="pf-panel">
         <div className="pf-dash-panel-head">
           <h2>Decision evidence</h2>
+          <div className="pf-dash-panel-actions">
           <button className="pf-dash-link" type="button" onClick={load} disabled={status === "loading"}>
             {status === "loading" ? "Loading…" : "Refresh ↻"}
           </button>
+          {/* One button, everything gone. Clearing eval-engine's verdicts alone
+              would look like it worked and then undo itself: the spans stay in
+              ClickHouse, oob-ingest keeps re-pulling from Phoenix, and the
+              worker re-evaluates — the rows are back within a poll. So this
+              fires the same full sequence as Observability's own control
+              (api.ts's clearAllTraceData: Phoenix, then spans, verdicts and the
+              governed decision log), rather than a partial clear that reads as
+              a bug. */}
+          <button className="pf-btn sm reject" type="button" onClick={clearData} disabled={clearing}
+                  title="Phoenix projects, every ClickHouse table (spans, findings, conformance) and the governed decision log. The lifetime counters behind /api/stats are cumulative by design and survive.">
+            {clearing ? "Clearing…" : "Clear all data"}
+          </button>
+          </div>
         </div>
+        {clearError && <div className="pf-dash-feed-status error">{clearError}</div>}
         <p className="pf-hint" style={{ marginTop: 0 }}>
           eval-engine's shadow evaluation of every ingested session — <strong>every outcome</strong>, not
           only violations (see eval-engine/CLAUDE.md). A clean session isn't absent: it shows as
