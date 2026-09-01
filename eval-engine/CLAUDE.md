@@ -329,7 +329,7 @@ reads `INTENTS`, so `check-coverage.md` documents the stale list.
 ## Idempotent replay
 
 `eval_evaluated_sessions` (session_id, version_key) is the dedup gate:
-`version_key = f"{engine_version}:{binding.version}:{visibility.version}:{rule_pack.source_skill}@{rule_pack.source_skill_version}:catalog@{catalog.version}"`.
+`version_key = f"{engine_version}:{binding.version}:{visibility.version}:{rule_pack.source_skill}@{rule_pack.source_skill_version}:catalog@{catalog.version}:checks@{settings.version}"`.
 Republishing a skill (a new `source_skill_version`) makes every
 already-evaluated session eligible for re-evaluation under the new rule pack
 automatically - no manual cache bust. The intent catalog has no such
@@ -340,6 +340,77 @@ hashes). The worker skips any `(session_id, version_key)` pair it's already reco
 `config.ENGINE_VERSION` (or either bundled profile's `version:` field) is
 what makes a prior run re-evaluate - the version key is the only thing that
 distinguishes "already checked" from "artifacts changed since."
+
+The trailing `checks@...` segment is the enabled-check set (see "Check
+enablement" below); it reads `checks@all` on a deployment that has never
+turned anything off. It is emitted unconditionally rather than only when
+something is disabled, so "never touched" and "off then on again" stay
+distinguishable - the cost is that every deployment re-evaluates once on
+upgrade to this version, the same one-off an `ENGINE_VERSION` bump carries.
+
+**`totals()`'s `sessions_evaluated` counts DISTINCT session ids, not rows.**
+This table holds one row per `(session_id, version_key)`, so a session
+re-evaluated under new artifact versions has a row per version and a plain
+`count()` over-reports - it read "183 sessions evaluated" for 61 real
+sessions that had been through three version keys. Latent while only an
+`ENGINE_VERSION` bump or a republished rule pack moved the key; routine now
+that toggling a check does.
+
+## Check enablement (`evalengine/checks.py`, `/eval/checks`)
+
+Which of the engine's 30 checks a deployment runs, edited from the UI's
+Settings panel. Not a display filter - the four things that make it a real
+switch:
+
+1. **`checks.REGISTRY` is the ONE table of check ids**, with the family and
+   a one-line description for each. `compliance/classes.py`'s
+   `FAMILY_OF_CHECK` is now imported from it rather than being a second copy;
+   `tests/test_checks.py` asserts the registry is exactly the ids the
+   modules emit (derived from `compilepack._DEFAULT_CHECK`,
+   `family2.CHECKS`, `family3.*.CHECK_*`), so adding a check without
+   registering it fails the suite.
+2. **The gate is one post-filter in `evaluate_session`**
+   (`CheckSettings.keep`), applied after all three families have run and
+   before anything is stamped or stored. Not per family, deliberately: the
+   families expose check ids at three different granularities (Family 2 one
+   per module, Family 1 one per RULE via `Rule.check_id()`, Family 3 several
+   per function), so three gates would be three mechanisms to keep in step.
+   No check ever learns that settings exist - they stay pure (Hard Rule 3).
+3. **It is in the version key, not in `VersionStamp`.** In the key because
+   toggling changes which verdicts a session yields, so it must invalidate
+   the prior evaluation - that is what makes re-enabling backfill the
+   sessions evaluated while it was off. NOT in the stamp because the stamp
+   records what produced a verdict's CONTENT (Hard Rule 11), and this only
+   decides whether one is emitted; a column identical on every row of a pass
+   buys nothing.
+4. **Reads filter too** (`ch._disabled_clause`, on `list_verdicts`,
+   `list_conformance`, `session_conformance`, `verdict_history`,
+   `rule_fire_counts`, `verdict_rows_for_report`, `totals`). Without this a
+   disabled check's existing rows would keep showing and the toggle would
+   look broken - a re-evaluation emits nothing for it, so it never replaces
+   them under the ReplacingMergeTree. Hiding rather than deleting is what
+   makes it reversible. **Any new read that counts or lists verdicts needs
+   this clause**; `_disabled_clause` says so at its definition.
+
+Persistence is a `eval_settings` key/value row in ClickHouse (`checks` ->
+`{"disabled": [...]}`), loaded into `checks.set_current()` in the API's
+lifespan before the worker's first poll. A table rather than a file because
+this service owns a database and no writable volume; rather than an env var
+because it is edited at runtime. A read failure logs and defaults to
+everything-enabled - never fatal.
+
+```
+GET    /eval/checks   registry grouped by family + enablement + per-family `configured`
+PUT    /eval/checks   {"disabled": [...]}  - whole-set replacement; unknown ids
+                      dropped and reported as `unknown`, never a 400
+DELETE /eval/checks   forget the stored set (all enabled)
+```
+
+PUT/DELETE call `worker.wake()` so re-evaluation starts immediately rather
+than after the poll interval. `configured` per family (rule pack for Family
+1, catalog for Family 3) lets the UI tell "you turned this off" apart from
+"idle because nothing is configured" - two states that would otherwise both
+render as a silent check.
 
 ## Two staleness traps in the new ClickHouse tables (step 20)
 

@@ -19,6 +19,7 @@ from typing import Any, Iterable, Optional
 
 import clickhouse_connect
 
+from . import checks as checks_mod
 from . import config
 from .contract import family_label
 
@@ -101,6 +102,22 @@ ENGINE = ReplacingMergeTree(evaluated_at)
 ORDER BY (session_id, version_key)
 """
 
+# Engine-level settings that outlive a restart. One row per key (currently
+# only "checks", holding the disabled-check set as JSON) - a table rather
+# than a file because this service already owns a database and owns no
+# writable volume, and rather than an env var because it is edited from the
+# UI at runtime, not fixed at deploy time.
+DDL_SETTINGS = f"""
+CREATE TABLE IF NOT EXISTS {config.CLICKHOUSE_DB}.eval_settings
+(
+    key        String,
+    value      String,
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (key)
+"""
+
 
 def client():
     global _client
@@ -132,6 +149,7 @@ def ensure_schema() -> None:
     c.command(DDL_VERDICTS)
     c.command(DDL_CONFORMANCE)
     c.command(DDL_EVALUATED)
+    c.command(DDL_SETTINGS)
     for name, typ in _ADDED_VERDICT_COLUMNS:
         c.command(f"ALTER TABLE {config.CLICKHOUSE_DB}.eval_verdicts ADD COLUMN IF NOT EXISTS {name} {typ}")
     apply_retention(config.RETENTION_DAYS)
@@ -260,6 +278,55 @@ def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
     )
 
 
+# --- disabled-check filtering ------------------------------------------------
+
+def _disabled_clause(params: dict[str, Any]) -> str:
+    """` AND check_id NOT IN (...)` for the deployment's disabled checks, or
+    "" when everything is on.
+
+    Disabling a check has to hide the rows it ALREADY wrote, not just stop
+    new ones: a check turned off in Settings whose old findings kept showing
+    would read as a broken toggle. Hiding rather than deleting is what makes
+    the switch reversible - re-enabling brings the history straight back, and
+    the version-key change (see checks.CheckSettings.version) re-evaluates
+    the sessions that were evaluated while it was off, so the gap fills in
+    too.
+
+    Every read path that counts or lists verdicts goes through this. Adding a
+    new one means adding this clause to it.
+    """
+    disabled = sorted(checks_mod.current().disabled)
+    if not disabled:
+        return ""
+    params["disabled_checks"] = disabled
+    return " AND check_id NOT IN %(disabled_checks)s"
+
+
+# --- settings ----------------------------------------------------------------
+
+def read_setting(key: str) -> str:
+    r = one(
+        f"SELECT value FROM {config.CLICKHOUSE_DB}.eval_settings FINAL WHERE key = %(k)s",
+        {"k": key},
+    )
+    return str(r.get("value") or "")
+
+
+def write_setting(key: str, value: str) -> None:
+    client().insert(
+        f"{config.CLICKHOUSE_DB}.eval_settings",
+        [[key, value, datetime.now(timezone.utc)]],
+        column_names=["key", "value", "updated_at"],
+    )
+
+
+def delete_setting(key: str) -> None:
+    client().command(
+        f"ALTER TABLE {config.CLICKHOUSE_DB}.eval_settings DELETE WHERE key = %(k)s",
+        parameters={"k": key},
+    )
+
+
 def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> list[dict[str, Any]]:
     """Population material for verdict_trend: prior verdicts for one rule
     (or check), newest first - status + evaluated_at only, never evidence."""
@@ -272,8 +339,9 @@ def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> 
         where.append("check_id = %(check_id)s")
         params["check_id"] = check_id
     params["limit"] = max(1, min(int(limit), 2000))
+    where_sql = " AND ".join(where) + _disabled_clause(params)
     return rows(
-        f"SELECT session_id, status, evaluated_at FROM {VERDICTS_T} WHERE {' AND '.join(where)} "
+        f"SELECT session_id, status, evaluated_at FROM {VERDICTS_T} WHERE {where_sql} "
         f"ORDER BY evaluated_at DESC LIMIT %(limit)s",
         params,
     )
@@ -293,6 +361,7 @@ def rule_fire_counts(family: str = "family1", since: int = 0) -> dict[str, int]:
     if since and int(since) > 0:
         where += " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
         params["since"] = int(since)
+    where += _disabled_clause(params)
     result = rows(f"SELECT rule_id, count() AS n FROM {VERDICTS_T} WHERE {where} GROUP BY rule_id", params)
     return {str(r["rule_id"]): int(r["n"]) for r in result}
 
@@ -439,7 +508,7 @@ def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", fa
     if since and int(since) > 0:
         where.append("evaluated_at >= now() - INTERVAL %(since)s SECOND")
         params["since"] = int(since)
-    where_sql = " AND ".join(where)
+    where_sql = " AND ".join(where) + _disabled_clause(params)
     params["limit"] = max(1, min(int(limit), 2000))
     params["offset"] = max(0, int(offset))
     total = one(f"SELECT count() AS n FROM {VERDICTS_T} WHERE {where_sql}", params).get("n", 0)
@@ -499,7 +568,11 @@ def list_feed(status: str = "", check_id: str = "", family: str = "", limit: int
 
 
 def session_conformance(session_id: str) -> list[dict[str, Any]]:
-    return rows(f"SELECT * FROM {TAGS_T} WHERE session_id = %(s)s ORDER BY check_id", {"s": session_id})
+    params: dict[str, Any] = {"s": session_id}
+    return rows(
+        f"SELECT * FROM {TAGS_T} WHERE session_id = %(s)s{_disabled_clause(params)} ORDER BY check_id",
+        params,
+    )
 
 
 def list_conformance(limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
@@ -514,6 +587,7 @@ def list_conformance(limit: int = 100, offset: int = 0, since: int = 0) -> dict[
     if since and int(since) > 0:
         where += " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
         params["since"] = int(since)
+    where += _disabled_clause(params)
     total = one(f"SELECT count() AS n FROM {TAGS_T} WHERE {where}", params).get("n", 0)
     data = rows(
         f"SELECT * FROM {TAGS_T} WHERE {where} ORDER BY evaluated_at DESC LIMIT %(limit)s OFFSET %(offset)s", params,
@@ -536,6 +610,7 @@ def verdict_rows_for_report(since: int = 0, cap: int = 20000) -> tuple[list[dict
     if since and int(since) > 0:
         where += " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
         params["since"] = int(since)
+    where += _disabled_clause(params)
     data = rows(
         f"SELECT {', '.join(_REPORT_COLS)} FROM {VERDICTS_T} WHERE {where} "
         f"ORDER BY evaluated_at DESC LIMIT %(limit)s",
@@ -553,26 +628,33 @@ def truncate() -> None:
 
 def totals(since: int = 0) -> dict[str, Any]:
     """Table totals, optionally windowed to the last `since` seconds by
-    evaluated_at (all three tables carry it). since=0 -> all time."""
+    evaluated_at (all three tables carry it). since=0 -> all time.
+
+    The three verdict/tag counters exclude disabled checks, so the Overview's
+    headline numbers agree with the lists underneath them. `sessions_evaluated`
+    deliberately does NOT: a session was evaluated whichever checks were on,
+    and that count is the denominator the others are read against.
+
+    It counts DISTINCT session ids, not rows. `eval_evaluated_sessions` is
+    keyed `(session_id, version_key)`, so one session re-evaluated under new
+    artifact versions holds a row per version - a plain `count()` reported
+    "183 sessions evaluated" for 122 sessions the first time a version key
+    changed. Latent before (only an ENGINE_VERSION bump or a republished rule
+    pack moved the key); routine now that toggling a check does."""
     sess_t = f"{config.CLICKHOUSE_DB}.eval_evaluated_sessions FINAL"
+    params: dict[str, Any] = {}
+    t = ""
     if since and int(since) > 0:
         t = " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
-        return one(
-            f"""
-            SELECT
-              (SELECT count() FROM {VERDICTS_T} WHERE 1=1{t}) AS verdicts,
-              (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated'{t}) AS findings,
-              (SELECT count() FROM {TAGS_T} WHERE 1=1{t}) AS conformance_tags,
-              (SELECT count() FROM {sess_t} WHERE 1=1{t}) AS sessions_evaluated
-            """,
-            {"since": int(since)},
-        )
+        params["since"] = int(since)
+    d = _disabled_clause(params)
     return one(
         f"""
         SELECT
-          (SELECT count() FROM {VERDICTS_T}) AS verdicts,
-          (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated') AS findings,
-          (SELECT count() FROM {TAGS_T}) AS conformance_tags,
-          (SELECT count() FROM {sess_t}) AS sessions_evaluated
-        """
+          (SELECT count() FROM {VERDICTS_T} WHERE 1=1{t}{d}) AS verdicts,
+          (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated'{t}{d}) AS findings,
+          (SELECT count() FROM {TAGS_T} WHERE 1=1{t}{d}) AS conformance_tags,
+          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}) AS sessions_evaluated
+        """,
+        params,
     )

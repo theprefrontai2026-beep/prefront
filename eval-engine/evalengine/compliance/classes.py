@@ -17,6 +17,8 @@ report row says which kind a control is.
 
 from __future__ import annotations
 
+from ..checks import FAMILY_OF_CHECK as _FAMILY_OF_CHECK
+
 CONTROL_CLASSES: tuple[str, ...] = (
     "access", "minimization", "purpose_limitation", "segregation", "field_protection",
     "integrity", "human_oversight", "injection_resistance", "audit_logging", "retention",
@@ -59,18 +61,13 @@ FIELD_AWARE_CHECKS: frozenset[str] = frozenset({
 
 # Which family a check belongs to - needed to say "not configured" honestly
 # (Family 1 needs a rule pack, Family 3 a catalog; Family 2 always runs).
-FAMILY_OF_CHECK: dict[str, str] = {
-    **{c: "family1" for c in ("precondition", "sequencing", "prohibition", "field_restriction",
-                              "approval_gate", "substitution")},
-    **{c: "family2" for c in ("param_provenance", "param_mutation", "param_discard", "param_taint",
-                              "param_staleness", "entity_consistency", "result_fidelity",
-                              "error_blindness", "approval_evidence", "minimization")},
-    **{c: "family3" for c in ("catalog_membership", "entitlement", "version_conformance",
-                              "side_effect_class", "field_scope", "filter_scope", "volume_scope",
-                              "toxic_combination", "goal_alignment", "workflow_integrity",
-                              "redundancy", "outcome_consistency", "invocation_drift",
-                              "verdict_trend")},
-}
+#
+# Re-exported from `evalengine.checks`, which is the ONE table of every check
+# id the engine can emit. This module used to keep its own copy; two lists of
+# the same 30 ids drift the moment a check is added, and only one of them had
+# a test. Imported rather than reproduced, so `from .classes import
+# FAMILY_OF_CHECK` keeps working for every existing caller and test.
+FAMILY_OF_CHECK: dict[str, str] = dict(_FAMILY_OF_CHECK)
 
 # The store-evidenced classes, by name, so report.py and the tests agree.
 STORE_BASED_CLASSES: frozenset[str] = frozenset({"audit_logging", "retention", "change_management"})

@@ -332,6 +332,33 @@ observability" section. What follows is the UI over it.
   retention, and is what the confirm dialog now says explicitly.
 
 
+## Settings tab (`components/Settings.tsx`, route `/settings`)
+
+Two sections, persisted in two different services, and the split is the
+thing to remember:
+
+- **Checks** (`ChecksSection`) — every check the engine can emit, grouped by
+  family, each with a switch. Talks to **eval-engine** (`GET/PUT/DELETE
+  /eval/checks`), so it is **deployment-wide, not per demo** — `/eval/*` has
+  no notion of a demo, the same caveat this file already records for
+  `/oob/*`. The registry, the descriptions and the enablement all come from
+  the engine; the component hardcodes no check id, so a check added there
+  appears here with no UI change. Edits are local until Save (the write makes
+  the engine re-evaluate — not something to fire per click), `dirty` compares
+  the local set against the stored one, and the panel says plainly that
+  disabling hides existing verdicts everywhere rather than filtering a table.
+  A family whose artifact is missing (`configured: false` — a rule pack for
+  Policy, a catalog for Conformance) gets a "not configured" chip, so "you
+  turned this off" and "idle anyway" are distinguishable. The three
+  population checks carry an "on demand" chip.
+- **Finding severity** — the ordered family+effect → severity rule list.
+  Talks to **api-server** (`/api/settings/severity`) and **is** per demo,
+  because severity is a display-layer rating the engine never sees.
+
+Note the two "Enable all" controls do different things: the per-family one
+edits the local set, the footer one (**Reset to defaults**) clears the stored
+set on the engine.
+
 ## Compliance tab (`components/Compliance.tsx`, route `/compliance`)
 
 Framework evidence over the verdicts eval-engine already recorded — a VIEW

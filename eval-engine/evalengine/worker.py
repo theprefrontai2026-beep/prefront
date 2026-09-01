@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from . import checks as checks_mod
 from . import config, evaluate, store
 from .binding import BindingProfile
 from .family1.compilepack import RulePack
@@ -67,7 +68,14 @@ class Worker:
 
     async def poll_once(self) -> dict:
         candidates = await asyncio.to_thread(store.candidate_sessions, config.EVAL_QUIET_SECONDS)
-        vkey = evaluate.version_key(self.binding, self.visibility, self.rule_pack, self.catalog)
+        # Read the check settings ONCE per poll and pass them down, rather
+        # than letting each call re-read the module holder: a write landing
+        # mid-poll would otherwise evaluate some sessions under the old set
+        # and mark them with the new version key. Reading per poll (not per
+        # process) is also what makes a settings change take effect without
+        # a restart - the next poll picks it up.
+        settings = checks_mod.current()
+        vkey = evaluate.version_key(self.binding, self.visibility, self.rule_pack, self.catalog, settings)
         results = []
         for row in candidates:
             session_id = row["session_id"]
@@ -76,7 +84,7 @@ class Worker:
                 continue
             result = await asyncio.to_thread(
                 evaluate.evaluate_and_persist, session_id, self.binding, self.visibility,
-                self.rule_pack, self.catalog
+                self.rule_pack, self.catalog, False, settings
             )
             results.append(result)
             self.evaluated_total += 1
@@ -106,5 +114,11 @@ class Worker:
                 "configured": bool(self.catalog.intents),
                 "version": self.catalog.version,
                 "intent_count": len(self.catalog.intents),
+            },
+            "checks": {
+                "total": len(checks_mod.REGISTRY),
+                "enabled": len(checks_mod.REGISTRY) - len(checks_mod.current().disabled),
+                "disabled": sorted(checks_mod.current().disabled),
+                "version": checks_mod.current().version,
             },
         }

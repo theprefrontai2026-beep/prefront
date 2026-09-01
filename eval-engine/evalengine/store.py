@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import ch
+from .checks import CheckSettings
 from .combinator import conformance_tags as _derive_tags
 from .combinator import violations as _derive_violations
 from .contract import Finding
@@ -89,3 +90,25 @@ def retention_facts() -> dict[str, str]:
 
 def truncate() -> None:
     ch.truncate()
+
+
+# --- check enablement (evalengine.checks) -----------------------------------
+
+_CHECKS_KEY = "checks"
+
+
+def load_check_settings() -> CheckSettings:
+    """The stored disabled-check set, or "everything on" when nothing has
+    been saved. A missing row, unreadable JSON or an id from a build that no
+    longer has that check all degrade to a valid settings object rather than
+    an error - configuration gaps never fail the engine (Hard Rule 9)."""
+    return CheckSettings.from_json(ch.read_setting(_CHECKS_KEY))
+
+
+def save_check_settings(settings: CheckSettings) -> CheckSettings:
+    ch.write_setting(_CHECKS_KEY, settings.to_json())
+    return settings
+
+
+def clear_check_settings() -> None:
+    ch.delete_setting(_CHECKS_KEY)

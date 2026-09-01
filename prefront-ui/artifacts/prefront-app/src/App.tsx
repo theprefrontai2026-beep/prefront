@@ -169,7 +169,7 @@ const PAGE_META: Record<string, { title: string; desc: string }> = {
   semantic: { title: "Semantic Layer",  desc: "Build governed interfaces — SQL query templates or MCP tool bindings — from approved rules and your schema." },
   oob:      { title: "Observability",    desc: "Out-of-band traces from Phoenix → ClickHouse: sessions, the app agent's turns, LLM calls, and tool calls — latency, tokens, cost. Nothing inline." },
   compliance:{ title: "Compliance",       desc: "Framework evidence — GDPR, SOC 2, PCI-DSS, HIPAA and the deployment's own regime, each control resolved over the verdicts already recorded: evidenced, violated, or honestly no evidence." },
-  settings: { title: "Settings",         desc: "Under-the-hood configuration. Tune how findings are rated and triaged — the severity mapping applied across the Findings log and Overview." },
+  settings: { title: "Settings",         desc: "Under-the-hood configuration. Choose which of the engine's checks this deployment runs, and tune how the findings they produce are rated and triaged." },
 };
 
 function ReviewerDot({ name, color, focused }: { name: string; color: string; focused: boolean }) {

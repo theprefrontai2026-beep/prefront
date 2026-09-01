@@ -9,10 +9,11 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import binding as binding_mod
+from . import checks as checks_mod
 from . import compliance as compliance_mod
 from . import config, evaluate, store, visibility as visibility_mod
 from .family1 import compilepack as rulepack_mod
@@ -47,9 +48,29 @@ async def _wait_for_clickhouse() -> None:
     log.error("clickhouse never became ready; continuing, requests will fail until it does")
 
 
+def _configured_families() -> dict[str, bool]:
+    """Which families have the artifact they need. Family 2 is built in and
+    always runs (Hard Rule 9); Family 1 needs a rule pack and Family 3 an
+    intent catalog, so a settings UI can tell "you turned this off" apart
+    from "nothing is configured, so it is idle anyway"."""
+    return {
+        "family1": bool(_rule_pack.rules),
+        "family2": True,
+        "family3": bool(_catalog.intents),
+    }
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await _wait_for_clickhouse()
+    # Restore the deployment's disabled-check set before the worker's first
+    # poll, so a restart never re-evaluates one round with everything on.
+    # A read failure is not fatal: everything-enabled is the safe default,
+    # and /eval/checks will surface the error the moment it is opened.
+    try:
+        checks_mod.set_current(await asyncio.to_thread(store.load_check_settings))
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load check settings, defaulting to all enabled: %s", e)
     worker.start()
     yield
     await worker.stop()
@@ -83,6 +104,9 @@ async def status(since: int = 0):
                                    "frameworks": list(_overlay.frameworks),
                                    "data_classes": {k: len(v) for k, v in _overlay.data_classes.items()}},
             "framework_packs": sorted(_packs),
+            "checks": {"total": len(checks_mod.REGISTRY),
+                       "disabled": sorted(checks_mod.current().disabled),
+                       "version": checks_mod.current().version},
         },
         "retention_days": config.RETENTION_DAYS,
         "engine_version": config.ENGINE_VERSION,
@@ -187,7 +211,8 @@ async def run(session_id: str, force: bool = False):
     if not spans:
         raise HTTPException(status_code=404, detail="session not found (no spans)")
     result = await asyncio.to_thread(
-        evaluate.evaluate_and_persist, session_id, _binding, _visibility, _rule_pack, _catalog, force
+        evaluate.evaluate_and_persist, session_id, _binding, _visibility, _rule_pack, _catalog, force,
+        checks_mod.current()
     )
     return result
 
@@ -198,7 +223,8 @@ async def population(scenario_id: str = "", variant: str = "", baseline_variant:
     if not scenario_id and not rule_id:
         raise HTTPException(400, "supply scenario_id and/or rule_id")
     result = await asyncio.to_thread(
-        evaluate.evaluate_population, scenario_id, variant, baseline_variant, compare_variant, rule_id, _visibility
+        evaluate.evaluate_population, scenario_id, variant, baseline_variant, compare_variant, rule_id,
+        _visibility, checks_mod.current()
     )
     return result
 
@@ -231,6 +257,55 @@ async def session_verdicts(session_id: str, status: str = ""):
 async def session_conformance(session_id: str):
     tags = await asyncio.to_thread(store.session_conformance, session_id)
     return {"session_id": session_id, "conformance_tags": tags}
+
+
+@app.get("/eval/checks")
+async def get_checks():
+    """The full check registry grouped by family, each check flagged enabled
+    or disabled for this deployment - what the Settings panel renders."""
+    return checks_mod.describe(configured=_configured_families())
+
+
+@app.put("/eval/checks")
+async def put_checks(body: dict = Body(...)):
+    """Replace the disabled set. Body: `{"disabled": ["check_id", ...]}`.
+
+    Whole-set replacement rather than per-check toggles: the settings UI
+    edits a list and saves it, and a PATCH-per-check API would make two
+    concurrent editors silently merge into a state neither of them chose.
+
+    Unknown ids are dropped rather than rejected (`CheckSettings.from_ids`),
+    so a client built against a different engine version cannot lock itself
+    out of saving. The response says exactly what was stored."""
+    raw = body.get("disabled", [])
+    if not isinstance(raw, list):
+        raise HTTPException(400, "`disabled` must be an array of check ids")
+    if len(raw) > len(checks_mod.REGISTRY):
+        raise HTTPException(400, "more ids than there are checks")
+    settings = checks_mod.CheckSettings.from_ids(str(i) for i in raw)
+    unknown = sorted({str(i) for i in raw} - settings.disabled)
+    try:
+        await asyncio.to_thread(store.save_check_settings, settings)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"could not persist check settings: {type(e).__name__}: {e}")
+    checks_mod.set_current(settings)
+    # Re-evaluate straight away rather than waiting out the poll interval:
+    # the version key just changed, so every session the worker can see is
+    # now eligible, and the user is watching a page that shows the result.
+    worker.wake()
+    return {**checks_mod.describe(settings, _configured_families()), "unknown": unknown}
+
+
+@app.delete("/eval/checks")
+async def reset_checks():
+    """Forget the stored set - every check enabled again, the default."""
+    try:
+        await asyncio.to_thread(store.clear_check_settings)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"could not clear check settings: {type(e).__name__}: {e}")
+    settings = checks_mod.set_current(checks_mod.EMPTY)
+    worker.wake()
+    return checks_mod.describe(settings, _configured_families())
 
 
 @app.delete("/eval/verdicts")

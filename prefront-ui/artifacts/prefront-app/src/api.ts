@@ -352,3 +352,56 @@ export function suggestComplianceOverlay(body: {
     body: JSON.stringify(body),
   }).then(jsonOrThrow);
 }
+
+// ── Check enablement (eval-engine, /eval/checks) ─────────────────────────────
+// Which of the engine's checks this deployment runs. NOT demo-scoped, unlike
+// the severity mapping above: `/eval/*` is the engine's own surface and knows
+// nothing about demos (see prefront-ui/CLAUDE.md's caveat on the same point
+// for `/oob/*`), so this is one setting for the deployment, and the panel
+// says so rather than implying a per-demo one.
+
+export interface CheckInfo {
+  check_id: string;
+  title: string;
+  detail: string;
+  /** Runs on demand over many sessions (POST /eval/population), not per session. */
+  population: boolean;
+  enabled: boolean;
+}
+export interface CheckFamily {
+  family: string;
+  label: string;
+  /** False when the family's artifact is missing — a rule pack for Policy, an
+   *  intent catalog for Conformance. Those checks are idle whatever the
+   *  toggle says, and the panel has to show the difference. */
+  configured: boolean;
+  checks: CheckInfo[];
+}
+export interface ChecksResponse {
+  families: CheckFamily[];
+  disabled: string[];
+  /** Short hash of the disabled set; part of the engine's evaluation version key. */
+  version: string;
+  total: number;
+  enabled: number;
+  /** Only on PUT: ids the engine did not recognise and therefore dropped. */
+  unknown?: string[];
+}
+
+export function getChecks(): Promise<ChecksResponse> {
+  return fetch("/eval/checks").then(jsonOrThrow);
+}
+
+/** Replace the whole disabled set (the engine takes the list, not a diff). */
+export function saveChecks(disabled: string[]): Promise<ChecksResponse> {
+  return fetch("/eval/checks", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ disabled }),
+  }).then(jsonOrThrow);
+}
+
+/** Forget the stored set — every check enabled again. */
+export function resetChecks(): Promise<ChecksResponse> {
+  return fetch("/eval/checks", { method: "DELETE" }).then(jsonOrThrow);
+}
