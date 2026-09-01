@@ -93,6 +93,18 @@ export function useOverviewData(demo: DemoConfig, active: boolean, since = 86400
 export const EFFECTS = ["block", "approval_required", "flag"] as const;
 export type Effect = typeof EFFECTS[number];
 
+/** How many DISTINCT sessions carry at least one finding.
+ *
+ *  The Overview's headline needs this because a finding is not a session and
+ *  not an action: it is one check's judgment on one unit (a step, an argument,
+ *  an answer), so several findings routinely land on the same call and many
+ *  land in the same session. Comparing a finding count against a session count
+ *  in one sentence is what made the old headline read as nonsense — it could
+ *  say "61 sessions evaluated. 200 would not have been allowed." */
+export function sessionsWithFindings(findings: EvalVerdict[]): number {
+  return new Set(findings.map((f) => f.session_id)).size;
+}
+
 export function byEffect(findings: EvalVerdict[]): Record<Effect, number> {
   const out: Record<Effect, number> = { block: 0, approval_required: 0, flag: 0 };
   for (const f of findings) if (f.effect in out) out[f.effect as Effect] += 1;

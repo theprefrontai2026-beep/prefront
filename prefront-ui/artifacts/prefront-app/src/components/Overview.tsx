@@ -19,7 +19,8 @@ import CopyLink from "./CopyLink";
 import type { DemoConfig } from "../demos";
 import {
   useOverviewData, byEffect, byRule, familySpread, severityBreakdown,
-  severityHistogram, topRulesShare, type SeverityRow, type SeverityBucket,
+  severityHistogram, topRulesShare, sessionsWithFindings,
+  type SeverityRow, type SeverityBucket,
 } from "../hooks/useOverviewData";
 import { useSeverityRules } from "../hooks/useSeverityRules";
 import { SEVERITY_META, SEVERITY_ORDER, type SeverityLevel } from "../severity";
@@ -159,6 +160,7 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
   const sparkBars = hist.map((b, i) => ({ label: b.label, count: b.total, today: i === hist.length - 1 }));
   const sparkPeak = hist.reduce((m, b) => Math.max(m, b.total), 0);
   const topShare = topRulesShare(byRule(findings, 3), total, 3);
+  const withFindings = sessionsWithFindings(findings);
   const offCatalog = d.sessions.reduce((n, s) => n + (s.off_catalog_calls || 0), 0);
   // Evaluation scope, summed across the sessions the engine evaluated.
   const sessionsEvaluated = ch?.sessions_evaluated ?? 0;
@@ -201,11 +203,37 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
             {/* The Overview omits the app header, so its share button lives here. */}
             {" "}<CopyLink title="Copy a link to this dashboard" />
           </div>
+          {/* Both halves name their own unit, and the accent (the app's semantic
+              red) is applied only when there is something to look at.
+
+              The second half used to elide its subject — "N sessions evaluated.
+              M would not have been allowed." — which English reads as "M
+              SESSIONS", while M is the finding count. Three things were wrong
+              with that at once: a finding is not a session (several land in
+              one, and several can land on one call, so 48 findings here sit on
+              34 calls across 19 sessions); the magnitudes contradicted the
+              reading, since M routinely exceeds N; and "would not have been
+              allowed" is only true of the `block` findings — `flag` ones are
+              allowed by the engine's own precedence, and `approval_required`
+              would have gone to a human. The KPI row below splits those three
+              properly, so the headline states the counts and leaves the verdict
+              to the cards. */}
           <h1 className="pf-ov2-headline">
-            {d.loading && !ev ? "…" : num(sessionsEvaluated)} sessions evaluated.{" "}
-            {/* The accent is now the app's semantic red, so it is applied only when
-                there is something to alarm about — a zero reads as a clean window. */}
-            <span className={total > 0 ? "pf-ov2-accent" : ""}>{num(total)} would not have been allowed.</span>
+            {d.loading && !ev ? "…" : num(sessionsEvaluated)} session{sessionsEvaluated === 1 ? "" : "s"} evaluated.{" "}
+            {total === 0
+              ? "No findings."
+              : (
+                <>
+                  <span className="pf-ov2-accent">{num(total)} finding{total === 1 ? "" : "s"}</span>
+                  {/* Guard the nonsensical case rather than printing it: the
+                      findings fetch is capped, so a very busy window could in
+                      principle report more finding-carrying sessions than the
+                      status totals counted as evaluated. */}
+                  {withFindings > 0 && withFindings <= sessionsEvaluated
+                    ? <> across {num(withFindings)} of them.</>
+                    : "."}
+                </>
+              )}
           </h1>
           <p className="pf-ov2-lede">
             Prefront evaluated every action before execution. Nothing was stopped in production —
