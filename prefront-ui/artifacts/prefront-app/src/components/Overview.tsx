@@ -235,9 +235,29 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
                 </>
               )}
           </h1>
+          {/* Two claims in here used to overreach, both in the same sentence.
+
+              "Prefront evaluated every action BEFORE execution" is the wrong
+              tense for what this page shows: evaluation is out of band, after
+              the session ran, over the spans it left behind. The counterfactual
+              is the whole point ("would have"), and this file's own header says
+              the framing is always that — so the sentence contradicted the rule
+              it is written under.
+
+              "each finding carries ... the clause it breached" is false for a
+              whole family. Only the rule pack's own `source` block yields a
+              citation (Hard Rule 17), so Integrity (Family 2) findings never
+              carry one, and Conformance (Family 3) only where the catalog entry
+              declares a clause. It happened to look true on the window that
+              prompted this — 47 of 48 findings were cited, because none of them
+              were Family 2 — which is exactly how a structural overclaim
+              survives review. */}
           <p className="pf-ov2-lede">
-            Prefront evaluated every action before execution. Nothing was stopped in production —
-            each finding carries the conversation, the clause it breached, and the trace.
+            Prefront replayed each session and judged every action as if it had run before
+            execution — nothing here was stopped in production. Every finding carries the
+            conversation that produced it and the trace, and cites a policy clause when the
+            rule or intent behind it declares one; Integrity findings are built-in
+            invariants, so they never do.
             {rp?.configured
               ? <> {num(rp.rule_count)} rules{ic?.configured && <> and {num(ic.intent_count)} intents</>} are live.</>
               : <> No rule pack is configured — Family&nbsp;1/3 checks are idle.</>}
