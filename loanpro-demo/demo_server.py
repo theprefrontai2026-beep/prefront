@@ -179,7 +179,19 @@ def run_governed_session(s: dict, variant: str, channel: str, c: dict, session_i
                                   if v.get("status") != "satisfied"],
             })
 
-    worst = max(calls, key=lambda x: _PRECEDENCE.get(x["decision"], 0), default=None)
+    # The session's headline call. Ranked by decision precedence first, then by
+    # whether the call actually masked anything, then by position.
+    #
+    # The tie-break matters: a session where every call was `allowed` would
+    # otherwise report the FIRST call, so F1-04 read as "find_applicant, masked
+    # ssn/tax_id/bank_account_hint/credit_score" — attributing the masking to a
+    # lookup that masked nothing, while the call that was actually governed
+    # (view_applicant) went unnamed.
+    worst = max(
+        (dict(x, _i=i) for i, x in enumerate(calls)),
+        key=lambda x: (_PRECEDENCE.get(x["decision"], 0), bool(x["masked_fields"]), x["_i"]),
+        default=None,
+    )
     masked = sorted({f for x in calls for f in x["masked_fields"]})
     return _clean({
         # The shape api-server's toInsert() consumes (routes/decisions.ts), so a

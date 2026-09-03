@@ -406,6 +406,13 @@ router.post("/decisions", async (req, res) => {
  */
 router.post("/decisions/refresh", async (req, res) => {
   const demo = demoOf(req.body?.demo);
+  // Optional scenario subset. A full catalogue run is 30+ scenarios against a
+  // live LLM — doubled once a demo has a governed lane — which is well past any
+  // sane HTTP timeout; the previous button "both timed out and inserted
+  // nothing" for exactly this reason. The caller says what to run.
+  const only = Array.isArray(req.body?.only)
+    ? req.body.only.map((x: unknown) => String(x)).filter(Boolean).join(",")
+    : typeof req.body?.only === "string" ? req.body.only : "";
   const orchestrator = orchestratorFor(demo);
   if (!orchestrator) {
     res.status(400).json({
@@ -414,9 +421,15 @@ router.post("/decisions/refresh", async (req, res) => {
     return;
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 115_000);
+  const timeoutMs = Number(process.env.DECISION_REFRESH_TIMEOUT_MS || 115_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const r = await fetch(`${orchestrator}/api/diff`, { signal: controller.signal });
+    // mode=both asks an orchestrator that has a governed lane to run BOTH and
+    // return a `governed` key per scenario — which is exactly what toInsert()
+    // requires, and without which a two-lane demo persists nothing at all.
+    // An orchestrator that only ever runs one lane ignores the parameter.
+    const qs = new URLSearchParams({ mode: "both", ...(only ? { only } : {}) });
+    const r = await fetch(`${orchestrator}/api/diff?${qs}`, { signal: controller.signal });
     const diff: any = await r.json();
     if (!Array.isArray(diff)) {
       throw new Error(diff?.error || "orchestrator did not return a diff array");
@@ -432,7 +445,13 @@ router.post("/decisions/refresh", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "decisions refresh failed");
     const msg = err instanceof Error ? err.message : String(err);
-    res.status(502).json({ error: `refresh failed: ${msg}` });
+    // An abort here is almost always "too many scenarios for one request",
+    // not a broken orchestrator — say so, since the remedy is different.
+    const hint = (err as any)?.name === "AbortError"
+      ? ` (timed out after ${timeoutMs}ms — run fewer scenarios with "only", `
+        + `or raise DECISION_REFRESH_TIMEOUT_MS)`
+      : "";
+    res.status(502).json({ error: `refresh failed: ${msg}${hint}` });
   } finally {
     clearTimeout(timer);
   }

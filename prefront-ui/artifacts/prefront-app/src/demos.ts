@@ -46,6 +46,13 @@ export interface DemoConfig {
 
   // Fallback approver shown when a decision routes for approval but names no role.
   defaultApprover: string;
+
+  // Scenario ids the "Populate from the demo" control runs, or undefined to run
+  // the whole catalogue. A full run is one live LLM session per scenario —
+  // doubled for a demo with a governed lane — so a large catalogue must name a
+  // representative subset or the request times out before inserting anything.
+  // Demo vocabulary, so it lives HERE rather than in the api-server.
+  populateScenarios?: string[];
 }
 
 export const DEMOS: DemoConfig[] = [
@@ -94,6 +101,19 @@ export const DEMOS: DemoConfig[] = [
       "loan_to_income_pct = requested_amount / annual_income * 100",
     defaultCallerScope: "officer_id = assigned_officer",
     sensitiveFields: ["ssn", "tax_id", "bank_account_hint", "credit_score", "internal_risk_score"],
+    // One scenario per governed OUTCOME, measured rather than assumed, so the
+    // populated store shows a range instead of one verdict repeated:
+    //   F1-04  mask    — ungoverned leaks ssn/tax_id/bank hint/credit score to
+    //                    a Loan Officer; governed masks all four.
+    //   F3-02  block   — an Applicant invokes an intent no Applicant may call.
+    //   BASE-03 allow  — a clean scoped read, which also exercises upstream
+    //                    identity forwarding (the caller's own pipeline only).
+    // No approval_required entry: that rule keys on quote_terms.amount /
+    // amend_application.requested_amount above $50,000 and every quote in the
+    // catalogue is $25k–$35k, so no existing scenario reaches it. The path
+    // works (a $60k quote_terms returns approval_required); the catalogue just
+    // never asks for one. Adding a scenario is a catalogue change, not a UI one.
+    populateScenarios: ["F1-04", "F3-02", "BASE-03"],
     roleAgents: {
       "Applicant": "Borrower Portal",
       "Loan Officer": "Officer Workbench",

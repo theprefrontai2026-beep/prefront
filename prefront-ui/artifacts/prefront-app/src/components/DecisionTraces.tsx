@@ -678,7 +678,7 @@ export default function DecisionTraces({ active = true, demo, section: controlle
       const res = await fetch("/api/decisions/refresh", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ demo: demo.id }),
+        body: JSON.stringify({ demo: demo.id, only: demo.populateScenarios }),
       });
       const json = await res.json();
       // A demo with no orchestrator configured 400s naming the env var to set;
