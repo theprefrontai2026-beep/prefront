@@ -317,14 +317,21 @@ declare - `field_scope`; a real gap in the catalog transcription, exactly the
 kind of thing this check exists to surface for a human to reconcile, not for
 the engine to paper over).
 
-**That decide_loan gap has since been reconciled** - `intent_catalog.yaml` now
-declares all eight fields, so it no longer fires. Two related gaps remain, both
-recorded in `../TODO.md` entry 2: `apply_discount` still omits `version` (the
-live `field_scope` finding) and `amend_application` omits four; and
-`app_tools.py`'s `INTENTS` has silently diverged from the catalog on **six**
-intents, always with the catalog ahead - it was fixed as findings surfaced
-while `INTENTS` was left behind. That matters because `docs/gen_coverage.py`
-reads `INTENTS`, so `check-coverage.md` documents the stale list.
+**Those gaps are now closed.** `intent_catalog.yaml` and `app_tools.INTENTS`
+both declare what each tool actually returns, taken from the `app.columns`
+attribute on real tool spans rather than re-read off the SQL, and
+`docs/gen_coverage.py` fails when the two disagree — they had drifted on six
+intents, always with the catalog ahead, because nothing compared them.
+
+What did NOT change, and is the point: an intent still withholds a field the
+POLICY restricts. `view_applicant` and `export_directory` do not approve `ssn`,
+`tax_id`, `bank_account_hint` or `credit_score` even though their tools return
+them, so `field_scope` keeps reporting that over-return — that is the finding,
+not noise. `view_risk_profile` DOES approve `internal_risk_score`, because
+§8.6 sanctions using it internally and restricts only its disclosure, which
+`field_restriction` covers on the answer. Measured across a full catalogue run,
+correcting the genuine under-declarations took `field_scope` from five tools to
+those two.
 
 ## Idempotent replay
 

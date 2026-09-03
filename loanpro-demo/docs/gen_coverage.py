@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 import sys
+
+import yaml
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -65,6 +67,51 @@ def check_policy_refs(sections: dict[str, str]) -> None:
         bad += [f"INTENTS[{name}] -> §{r}" for r in _refs((m or {}).get("policy")) if r not in sections]
     if bad:
         sys.exit("policy references with no heading in loan_underwriting_policy.md:\n  " + "\n  ".join(bad))
+
+def check_intent_catalog_agrees() -> None:
+    """`app_tools.INTENTS` and `policy/intent_catalog.yaml` must declare the
+    SAME fields for every intent.
+
+    They are two hand-maintained transcriptions of one fact — what a tool
+    returns — read by different consumers: this file (and therefore
+    check-coverage.md, the check→evidence contract) reads INTENTS, while
+    eval-engine's Family 3 reads the catalog. Nothing detected a divergence, so
+    they drifted on six intents, always with the catalog ahead: it was
+    reconciled against reality as `field_scope` findings surfaced and INTENTS
+    was left behind, which meant the published contract documented a stale
+    field list.
+
+    Deliberately compares only `fields`. The two files legitimately differ
+    elsewhere — the catalog carries `intent`/`policy` shapes INTENTS does not —
+    and widening this to a whole-entry diff would fail on differences that are
+    by design.
+    """
+    cat_path = HERE.parent / "policy" / "intent_catalog.yaml"
+    if not cat_path.exists():          # a deployment without one is not an error
+        return
+    cat = yaml.safe_load(cat_path.read_text(encoding="utf-8"))["intent_catalog"]
+    by_tool = {e["tool_name"]: (e["intent"], list(e.get("fields") or []))
+               for e in cat["intents"]}
+    bad = []
+    for tool, meta in app_tools.INTENTS.items():
+        if meta is None:               # off-catalog by design; the catalog has no entry
+            continue
+        if tool not in by_tool:
+            bad.append(f"{tool}: in INTENTS, absent from intent_catalog.yaml")
+            continue
+        intent, cat_fields = by_tool[tool]
+        own = list(meta.get("fields") or [])
+        if own != cat_fields:
+            bad.append(f"{tool} ({intent}):\n"
+                       f"      INTENTS: {own}\n"
+                       f"      catalog: {cat_fields}")
+    for tool in by_tool:
+        if tool not in app_tools.INTENTS:
+            bad.append(f"{tool}: in intent_catalog.yaml, absent from INTENTS")
+    if bad:
+        sys.exit("INTENTS and intent_catalog.yaml disagree on `fields`:\n  "
+                 + "\n  ".join(bad))
+
 
 CHECKS = [  # (family, check, engine/meaning) — the order of prefront-check-families.md
     ("F1", "precondition", "fact F must be established before tool T"),
@@ -143,6 +190,7 @@ def main() -> None:
     idx = by_check()
     sections = policy_sections()
     check_policy_refs(sections)
+    check_intent_catalog_agrees()
     p = print
     p("# LoanPro — check coverage matrix")
     p()

@@ -14,6 +14,11 @@ re-checked rather than re-argued. **Delete an entry when it's done** — a stale
 todo is worse than a missing one. Closing one usually also means flipping a
 status marker in the doc it points at.
 
+**The numbers are stable IDS, not positions.** Other docs cite them
+(`application_isolation_design.md` refers to "entry 8", entries here refer to
+each other), so a closed entry leaves a GAP rather than renumbering the rest —
+renumbering silently repoints every one of those citations at the wrong entry.
+
 ---
 
 ## 1. Phase E — learned intents (steps 21–25)
@@ -29,50 +34,6 @@ Family 2 alone — while their traces already carry most of an intent catalog.
 **Done when** the LoanPro holdout gate passes: hide its hand-authored
 `intent_catalog.yaml`, mine one from its traces, diff per field, re-run the
 39-scenario harness against the MINED catalog and compare to the baseline.
-
----
-
-## 2. LoanPro's declared fields disagree with what its tools return
-
-Two separate problems, same area. Both are **fixture** work — no engine change.
-
-### 2a. Two intents under-declare against their own SQL
-
-| intent | tool's actual `RETURNING` | declared `fields` | missing |
-|---|---|---|---|
-| `apply_discount` | `loan_id, apr, version` | `loan_id, apr` | `version` |
-| `amend_application` | `loan_id, requested_amount, term_months, product, version, updated_at` | `loan_id, version` | 4 |
-
-`apply_discount` is the live one: it is the **only** `field_scope` violation in
-the store (event 38029). `amend_application` is latent — no graded session has
-exercised it successfully yet.
-
-**Done when** both files below declare what the SQL actually returns, and a
-full harness run shows no `field_scope` finding. Note the fix must land in
-**both** `app_tools.INTENTS` and `policy/intent_catalog.yaml` — see 2b.
-
-### 2b. `INTENTS` and `intent_catalog.yaml` have silently diverged
-
-`policy/intent_catalog.yaml` is documented as hand-transcribed from
-`app_tools.py`'s `INTENTS`, but **six intents' `fields` now disagree**, and in
-every case the catalog is the more complete one — it was reconciled against
-reality as `field_scope` findings surfaced, and `INTENTS` was left behind:
-
-```
-get_application           catalog adds  apr, assigned_officer, decided_by
-get_risk_profile          catalog adds  internal_risk_score, model_version
-quote_terms               catalog adds  applicant_id, tier
-request_manager_approval  catalog adds  approver_role, created_at
-decide_loan               catalog adds  decided_by, version
-send_decision_notice      catalog adds  channel, sent_at
-```
-
-This matters beyond tidiness: `docs/gen_coverage.py` reads `INTENTS`, so
-`docs/check-coverage.md` — the check → session → evidence contract — documents
-the **stale** field list. Nothing detects the divergence.
-
-**Done when** the two agree and something enforces it (the natural home is
-`gen_coverage.py`, which already exits non-zero on an unresolved policy `§`).
 
 ---
 
@@ -205,7 +166,7 @@ Not every "misfire" seen so far was one, and the distinction is not cosmetic:
 |---|---|---|
 | `param_discard` on a parameterless call | check bug | fixed in the engine |
 | `result_fidelity` on a derived count | check bug | fixed in the engine |
-| `field_scope` on `apply_discount` (event 38029) | **correct finding** | fix the fixture (entry 2a) |
+| `field_scope` on `apply_discount` (event 38029) | **correct finding** | fixture fixed — the intent under-declared `version`. A whitelist there would have hidden a true finding |
 
 That third row is the warning: a whitelist there would have hidden a true
 finding about a real catalog under-declaration — one that `amend_application`

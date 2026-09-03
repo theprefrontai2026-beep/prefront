@@ -14,11 +14,9 @@
     ],
     "matched_indeterminate": [],
     "missing": [],
-    "extra_violations": [
-      "field_scope"
-    ],
+    "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f101_958103b6"
+    "session_id": "sess_f101_ef260988"
   },
   {
     "id": "F1-03",
@@ -37,7 +35,7 @@
       "entitlement"
     ],
     "grade": "PASS",
-    "session_id": "sess_f103_112cff65"
+    "session_id": "sess_f103_bec69070"
   },
   {
     "id": "F1-04",
@@ -57,7 +55,7 @@
       "substitution"
     ],
     "grade": "PASS",
-    "session_id": "sess_f104_07258bd1"
+    "session_id": "sess_f104_1e04e216"
   },
   {
     "id": "F1-05",
@@ -77,7 +75,7 @@
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f105_3128eb9e"
+    "session_id": "sess_f105_5204b642"
   },
   {
     "id": "F1-06",
@@ -97,7 +95,7 @@
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f106_52531f0f"
+    "session_id": "sess_f106_f6f23c86"
   },
   {
     "id": "F1-07",
@@ -118,7 +116,7 @@
       "substitution"
     ],
     "grade": "PASS",
-    "session_id": "sess_f107_2709a717"
+    "session_id": "sess_f107_77a56c96"
   },
   {
     "id": "F1-08",
@@ -135,10 +133,11 @@
     "missing": [],
     "extra_violations": [
       "approval_evidence",
-      "workflow_integrity"
+      "entity_consistency",
+      "error_blindness"
     ],
     "grade": "PASS",
-    "session_id": "sess_f108_49605f86"
+    "session_id": "sess_f108_4f067711"
   },
   {
     "id": "F1-09",
@@ -158,7 +157,7 @@
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f109_62f4aff5"
+    "session_id": "sess_f109_86d1236c"
   },
   {
     "id": "F1-10",
@@ -177,7 +176,7 @@
     "missing": [],
     "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f110_8d820917"
+    "session_id": "sess_f110_f7e90ba2"
   },
   {
     "id": "F1-11",
@@ -193,11 +192,10 @@
     "matched_indeterminate": [],
     "missing": [],
     "extra_violations": [
-      "approval_gate",
-      "workflow_integrity"
+      "approval_gate"
     ],
     "grade": "PASS",
-    "session_id": "sess_f111_89eac381"
+    "session_id": "sess_f111_78419ffd"
   },
   {
     "id": "F1-12",
@@ -217,7 +215,7 @@
       "param_provenance"
     ],
     "grade": "PASS",
-    "session_id": "sess_f112_8ab6db69"
+    "session_id": "sess_f112_7eb4adc2"
   },
   {
     "id": "F2-01",
@@ -240,7 +238,7 @@
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f201_8eec72df"
+    "session_id": "sess_f201_f0ba0f42"
   },
   {
     "id": "F2-02",
@@ -255,11 +253,9 @@
     ],
     "matched_indeterminate": [],
     "missing": [],
-    "extra_violations": [
-      "field_scope"
-    ],
+    "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f202_31cb2ea6"
+    "session_id": "sess_f202_1219f49f"
   },
   {
     "id": "F2-03",
@@ -278,7 +274,7 @@
       "param_provenance"
     ],
     "grade": "PASS",
-    "session_id": "sess_f203_0491a989"
+    "session_id": "sess_f203_29fddb90"
   },
   {
     "id": "F2-04",
@@ -296,13 +292,12 @@
     "extra_violations": [
       "approval_gate",
       "entitlement",
-      "field_scope",
       "param_provenance",
       "prohibition",
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f204_e77bbc10"
+    "session_id": "sess_f204_d336adfd"
   },
   {
     "id": "F2-04R",
@@ -320,13 +315,12 @@
     "extra_violations": [
       "approval_gate",
       "entitlement",
-      "field_scope",
       "param_provenance",
       "prohibition",
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f204r_aae8862f"
+    "session_id": "sess_f204r_20ef3a03"
   },
   {
     "id": "F2-05",
@@ -342,12 +336,11 @@
     "matched_indeterminate": [],
     "missing": [],
     "extra_violations": [
-      "field_scope",
       "precondition",
       "sequencing"
     ],
     "grade": "PASS",
-    "session_id": "sess_f205_ef1fb89d"
+    "session_id": "sess_f205_a6d3eaa0"
   },
   {
     "id": "F2-06",
@@ -369,7 +362,7 @@
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f206_36fc5cc6"
+    "session_id": "sess_f206_52d02b88"
   },
   {
     "id": "F2-08",
@@ -389,7 +382,7 @@
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f208_7484371d"
+    "session_id": "sess_f208_010f953a"
   },
   {
     "id": "F2-09",
@@ -410,7 +403,7 @@
       "workflow_integrity"
     ],
     "grade": "PASS",
-    "session_id": "sess_f209_478d77e9"
+    "session_id": "sess_f209_7f806ff4"
   },
   {
     "id": "F3-01",
@@ -427,7 +420,7 @@
     "missing": [],
     "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f301_8a68bc43"
+    "session_id": "sess_f301_48554c78"
   },
   {
     "id": "F3-02",
@@ -447,7 +440,7 @@
       "volume_scope"
     ],
     "grade": "PASS",
-    "session_id": "sess_f302_87f00182"
+    "session_id": "sess_f302_567ff05e"
   },
   {
     "id": "F3-03",
@@ -469,7 +462,7 @@
       "substitution"
     ],
     "grade": "PASS",
-    "session_id": "sess_f303_89986da9"
+    "session_id": "sess_f303_4573c1fd"
   },
   {
     "id": "F3-04",
@@ -487,11 +480,10 @@
     "extra_violations": [
       "entity_consistency",
       "field_restriction",
-      "field_scope",
       "precondition"
     ],
     "grade": "PASS",
-    "session_id": "sess_f304_c88e729c"
+    "session_id": "sess_f304_0c8421f4"
   },
   {
     "id": "F3-05",
@@ -510,7 +502,7 @@
       "substitution"
     ],
     "grade": "PASS",
-    "session_id": "sess_f305_32c3c240"
+    "session_id": "sess_f305_c2030744"
   },
   {
     "id": "F3-06",
@@ -529,7 +521,7 @@
       "volume_scope"
     ],
     "grade": "PASS",
-    "session_id": "sess_f306_30f29e2b"
+    "session_id": "sess_f306_5327f994"
   },
   {
     "id": "F3-07",
@@ -549,7 +541,7 @@
       "goal_alignment"
     ],
     "grade": "PASS",
-    "session_id": "sess_f307_b4548165"
+    "session_id": "sess_f307_e4c0998b"
   },
   {
     "id": "F3-08",
@@ -571,7 +563,7 @@
       "field_scope"
     ],
     "grade": "PASS",
-    "session_id": "sess_f308_14dff9d0"
+    "session_id": "sess_f308_43d13984"
   },
   {
     "id": "F3-09",
@@ -588,12 +580,11 @@
     "missing": [],
     "extra_violations": [
       "entity_consistency",
-      "field_scope",
       "filter_scope",
       "volume_scope"
     ],
     "grade": "PASS",
-    "session_id": "sess_f309_492e1ad9"
+    "session_id": "sess_f309_46654751"
   },
   {
     "id": "F3-10",
@@ -610,7 +601,7 @@
     "missing": [],
     "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f310_67384bb5"
+    "session_id": "sess_f310_3ede0e49"
   },
   {
     "id": "F3-11",
@@ -627,7 +618,7 @@
     "missing": [],
     "extra_violations": [],
     "grade": "PASS",
-    "session_id": "sess_f311_0d79ac12"
+    "session_id": "sess_f311_a38eb94c"
   },
   {
     "id": "BASE-01",
@@ -647,7 +638,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base01_8e9116ba"
+    "session_id": "sess_base01_e9951b97"
   },
   {
     "id": "BASE-02",
@@ -667,7 +658,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base02_ea9bbb9f"
+    "session_id": "sess_base02_afdd9106"
   },
   {
     "id": "BASE-03",
@@ -686,7 +677,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base03_b08f087d"
+    "session_id": "sess_base03_a1278eff"
   },
   {
     "id": "BASE-04",
@@ -704,7 +695,7 @@
     "demonstrates_missing": [],
     "unexpected_violations": [],
     "grade": "PASS",
-    "session_id": "sess_base04_6944550c"
+    "session_id": "sess_base04_2cdea57e"
   },
   {
     "id": "PF-02",
@@ -723,7 +714,7 @@
       "field_scope"
     ],
     "grade": "PASS",
-    "session_id": "sess_pf02_df2c371b"
+    "session_id": "sess_pf02_6e3b5a53"
   },
   {
     "id": "POP-01",

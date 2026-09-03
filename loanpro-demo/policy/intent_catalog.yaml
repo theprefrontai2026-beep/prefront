@@ -13,7 +13,7 @@
 # deliberately ABSENT here - their absence is what makes a call to them
 # catalog_membership: off-catalog action, not something to list and exempt.
 intent_catalog:
-  version: 4
+  version: 5
   policy_document: loan_underwriting_policy.md
   intents:
     - intent: view_my_pipeline
@@ -52,8 +52,7 @@ intent_catalog:
       allowed_callers:
         roles: [Applicant, Loan Officer, Underwriter, Branch Manager]
         channels: [portal, officer_ui, underwriting, manager_console]
-      fields: [loan_id, applicant_id, product, requested_amount, term_months, status, version, updated_at,
-               apr, assigned_officer, decided_by]
+      fields: [loan_id, applicant_id, product, requested_amount, term_months, status, apr, assigned_officer, decided_by, version, updated_at]
       mandatory_filters: ["loan_id = <own application> for an Applicant"]
       expected_volume: {rows_p99: 1}
       policy: ["11.2", "11.4", "13.4", "13.8", "12.9"]
@@ -76,7 +75,7 @@ intent_catalog:
       allowed_callers:
         roles: [Loan Officer, Underwriter, Branch Manager]
         channels: [officer_ui, underwriting, manager_console]
-      fields: [applicant_id, full_name, email, annual_income, employment_years]
+      fields: [applicant_id, full_name, email, annual_income, employment_years, assigned_officer, bureau]
       restricted_fields: [ssn, tax_id, bank_account_hint, credit_score]
       expected_volume: {rows_p99: 1}
       toxic_with: [export_directory]
@@ -128,7 +127,7 @@ intent_catalog:
       # never appear in the final answer; that narrower rule lives in
       # policy/rule_pack.yaml's R-INTERNAL-RISK-SCORE, scoped to
       # final_answer only. field_scope (this file) governs FETCH, not output.
-      fields: [applicant_id, tier, risk_grade, pd_estimate, updated_at, internal_risk_score, model_version]
+      fields: [applicant_id, tier, risk_grade, internal_risk_score, pd_estimate, model_version, updated_at]
       restricted_fields: [internal_risk_score]
       expected_volume: {rows_p99: 1}
       policy: ["11.4", "12.5", "13.3", "13.8"]
@@ -140,7 +139,7 @@ intent_catalog:
       allowed_callers:
         roles: [Loan Officer, Underwriter, Branch Manager]
         channels: [officer_ui, underwriting, manager_console]
-      fields: [loan_id, amount, term_months, apr, monthly_payment, total_cost, applicant_id, tier]
+      fields: [loan_id, applicant_id, tier, amount, term_months, apr, monthly_payment, total_cost]
       expected_volume: {rows_p99: 1}
       policy: ["7.3", "13.2", "13.3", "13.4", "13.7", "13.8"]
 
@@ -151,7 +150,7 @@ intent_catalog:
       allowed_callers:
         roles: [Loan Officer, Underwriter, Branch Manager]
         channels: [officer_ui, underwriting, manager_console]
-      fields: [loan_id, version]
+      fields: [loan_id, requested_amount, term_months, product, version, updated_at]
       expected_volume: {rows_p99: 1}
       policy: ["10.1", "10.6", "13.4", "13.7", "13.8"]
 
@@ -162,7 +161,7 @@ intent_catalog:
       allowed_callers:
         roles: [Underwriter, Branch Manager]
         channels: [underwriting, manager_console]
-      fields: [loan_id, apr]
+      fields: [loan_id, apr, version]
       expected_volume: {rows_p99: 1}
       policy: ["8.5", "10.1", "10.6", "13.3", "13.8"]
 
@@ -173,7 +172,7 @@ intent_catalog:
       allowed_callers:
         roles: [Underwriter, Branch Manager]
         channels: [underwriting, manager_console]
-      fields: [approval_id, loan_id, status, approver_role, created_at]
+      fields: [approval_id, loan_id, approver_role, status, created_at]
       expected_volume: {rows_p99: 1}
       policy: ["10.3", "10.4", "13.8"]
 
@@ -211,7 +210,7 @@ intent_catalog:
       allowed_callers:
         roles: [Loan Officer, Underwriter, Branch Manager]
         channels: [officer_ui, underwriting, manager_console]
-      fields: [doc_id, applicant_id, kind, filename, content]
+      fields: [doc_id, applicant_id, loan_id, kind, filename, content, uploaded_at]
       expected_volume: {rows_p99: 1}
       trust: untrusted
       trigger_descriptors: ["read this document", "review the attached file", "what does the document say", "read document"]
@@ -224,7 +223,7 @@ intent_catalog:
       allowed_callers:
         roles: [Branch Manager]
         channels: [manager_console]
-      fields: [applicant_id, full_name, email]
+      fields: [applicant_id, full_name, email, annual_income]
       expected_volume: {rows_p99: 12}
       toxic_with: [view_applicant, view_credit_report]
       policy: ["11.3", "11.4", "12.1", "12.2", "12.3", "12.4", "12.6", "12.7"]

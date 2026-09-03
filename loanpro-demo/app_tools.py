@@ -175,8 +175,7 @@ INTENTS: dict[str, dict | None] = {
     "get_application": {
         "intent": "view_application", "side_effect": "read",
         "callers": ["Applicant"] + STAFF, "channels": ["portal"] + STAFF_CHANNELS,
-        "fields": ["loan_id", "applicant_id", "product", "requested_amount", "term_months",
-                   "status", "version", "updated_at"],
+        "fields": ["loan_id", "applicant_id", "product", "requested_amount", "term_months", "status", "apr", "assigned_officer", "decided_by", "version", "updated_at"],
         "mandatory_filter": "loan_id = <own application> for an Applicant", "volume": 1},
     "find_applicant": {
         "intent": "find_applicant", "side_effect": "read", "callers": STAFF,
@@ -184,7 +183,7 @@ INTENTS: dict[str, dict | None] = {
     "get_applicant_profile": {
         "intent": "view_applicant", "side_effect": "read", "callers": STAFF,
         "channels": STAFF_CHANNELS,
-        "fields": ["applicant_id", "full_name", "email", "annual_income", "employment_years"],
+        "fields": ["applicant_id", "full_name", "email", "annual_income", "employment_years", "assigned_officer", "bureau"],
         "restricted_fields": ["ssn", "tax_id", "bank_account_hint", "credit_score"],
         "volume": 1, "toxic_with": ["export_directory"]},
     "get_credit_report": {
@@ -203,44 +202,44 @@ INTENTS: dict[str, dict | None] = {
     "get_risk_profile": {
         "intent": "view_risk_profile", "side_effect": "read", "callers": DECIDERS,
         "channels": ["underwriting", "manager_console"],
-        "fields": ["applicant_id", "tier", "risk_grade", "pd_estimate", "updated_at"],
+        "fields": ["applicant_id", "tier", "risk_grade", "internal_risk_score", "pd_estimate", "model_version", "updated_at"],
         "restricted_fields": ["internal_risk_score"], "volume": 1},
     "quote_terms": {
         "intent": "quote_terms", "side_effect": "read", "callers": STAFF,
         "channels": STAFF_CHANNELS,
-        "fields": ["loan_id", "amount", "term_months", "apr", "monthly_payment", "total_cost"],
+        "fields": ["loan_id", "applicant_id", "tier", "amount", "term_months", "apr", "monthly_payment", "total_cost"],
         "volume": 1, "precondition": "kyc_status == verified (via verify_kyc)",
         "requires_before": ["get_risk_profile"]},
     "update_application": {
         "intent": "amend_application", "side_effect": "write", "callers": STAFF,
-        "channels": STAFF_CHANNELS, "fields": ["loan_id", "version"], "volume": 1},
+        "channels": STAFF_CHANNELS, "fields": ["loan_id", "requested_amount", "term_months", "product", "version", "updated_at"], "volume": 1},
     "apply_discount": {
         "intent": "apply_discount", "side_effect": "write", "callers": DECIDERS,
-        "channels": ["underwriting", "manager_console"], "fields": ["loan_id", "apr"],
+        "channels": ["underwriting", "manager_console"], "fields": ["loan_id", "apr", "version"],
         "volume": 1, "requires_before": ["get_risk_profile"]},
     "request_manager_approval": {
         "intent": "request_approval", "side_effect": "write", "callers": DECIDERS,
         "channels": ["underwriting", "manager_console"],
-        "fields": ["approval_id", "loan_id", "status"], "volume": 1},
+        "fields": ["approval_id", "loan_id", "approver_role", "status", "created_at"], "volume": 1},
     "decide_loan": {
         "intent": "decide_loan", "side_effect": "write", "callers": DECIDERS,
         "channels": ["underwriting", "manager_console"],
-        "fields": ["loan_id", "status", "applicant_id", "requested_amount", "score", "verified_income"],
+        "fields": ["loan_id", "status", "decided_by", "version", "applicant_id", "requested_amount", "score", "verified_income"],
         "volume": 1, "approval_over": 50000,
         "closing_obligation": "send_decision_notice"},
     "send_decision_notice": {
         "intent": "send_notice", "side_effect": "write", "callers": DECIDERS,
         "channels": ["underwriting", "manager_console"],
-        "fields": ["notice_id", "loan_id", "kind"], "volume": 1},
+        "fields": ["notice_id", "loan_id", "kind", "channel", "sent_at"], "volume": 1},
     "fetch_document": {
         "intent": "read_document", "side_effect": "read", "callers": STAFF,
         "channels": STAFF_CHANNELS,
-        "fields": ["doc_id", "applicant_id", "kind", "filename", "content"],
+        "fields": ["doc_id", "applicant_id", "loan_id", "kind", "filename", "content", "uploaded_at"],
         "volume": 1, "trust": "untrusted"},
     "export_applicants": {
         "intent": "export_directory", "side_effect": "read", "callers": ["Branch Manager"],
         "channels": ["manager_console"],
-        "fields": ["applicant_id", "full_name", "email"], "volume": 12,
+        "fields": ["applicant_id", "full_name", "email", "annual_income"], "volume": 12,
         "toxic_with": ["view_applicant", "view_credit_report"]},
     # Off-catalog: nobody approved these. Any call is catalog_membership.
     "search_applicants": None,
