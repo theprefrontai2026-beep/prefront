@@ -140,18 +140,35 @@ services:
     restart: "no"
 
   # ---- Prefront, exposed as ONE MCP server (the single endpoint the LLM uses)
-  # Prefront's governed MCP for LoanPro. UNUSED — LoanPro has no governed agent
-  # any more, so this sits behind the `mcp` profile with the engine runtime.
+  # Prefront's governed MCP for LoanPro — the GOVERNED lane's endpoint. No
+  # longer profile-gated and no longer vestigial: loanpro-governed depends on
+  # it, exactly as securebank-orchestrator depends on securebank-mcp.
+  #
+  # It is a PROXY, not a second data path. Its 17 templates are all kind="mcp"
+  # and forward to loanpro-app-mcp's real tools, so both lanes execute the same
+  # app code against the same database and the only difference between them is
+  # whether Prefront sat in front of the call.
   loanpro-mcp:
-    profiles: ["mcp"]
     build: ../semantic-mcp-server
     command: ["--templates=/artifacts/loanpro-demo/query_templates.yaml", "serve", "--http", "--host=0.0.0.0", "--port=8090"]
     environment:
       <<: *tracing-env
       PREFRONT_TRACING: ${PREFRONT_ENGINE_TRACING:-0}   # Prefront runtime: not traced
-      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
+      # Keyed on user_id, not email: that is the id the trusted session layer
+      # already puts on the wire (X-Prefront-Act-As), and IDENTITY_QUERY is
+      # exactly the deployment's own mapping of an identity onto the contract
+      # names role/region. The LLM cannot set it.
+      IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE user_id = :who
       DATABASE_URL: postgresql://loanpro:loanpro@loanpro-db:5432/loanpro
       POLICY_PATH: /artifacts/loanpro-demo/policy.yaml
+      # Forward the resolved caller to the upstream app server. Prefront opens
+      # its OWN connection to loanpro-app-mcp, so without this get_my_
+      # applications() — the one tool that honours the caller — would see no
+      # identity and widen to every officer's pipeline. Names are config, not
+      # engine code (semanticmcp/mcp_proxy.py:upstream_headers).
+      MCP_UPSTREAM_HEADERS: "X-LoanPro-User={caller.user_id},X-LoanPro-Role={caller.role}"
+      # The governed lane executes writes for real; the app rolls its own back.
+      ENABLE_WRITES: ${LOANPRO_ENABLE_WRITES:-0}
       # Inline reuse of eval-engine's safe checks (autonomous_build.md step 18,
       # see semanticmcp/governance/inline_checks.py) - a direct bind mount, not
       # the artifacts NAMED VOLUME's seed-once pattern (that has a documented
@@ -165,6 +182,49 @@ services:
     depends_on:
       loanpro-db: {condition: service_healthy}
       loanpro-seed: {condition: service_completed_successfully}
+      loanpro-app-mcp: {condition: service_started}   # it proxies to this
+
+  # ---- the GOVERNED lane: the SAME agent, pointed at Prefront --------------
+  # Byte-identical image and code to loanpro-ungoverned; the only difference is
+  # LOANPRO_APP_MCP_URL. That is the whole argument the demo makes — the app,
+  # the tools, the database, the model and the prompt are all held constant, so
+  # any difference in outcome is attributable to Prefront being in the path and
+  # to nothing else.
+  #
+  # Two omissions here are load-bearing, not oversights:
+  #
+  #  * NO *oob-tap-env. The ungoverned lane fans its spans out to oob-ingest
+  #    because it is the SUBJECT of the out-of-band checks. If this lane did
+  #    too, its sessions would land in ClickHouse, eval-engine would evaluate
+  #    them, and the 39-scenario grading baseline in docs/eval-coverage.md
+  #    would silently double with sessions that never belonged to it. Set
+  #    LOANPRO_GOVERNED_FANOUT to opt in deliberately.
+  #  * NO scenario catalogue of its own. It replays the SAME scenarios.py the
+  #    ungoverned lane runs, unmodified — a governed lane that ran different
+  #    inputs would prove nothing.
+  loanpro-governed:
+    build: .
+    command: ["python", "ungoverned_server.py"]
+    environment:
+      <<: [*llm-env, *tracing-env]
+      # Off by default, for the same reason the OOB tap is omitted below: this
+      # lane is not the subject of the out-of-band checks, and oob-ingest POLLS
+      # Phoenix, so merely emitting spans would put these sessions in
+      # ClickHouse even with no OTLP fan-out. Both switches must be flipped to
+      # bring the governed lane into OOB deliberately.
+      PREFRONT_TRACING: ${LOANPRO_GOVERNED_TRACING:-0}
+      PREFRONT_TRACE_FANOUT: ${LOANPRO_GOVERNED_FANOUT:-}
+      UNGOVERNED_MODEL: gpt-4o-mini
+      UNGOVERNED_MODEL_V2: ${LOANPRO_MODEL_V2:-gpt-4o-mini}
+      UNGOVERNED_MAX_ITERS: "6"
+      UNGOVERNED_PORT: "8097"
+      # The ONE line that differs from loanpro-ungoverned: Prefront's governed
+      # MCP instead of the app's raw one.
+      LOANPRO_APP_MCP_URL: http://loanpro-mcp:8090/sse
+      PREFRONT_TRACE_MAX_VALUE: "16000"
+    ports: ["8099:8097"]
+    depends_on:
+      loanpro-mcp: {condition: service_started}
 
   # ---- scenario orchestrator: runs the catalogue against the app agent -----
   loanpro-orchestrator:
@@ -174,9 +234,14 @@ services:
       <<: [*llm-env, *tracing-env, *no-governed-span-env]   # OPENAI_API_KEY
       LOANPRO_DEMO_PORT: "8098"
       AGENT_URL: http://loanpro-ungoverned:8097
+      # Opt-in second lane: /api/run?mode=both runs each scenario against this
+      # too and returns a `governed` key beside the ungoverned result. Unset =>
+      # the orchestrator behaves exactly as before.
+      GOVERNED_AGENT_URL: ${LOANPRO_GOVERNED_AGENT_URL:-http://loanpro-governed:8097}
     ports: ["8098:8098"]
     depends_on:
       loanpro-ungoverned: {condition: service_started}
+      loanpro-governed: {condition: service_started}
 
   # ---- Verdict: standalone LoanPro scenario runner (nginx, static) ---------
   # The main Prefront UI's old Runtime tab (SessionRunner), pulled out into

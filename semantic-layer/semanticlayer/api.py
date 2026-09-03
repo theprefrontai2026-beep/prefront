@@ -680,6 +680,9 @@ def reject_template(template_id: str, body: ReviewBody = ReviewBody()):
 
 class PublishBody(BaseModel):
     semantic_model_id: Optional[str] = None
+    # Which datasource's artifact dir to publish into. Omitted => the legacy
+    # single SEMANTICLAYER_PUBLISH_PATH, kept so existing callers don't move.
+    datasource_id: Optional[str] = None
 
 
 class PublishPolicyBody(BaseModel):
@@ -770,7 +773,14 @@ def publish(body: PublishBody = PublishBody()):
 
     # Stored rows are QueryTemplate dumps (+ status/reviewer, which pydantic ignores).
     templates = [QueryTemplate.model_validate(r) for r in approved]
-    path = Path(_PUBLISH_PATH)
+    # Per-datasource when asked, matching publish-policy and function approval,
+    # which both write to <root>/<datasource_id>/. This endpoint was the only
+    # one of the three that ignored the datasource and always wrote the single
+    # global SEMANTICLAYER_PUBLISH_PATH — so publishing a second datasource
+    # silently overwrote the first one's templates, and the policy.yaml written
+    # beside them by publish-policy ended up in a DIFFERENT directory from the
+    # query_templates.yaml it binds against.
+    path = _functions_artifact_path(body.datasource_id) if body.datasource_id else Path(_PUBLISH_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_query_templates(templates), encoding="utf-8")
     return {

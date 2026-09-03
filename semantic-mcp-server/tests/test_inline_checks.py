@@ -256,3 +256,54 @@ def test_final_answer_scope_still_masks_the_result_inline(role_scoped_rule_pack)
     # Both rules are final_answer-scoped. Inline, masking the RESULT is how a
     # field is kept out of the final answer, so scope must not gate the mask.
     assert inline_checks.restricted_field_names(ROW, "Loan Officer")
+
+
+# --- upstream identity forwarding (mcp_proxy.upstream_headers) ---------------
+# Header names and the attributes they carry are the DEPLOYMENT's vocabulary,
+# so they come from MCP_UPSTREAM_HEADERS and nothing in the engine knows them.
+
+from semanticmcp import mcp_proxy  # noqa: E402
+from semanticmcp.governance.context import Caller  # noqa: E402
+
+
+def _headers(monkeypatch, template, caller):
+    monkeypatch.setattr(mcp_proxy, "_HEADER_TEMPLATE", template)
+    return mcp_proxy.upstream_headers(caller)
+
+
+CALLER = Caller(attrs={"user_id": 42, "email": "a@b.example", "role": "Loan Officer"})
+
+
+def test_no_template_sends_no_headers(monkeypatch):
+    assert _headers(monkeypatch, "", CALLER) == {}
+
+
+def test_no_caller_sends_no_headers(monkeypatch):
+    assert _headers(monkeypatch, "X-U={caller.email}", None) == {}
+
+
+def test_renders_each_declared_attribute(monkeypatch):
+    got = _headers(monkeypatch, "X-U={caller.email},X-R={caller.role}", CALLER)
+    assert got == {"X-U": "a@b.example", "X-R": "Loan Officer"}
+
+
+def test_non_string_attribute_is_stringified(monkeypatch):
+    assert _headers(monkeypatch, "X-Id={caller.user_id}", CALLER) == {"X-Id": "42"}
+
+
+def test_unresolved_placeholder_is_dropped_not_sent_literally(monkeypatch):
+    # The IDENTITY_QUERY does not return this attribute. Forwarding a literal
+    # "{caller.region}" upstream would be worse than sending nothing.
+    got = _headers(monkeypatch, "X-Region={caller.region},X-R={caller.role}", CALLER)
+    assert got == {"X-R": "Loan Officer"}
+
+
+def test_attribute_present_but_empty_is_dropped(monkeypatch):
+    # A header present but blank asserts "this caller has no such attribute";
+    # absence is merely silence, which is the honest signal.
+    caller = Caller(attrs={"email": "", "role": "Underwriter"})
+    assert _headers(monkeypatch, "X-U={caller.email},X-R={caller.role}", caller) == {"X-R": "Underwriter"}
+
+
+def test_malformed_pairs_are_skipped(monkeypatch):
+    assert _headers(monkeypatch, "novalue,=orphan,X-R={caller.role}", CALLER) == {"X-R": "Loan Officer"}

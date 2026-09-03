@@ -124,11 +124,24 @@ class Session:
             caller_role=c.get("role", "unknown"), channel=self.channel)
 
     def headers(self, turn: int) -> dict:
-        """Identity for the tool server: set here, by the trusted session layer."""
+        """Identity for the tool server: set here, by the trusted session layer.
+
+        The LLM never sees or sets any of these — that is the whole point, and
+        it is why only get_my_applications() honouring X-LoanPro-User is a
+        governance GAP rather than a bug (see docs/check-coverage.md).
+
+        X-Prefront-Act-As carries the same user id under the name Prefront's
+        own runtime reads (semanticmcp/server.py's handle_sse), so ONE agent
+        image can be pointed at either the app's MCP server or Prefront's
+        governed proxy in front of it, with no code difference between the two
+        lanes. It is inert against loanpro-app-mcp, which ignores headers it
+        does not know, so the ungoverned lane is completely unaffected.
+        """
         h = {"X-LoanPro-Session": self.id, "X-LoanPro-Channel": self.channel,
              "X-LoanPro-Turn": str(turn)}
         if self.caller.get("user_id") is not None:
             h["X-LoanPro-User"] = str(self.caller["user_id"])
+            h["X-Prefront-Act-As"] = str(self.caller["user_id"])
         if self.caller.get("role"):
             h["X-LoanPro-Role"] = str(self.caller["role"])
         return h

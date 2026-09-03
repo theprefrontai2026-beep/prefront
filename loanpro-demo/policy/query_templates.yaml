@@ -1,153 +1,466 @@
-# LoanPro — approved query templates (the only ways an agent may touch data).
-# Loaded by the Prefront runtime (semanticmcp). `:caller_*` placeholders are
-# injected from the trusted identity (never from the agent). Read templates scope
-# rows in SQL (ownership); precheck templates gather facts for the policy decision
-# and carry a declarative write_action executed only on an ALLOW (dry-run unless
-# ENABLE_WRITES=1). Same schema as securebank-demo — the engine is domain-neutral.
+# LoanPro's GOVERNED query templates — Prefront's MCP surface in front of the
+# app's own MCP server (loanpro-app-mcp). GENERATED, then re-keyed; see below.
+#
+# Produced deterministically by the generic MCP connector, NOT by hand and NOT
+# by the LLM mapper: POST /design/semantic/mcp/introspect against
+# http://loanpro-app-mcp:8102/sse learns the 19 tools, /build represents each
+# as one kind="mcp" template (1 tool = 1 entity, no entity-guessing), and
+# /publish writes this file. Regenerate the same way rather than editing it —
+# the params below are the tools' OWN declared inputSchemas.
+#
+# TWO deliberate post-generation edits, both taken from
+# policy/intent_catalog.yaml, which is the only place the mapping exists:
+#
+#  1. intent_id is the APPROVED INTENT name, not the tool name. The connector
+#     can only know the tool (view_applicant's tool is get_applicant_profile),
+#     but the app stamps `app.intent` on its spans with the approved-intent
+#     name and family3's catalog is keyed by it — so a template published under
+#     the raw tool name fails catalog_membership on every call. Exposing intent
+#     names is also the correct posture: Prefront publishes approved intents,
+#     and mcp_tool_name carries the real upstream tool it proxies to.
+#
+#  2. mcp_destructive comes from the catalog's declared side_effect. The app's
+#     MCP server declares no annotations at all, and _is_destructive marks a
+#     tool destructive only on a POSITIVE declaration (silence never does), so
+#     every write would otherwise publish as non-destructive and skip the
+#     ENABLE_WRITES gate.
+#
+# The 2 OFF-CATALOG tools (search_applicants, get_internal_metrics — INTENTS
+# maps both to None) are deliberately NOT here: they were rejected at review,
+# so Prefront never exposes them and an agent cannot call them at all. That is
+# the inline counterpart of the off-catalog finding Family 3 reports OOB.
 query_templates:
-
-  # L1 — a Loan Officer sees ONLY the applications assigned to them (ownership via
-  # SQL scope). Underwriters/Managers scope to their own assigned pipeline too.
-  tmpl_view_applications_v1:
-    intent_id: view_applications
-    description: "List the loan applications assigned to the caller (their own pipeline), with amount, term and status."
-    kind: read
+  tmpl_apply_discount_mcp_v1:
+    intent_id: apply_discount
+    description: Apply a rate discount, in basis points, to an application's APR.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - apply_discount
     read_only: true
-    dialect: postgres
-    sql: |-
-      SELECT loan_id, applicant_id, requested_amount, term_months, status
-      FROM loan_applications
-      WHERE assigned_officer = :caller_user_id
-      ORDER BY loan_id
-    parameters: []
-    required_caller_context: [user_id]
-    result_columns:
-      - {name: loan_id, sensitivity: normal}
-      - {name: applicant_id, sensitivity: normal}
-      - {name: requested_amount, sensitivity: normal}
-      - {name: term_months, sensitivity: normal}
-      - {name: status, sensitivity: normal}
-    status: published
-
-  # L2 — a specific application by id. A guarded read (precheck, no write_action):
-  # it fetches the row UNSCOPED and joins the applicant's owning login so
-  # owner_user_id is a fact, then the ownership rule blocks a self-service
-  # Applicant reading someone else's application. Staff skip the role guard.
-  tmpl_view_application_v1:
-    intent_id: view_application
-    description: "Get one loan application's details (amount, term, status) by its numeric loan_id."
-    kind: precheck
-    dialect: postgres
-    sql: |-
-      SELECT la.loan_id, la.status, la.requested_amount, la.applicant_id,
-             la.assigned_officer, a.user_id AS owner_user_id
-      FROM loan_applications la
-      JOIN applicants a ON a.applicant_id = la.applicant_id
-      WHERE la.loan_id = :loan_id
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: apply_discount
     parameters:
-      - {name: loan_id, type: integer, required: true}
-    decision_inputs:
-      - {name: owner_user_id, sensitivity: normal}
-      - {name: assigned_officer, sensitivity: normal}
-      - {name: requested_amount, sensitivity: normal}
-      - {name: status, sensitivity: normal}
-    status: published
-
-  # L3 — a single applicant record by name; ssn masked unless the caller is a
-  # Branch Manager, credit_score masked from a Loan Officer.
-  tmpl_view_applicant_v1:
-    intent_id: view_applicant
-    description: "Look up an applicant by name (name_query). Returns their profile including ssn and credit score. Use this for any request about a named applicant's details, SSN, or credit score."
-    kind: read
-    read_only: true
-    dialect: postgres
-    sql: |-
-      SELECT a.applicant_id, a.full_name, a.email, a.annual_income,
-             a.employment_years, a.ssn, c.score AS credit_score, c.bureau
-      FROM applicants a
-      LEFT JOIN credit_scores c ON c.applicant_id = a.applicant_id
-      WHERE a.full_name ILIKE :name_query
-      LIMIT 10
-    parameters:
-      - {name: name_query, type: string, required: true}
-    result_columns:
-      - {name: ssn, sensitivity: restricted}
-      - {name: credit_score, sensitivity: restricted}
-    status: published
-
-  # L4/L5 — the applicant directory: staff-only (role rule), ssn masked, bounded.
-  tmpl_view_applicants_v1:
-    intent_id: view_applicants
-    description: "List the full applicant directory (every borrower on file). Use for requests to list/enumerate/export applicants or borrowers."
-    kind: read
-    read_only: true
-    dialect: postgres
-    sql: |-
-      SELECT a.applicant_id, a.full_name, a.email, a.annual_income, a.ssn,
-             c.score AS credit_score
-      FROM applicants a
-      LEFT JOIN credit_scores c ON c.applicant_id = a.applicant_id
-      ORDER BY a.applicant_id
-      LIMIT 100
-    parameters: []
-    result_columns:
-      - {name: ssn, sensitivity: restricted}
-      - {name: credit_score, sensitivity: restricted}
-    status: published
-
-  # The loan decision — the policy centrepiece. The precheck reads the
-  # application AND joins the applicant's credit signals (score, defaults,
-  # income) so the credit policy decides on the borrower's real data: credit
-  # floor, active/recent delinquency, income multiple, amount approval, hard
-  # ceiling. Every gating fact is a DB value, never agent-supplied. The status
-  # write runs only on an ALLOW.
-  #   loan_to_income  = requested_amount / annual_income (borrower affordability)
-  #   unresolved_count = open delinquencies; last_default_days_ago = recency
-  #     (99999 when the borrower has no defaults, so the recency rule is well-defined)
-  tmpl_decide_loan_precheck_v1:
+    - name: loan_id
+      type: integer
+      required: true
+    - name: bps
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - apply_discount_mcp_default
+    status: approved
+    template_id: tmpl_apply_discount_mcp_v1
+    mcp_destructive: true
+  tmpl_decide_loan_mcp_v1:
     intent_id: decide_loan
-    description: "Approve or reject a loan application by loan_id (decision = 'approved' or 'rejected')."
-    kind: precheck
-    dialect: postgres
-    sql: |-
-      SELECT
-        la.loan_id,
-        la.status,
-        la.requested_amount,
-        la.applicant_id,
-        a.annual_income,
-        ROUND(la.requested_amount / NULLIF(a.annual_income, 0), 2) AS loan_to_income,
-        c.score AS credit_score,
-        COALESCE(d.default_count, 0)      AS default_count,
-        COALESCE(d.unresolved_count, 0)   AS unresolved_count,
-        COALESCE(d.last_default_days_ago, 99999) AS last_default_days_ago
-      FROM loan_applications la
-      JOIN applicants a ON a.applicant_id = la.applicant_id
-      LEFT JOIN credit_scores c ON c.applicant_id = la.applicant_id
-      LEFT JOIN (
-        SELECT applicant_id,
-               COUNT(*)                                 AS default_count,
-               COUNT(*) FILTER (WHERE NOT resolved)     AS unresolved_count,
-               (CURRENT_DATE - MAX(default_date))::int  AS last_default_days_ago
-        FROM default_records
-        GROUP BY applicant_id
-      ) d ON d.applicant_id = la.applicant_id
-      WHERE la.loan_id = :loan_id
+    description: Approve or reject a loan application.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - decide_loan
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: decide_loan
     parameters:
-      - {name: loan_id, type: integer, required: true}
-      - {name: decision, type: string, required: true}
-    decision_inputs:
-      - {name: status, sensitivity: normal}
-      - {name: requested_amount, sensitivity: normal}
-      - {name: loan_to_income, sensitivity: normal}
-      - {name: credit_score, sensitivity: normal}
-      - {name: default_count, sensitivity: normal}
-      - {name: unresolved_count, sensitivity: normal}
-      - {name: last_default_days_ago, sensitivity: normal}
-    write_action:
-      table: loan_applications
-      kind: update
-      params: [loan_id, decision]
-      key_columns: [loan_id]
-      column_map: {decision: status}
-    status: published
+    - name: loan_id
+      type: integer
+      required: true
+    - name: decision
+      type: string
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - decide_loan_mcp_default
+    status: approved
+    template_id: tmpl_decide_loan_mcp_v1
+    mcp_destructive: true
+  tmpl_export_directory_mcp_v1:
+    intent_id: export_directory
+    description: Export the applicant directory (name, email, SSN, tax id, credit score, income) as rows,
+      e.g. for a spreadsheet.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - export_applicants
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: export_applicants
+    parameters:
+    - name: format
+      type: string
+      required: false
+    required_policies:
+    - loanpro-demo_mcp
+    - export_applicants_mcp_default
+    status: approved
+    template_id: tmpl_export_directory_mcp_v1
+    mcp_destructive: false
+  tmpl_read_document_mcp_v1:
+    intent_id: read_document
+    description: Read the text of a document the applicant uploaded (paystub, bank letter, income letter,
+      tax return).
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - fetch_document
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: fetch_document
+    parameters:
+    - name: doc_id
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - fetch_document_mcp_default
+    status: approved
+    template_id: tmpl_read_document_mcp_v1
+    mcp_destructive: false
+  tmpl_find_applicant_mcp_v1:
+    intent_id: find_applicant
+    description: Look up an applicant id by (part of) their name.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - find_applicant
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: find_applicant
+    parameters:
+    - name: name
+      type: string
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - find_applicant_mcp_default
+    status: approved
+    template_id: tmpl_find_applicant_mcp_v1
+    mcp_destructive: false
+  tmpl_view_applicant_mcp_v1:
+    intent_id: view_applicant
+    description: 'An applicant''s full profile: contact details, income, employment, SSN, tax id, bank
+      account, and bureau credit score.'
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - get_applicant_profile
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: get_applicant_profile
+    parameters:
+    - name: applicant_id
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - get_applicant_profile_mcp_default
+    status: approved
+    template_id: tmpl_view_applicant_mcp_v1
+    mcp_destructive: false
+  tmpl_view_application_mcp_v1:
+    intent_id: view_application
+    description: 'Get one loan application by id: applicant, product, amount, term, status, version.'
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - get_application
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: get_application
+    parameters:
+    - name: loan_id
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - get_application_mcp_default
+    status: approved
+    template_id: tmpl_view_application_mcp_v1
+    mcp_destructive: false
+  tmpl_view_credit_report_mcp_v1:
+    intent_id: view_credit_report
+    description: The bureau credit report (score, bureau, date) for an applicant.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - get_credit_report
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: get_credit_report
+    parameters:
+    - name: applicant_id
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - get_credit_report_mcp_default
+    status: approved
+    template_id: tmpl_view_credit_report_mcp_v1
+    mcp_destructive: false
+  tmpl_view_income_verification_mcp_v1:
+    intent_id: view_income_verification
+    description: The verified-income record for an applicant (source, amount, date).
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - get_income_verification
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: get_income_verification
+    parameters:
+    - name: applicant_id
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - get_income_verification_mcp_default
+    status: approved
+    template_id: tmpl_view_income_verification_mcp_v1
+    mcp_destructive: false
+  tmpl_view_my_pipeline_mcp_v1:
+    intent_id: view_my_pipeline
+    description: The signed-in officer's own assigned loan applications (their pipeline).
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - get_my_applications
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: get_my_applications
+    required_policies:
+    - loanpro-demo_mcp
+    - get_my_applications_mcp_default
+    status: approved
+    template_id: tmpl_view_my_pipeline_mcp_v1
+    mcp_destructive: false
+  tmpl_view_risk_profile_mcp_v1:
+    intent_id: view_risk_profile
+    description: 'The internal risk model output for an applicant: tier, risk grade, internal risk score,
+      probability of default.'
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - get_risk_profile
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: get_risk_profile
+    parameters:
+    - name: applicant_id
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - get_risk_profile_mcp_default
+    status: approved
+    template_id: tmpl_view_risk_profile_mcp_v1
+    mcp_destructive: false
+  tmpl_view_applications_mcp_v1:
+    intent_id: view_applications
+    description: List loan applications in the branch, optionally filtered by status (pending/approved/rejected),
+      product (personal/auto/home_improvement), assigned officer id, or applicant id. With no filters,
+      returns every application.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - list_applications
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: list_applications
+    parameters:
+    - name: status
+      type: string
+      required: false
+    - name: product
+      type: string
+      required: false
+    - name: officer_id
+      type: integer
+      required: false
+    - name: applicant_id
+      type: integer
+      required: false
+    - name: limit
+      type: integer
+      required: false
+    required_policies:
+    - loanpro-demo_mcp
+    - list_applications_mcp_default
+    status: approved
+    template_id: tmpl_view_applications_mcp_v1
+    mcp_destructive: false
+  tmpl_quote_terms_mcp_v1:
+    intent_id: quote_terms
+    description: Quote loan terms (APR, monthly payment, total cost) for an application at a given amount
+      and term.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - quote_terms
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: quote_terms
+    parameters:
+    - name: loan_id
+      type: integer
+      required: true
+    - name: amount
+      type: number
+      required: true
+    - name: term_months
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - quote_terms_mcp_default
+    status: approved
+    template_id: tmpl_quote_terms_mcp_v1
+    mcp_destructive: false
+  tmpl_request_approval_mcp_v1:
+    intent_id: request_approval
+    description: Route an application to a Branch Manager for approval; returns an approval id.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - request_manager_approval
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: request_manager_approval
+    parameters:
+    - name: loan_id
+      type: integer
+      required: true
+    - name: reason
+      type: string
+      required: false
+    required_policies:
+    - loanpro-demo_mcp
+    - request_manager_approval_mcp_default
+    status: approved
+    template_id: tmpl_request_approval_mcp_v1
+    mcp_destructive: true
+  tmpl_send_notice_mcp_v1:
+    intent_id: send_notice
+    description: Send the applicant the required notice for a decision (approval letter or adverse-action
+      notice).
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - send_decision_notice
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: send_decision_notice
+    parameters:
+    - name: loan_id
+      type: integer
+      required: true
+    - name: kind
+      type: string
+      required: false
+    required_policies:
+    - loanpro-demo_mcp
+    - send_decision_notice_mcp_default
+    status: approved
+    template_id: tmpl_send_notice_mcp_v1
+    mcp_destructive: true
+  tmpl_amend_application_mcp_v1:
+    intent_id: amend_application
+    description: Change a pending application's requested amount, term, or product.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - update_application
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: update_application
+    parameters:
+    - name: loan_id
+      type: integer
+      required: true
+    - name: requested_amount
+      type: number
+      required: false
+    - name: term_months
+      type: integer
+      required: false
+    - name: product
+      type: string
+      required: false
+    required_policies:
+    - loanpro-demo_mcp
+    - update_application_mcp_default
+    status: approved
+    template_id: tmpl_amend_application_mcp_v1
+    mcp_destructive: true
+  tmpl_verify_kyc_mcp_v1:
+    intent_id: verify_kyc
+    description: Check an applicant's KYC (identity verification) status.
+    semantic_model_id: loanpro
+    semantic_model_version: '1.0'
+    kind: mcp
+    semantic_entities:
+    - verify_kyc
+    read_only: true
+    dialect: mcp
+    sql: ''
+    mcp_server_url: http://loanpro-app-mcp:8102/sse
+    mcp_tool_name: verify_kyc
+    parameters:
+    - name: applicant_id
+      type: integer
+      required: true
+    required_policies:
+    - loanpro-demo_mcp
+    - verify_kyc_mcp_default
+    status: approved
+    template_id: tmpl_verify_kyc_mcp_v1
+    mcp_destructive: false

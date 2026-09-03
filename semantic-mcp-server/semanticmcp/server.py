@@ -431,6 +431,12 @@ async def _call_governed(
         try:
             result = await mcp_proxy.call_upstream_tool(
                 tool["mcp_server_url"], tool["mcp_tool_name"], args or {},
+                # Forward the TRUSTED caller to the upstream server. Prefront
+                # opens its own connection to it, so without this an upstream
+                # tool that scopes by a connection header sees no caller at
+                # all — and an identity-scoped read would silently widen.
+                # Names/attributes come from MCP_UPSTREAM_HEADERS (config).
+                headers=mcp_proxy.upstream_headers(caller),
             )
         except Exception as e:
             return respond(Decision(status="blocked",
