@@ -90,6 +90,13 @@ def _json_env(name: str) -> dict[str, str]:
 
 PROJECT_APP_MAP = _json_env("EVAL_PROJECT_APP_MAP")
 
+# Per-application configuration (application_isolation_design.md Phase 3): a
+# YAML artifact naming each subject application's own rule pack, intent
+# catalog, overlay, trace binding and disabled checks. EMPTY = single-tenant,
+# and every application is evaluated against the EVAL_*_PATH artifacts above —
+# byte-identical to the behaviour before the registry existed (Hard Rule 9).
+APPLICATIONS_PATH = _env("EVAL_APPLICATIONS_PATH", "")
+
 # Deployment mode for the standalone worker/API. Phase A only ever runs OOB;
 # "inline" mode of the *combinator* is exercised by semantic-mcp-server
 # importing evalengine directly (Phase D), not by this service.

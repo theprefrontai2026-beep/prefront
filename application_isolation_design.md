@@ -342,7 +342,16 @@ onboarding different policies interleave in Policy Studio with nothing to
 separate them. This is the largest gap and the one furthest from the data path
 this design started with.
 
-**2. Every destructive operation is all-or-nothing.** `DELETE /eval/verdicts`
+**2. Every destructive operation is all-or-nothing. FIXED.** `DELETE
+/eval/verdicts?app=`, `DELETE /oob/spans?project=` and `DELETE
+/oob/phoenix?project=` now scope to one application (`ALTER … DELETE` when
+scoped, `TRUNCATE` kept for the all-applications case because it is instant),
+and the UI offers two explicitly named buttons — "Clear <app> trace data" and
+"Clear all applications" — rather than one that says "all" and means it.
+Unattributed rows are LEFT ALONE by a scoped clear: they may belong to any
+application, and guessing would delete another's evidence. `POST
+/design/semantic/reset` is still all-or-nothing (it is keyed by datasource, not
+application). Original text: `DELETE /eval/verdicts`
 is `TRUNCATE TABLE`; `DELETE /oob/spans` truncates `spans` AND `ingest_state`;
 `POST /design/semantic/reset` removes every artifact dir. So the UI's "Clear
 all trace data", sitting on a page labelled with ONE application, destroys

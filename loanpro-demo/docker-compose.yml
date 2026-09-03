@@ -138,7 +138,7 @@ services:
       # root CLAUDE.md's "demo seed jobs only copy when the file is ABSENT".)
       - mkdir -p /artifacts/loanpro-demo &&
         for f in query_templates.yaml policy.yaml rule_pack.yaml intent_catalog.yaml
-                 compliance_overlay.yaml; do
+                 compliance_overlay.yaml applications.yaml; do
           [ -f "/artifacts/loanpro-demo/$$f" ] || cp "/src/$$f" /artifacts/loanpro-demo/;
         done &&
         echo "loanpro curated artifacts ready in /artifacts/loanpro-demo"

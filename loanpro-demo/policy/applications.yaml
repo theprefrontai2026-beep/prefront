@@ -1,0 +1,41 @@
+# Per-application configuration for eval-engine (application_isolation_design.md
+# Phase 3). Names each subject application's OWN artifacts, so a session is
+# evaluated against its application's rule pack and intent catalog rather than
+# whichever single pair the deployment happened to configure.
+#
+# Why this file exists in a DEMO directory rather than the engine: an
+# application id, an artifact path and a check id are all deployment
+# vocabulary, and the engine names none of them (Hard Rule 1). eval-engine
+# reads it via EVAL_APPLICATIONS_PATH and would run identically with it absent.
+#
+# UNSET EVAL_APPLICATIONS_PATH is byte-identical to the behaviour before this
+# existed: every application inherits the deployment-wide EVAL_*_PATH artifacts.
+# So this file is additive — deleting it degrades, it does not break.
+applications:
+  version: 1
+  apps:
+    # The out-of-band subject. Its Phoenix project is `loanpro`
+    # (loanpro-demo/docker-compose.yml's PHOENIX_PROJECT_NAME), which is what
+    # eval-engine resolves a session's application from.
+    - id: loanpro
+      artifacts:
+        rule_pack: /artifacts/loanpro-demo/rule_pack.yaml
+        intent_catalog: /artifacts/loanpro-demo/intent_catalog.yaml
+        compliance_overlay: /artifacts/loanpro-demo/compliance_overlay.yaml
+        # trace_binding / visibility_profile omitted: this app's tracer follows
+        # prefront_tracing.py's own conventions, which the BUNDLED default
+        # profiles already describe. Naming a path here would be asserting a
+        # difference that does not exist.
+      checks:
+        # An EMPTY list is a statement — "this application runs every check" —
+        # and overrides a deployment-wide disabled set. Omitting the `checks`
+        # block entirely would instead INHERIT that set. The two are different
+        # on purpose; see AppConfig.settings.
+        disabled: []
+
+    # SecureBank is deliberately ABSENT rather than listed with empty
+    # artifacts. It is an inline-only deployment: no OTLP tap, no scenario
+    # catalogue, and no rule pack or intent catalog of its own. Listing it
+    # would claim a configuration it does not have; leaving it out means it
+    # resolves to the deployment defaults and is reported as unregistered,
+    # which is the truthful state.

@@ -17,6 +17,7 @@ from . import config, evaluate, store
 from .binding import BindingProfile
 from .family1.compilepack import RulePack
 from .family3.catalog import IntentCatalog
+from .applications import Registry
 from .visibility import VisibilityProfile
 
 log = logging.getLogger(__name__)
@@ -24,11 +25,15 @@ log = logging.getLogger(__name__)
 
 class Worker:
     def __init__(self, binding: BindingProfile, visibility: VisibilityProfile, rule_pack: RulePack,
-                catalog: IntentCatalog) -> None:
+                catalog: IntentCatalog, apps: "Registry | None" = None) -> None:
+        # The four artifacts stay the DEPLOYMENT-wide defaults; `apps` resolves
+        # a per-application override when one is registered. Optional so an
+        # existing caller (and every test) constructs a Worker unchanged.
         self.binding = binding
         self.visibility = visibility
         self.rule_pack = rule_pack
         self.catalog = catalog
+        self.apps = apps
         self._task: Optional[asyncio.Task] = None
         self._wake = asyncio.Event()
         self.polls = 0
@@ -75,17 +80,24 @@ class Worker:
         # process) is also what makes a settings change take effect without
         # a restart - the next poll picks it up.
         settings = checks_mod.current()
-        vkey = evaluate.version_key(self.binding, self.visibility, self.rule_pack, self.catalog, settings)
         results = []
         for row in candidates:
             session_id = row["session_id"]
-            if await asyncio.to_thread(store.is_evaluated, session_id, vkey):
-                self.skipped_total += 1
-                continue
+            # The already-evaluated check lives INSIDE evaluate_and_persist,
+            # not here. It used to be hoisted, computing one version key per
+            # POLL from the deployment artifacts — which is only correct while
+            # every session shares them. Once an application can bring its own
+            # rule pack the key is per SESSION (it composes that pack's
+            # version), so a hoisted key would skip the wrong sessions and
+            # re-evaluate others forever. The cost of moving it back in is one
+            # thread hop per candidate.
             result = await asyncio.to_thread(
                 evaluate.evaluate_and_persist, session_id, self.binding, self.visibility,
-                self.rule_pack, self.catalog, False, settings
+                self.rule_pack, self.catalog, False, settings, self.apps
             )
+            if result.get("skipped"):
+                self.skipped_total += 1
+                continue
             results.append(result)
             self.evaluated_total += 1
         self.polls += 1

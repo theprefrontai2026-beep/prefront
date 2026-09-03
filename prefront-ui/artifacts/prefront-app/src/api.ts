@@ -439,16 +439,41 @@ export function resetChecks(): Promise<ChecksResponse> {
  *  Clear" - and `DELETE /api/decisions` only ever touched `decision_trace`. A
  *  full clear really does leave "5 agents active" standing, so the dialog says
  *  so rather than promising a clean slate it cannot deliver. */
-export const CLEAR_ALL_CONFIRM =
-  "Delete ALL observed-run data?\n\n" +
-  "Cleared:\n" +
-  "• Phoenix projects\n" +
-  "• ClickHouse spans + ingest state\n" +
-  "• eval-engine verdicts, conformance tags, evaluated-session records\n" +
-  "• the governed decision log, for every demo\n\n" +
-  "Kept, by design: the lifetime counters (agents seen, per-policy and per-intent\n" +
-  "totals) — they are cumulative, and no Clear has ever reset them.\n\n" +
-  "Findings only reappear when new sessions run.";
+/** The confirmation names the SCOPE, because the two are now different
+ *  operations. Clearing one application deletes only its data; clearing every
+ *  application is what this always did. Presenting the second while labelled
+ *  with the first is the mislabelling this whole change exists to stop — except
+ *  a delete cannot be corrected on the next render. */
+export function clearConfirm(appLabel: string, everything: boolean): string {
+  const scope = everything
+    ? "EVERY application's observed-run data"
+    : `${appLabel}'s observed-run data`;
+  const detail = everything
+    ? "• every Phoenix project\n" +
+      "• all ClickHouse spans + ingest state\n" +
+      "• every application's verdicts, conformance tags and evaluated-session records\n" +
+      "• the governed decision log, for every demo\n"
+    : `• ${appLabel}'s Phoenix project\n` +
+      `• its spans and that project's ingest watermark\n` +
+      `• its verdicts, conformance tags and evaluated-session records\n` +
+      `• its governed decision log\n`;
+  const spared = everything
+    ? ""
+    : "\nOther applications' data is untouched. Records with no application " +
+      "recorded (from before applications existed) are also left alone — they " +
+      "may belong to any of them.\n";
+  return (
+    `Delete ${scope}?\n\n` +
+    "Cleared:\n" + detail + spared + "\n" +
+    "Kept, by design: the lifetime counters (agents seen, per-policy and per-intent\n" +
+    "totals) — they are cumulative, and no Clear has ever reset them.\n\n" +
+    "Findings only reappear when new sessions run."
+  );
+}
+
+/** @deprecated superseded by clearConfirm(); kept so an existing caller that
+ *  has not been updated still shows the all-applications wording it performs. */
+export const CLEAR_ALL_CONFIRM = clearConfirm("", true);
 
 export type ClearAllResult = {
   /** False only when Phoenix refused; the ClickHouse/Postgres truncates still ran. */
@@ -473,13 +498,23 @@ export type ClearAllResult = {
  * that says "everything" and silently spares another demo's rows would be
  * lying about the one store where the distinction exists.
  */
-export async function clearAllTraceData(demoIds: string[]): Promise<ClearAllResult> {
-  const phoenix = await fetch("/oob/phoenix", { method: "DELETE" })
+export async function clearAllTraceData(
+  demoIds: string[],
+  scope?: { appId: string; project: string },
+): Promise<ClearAllResult> {
+  // Scoped when an application is given, deployment-wide when it is not.
+  // Every store is scoped by the key IT uses — Phoenix and the span store by
+  // project, eval-engine by app_id, the decision log by demo — which is the
+  // three-keys problem the isolation design records; until they are
+  // reconciled, the caller has to supply both.
+  const q = (k: string, v: string) => (scope ? `?${k}=${encodeURIComponent(v)}` : "");
+  const phoenix = await fetch(`/oob/phoenix${q("project", scope?.project ?? "")}`, { method: "DELETE" })
     .catch((e) => ({ ok: false, status: 0, statusText: String(e) } as Response));
+  const demos = scope ? [scope.appId] : demoIds;
   await Promise.all([
-    fetch("/oob/spans", { method: "DELETE" }),
-    fetch("/eval/verdicts", { method: "DELETE" }),
-    ...demoIds.map((id) => fetch(`/api/decisions?demo=${encodeURIComponent(id)}`, { method: "DELETE" })),
+    fetch(`/oob/spans${q("project", scope?.project ?? "")}`, { method: "DELETE" }),
+    fetch(`/eval/verdicts${q("app", scope?.appId ?? "")}`, { method: "DELETE" }),
+    ...demos.map((id) => fetch(`/api/decisions?demo=${encodeURIComponent(id)}`, { method: "DELETE" })),
   ]);
   return {
     ok: phoenix.ok,

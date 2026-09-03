@@ -753,10 +753,36 @@ def verdict_rows_for_report(since: int = 0, cap: int = 20000) -> tuple[list[dict
     return data[: int(cap)], truncated
 
 
-def truncate() -> None:
-    client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.eval_verdicts")
-    client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.eval_conformance_tags")
-    client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.eval_evaluated_sessions")
+def truncate(app: str = "") -> None:
+    """Clear this service's tables — for ONE application, or all of them.
+
+    `app` empty means every application, which is what this always did and
+    remains the right answer for a single-application deployment. But a caller
+    that knows which application it is looking at should say so: every READ is
+    now app-scoped, and a delete that is not would destroy other applications'
+    evidence from a surface labelled with one — the same mislabelling the reads
+    just stopped doing, except irreversible.
+
+    TRUNCATE is kept for the all-applications case because it is instant. A
+    scoped clear has to be an ALTER ... DELETE mutation, which is slower and
+    asynchronous; `mutations_sync=2` waits for it so a caller that clears and
+    immediately re-reads does not see the rows it just deleted.
+
+    Rows with an empty app_id are UNATTRIBUTED (written before the column
+    existed, or by a session whose spans had aged out). A scoped clear leaves
+    them alone rather than sweeping them in — they might belong to any
+    application, and guessing would delete another one's evidence.
+    """
+    tables = ("eval_verdicts", "eval_conformance_tags", "eval_evaluated_sessions")
+    if not app:
+        for t in tables:
+            client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.{t}")
+        return
+    for t in tables:
+        client().command(
+            f"ALTER TABLE {config.CLICKHOUSE_DB}.{t} DELETE WHERE app_id = %(app)s",
+            parameters={"app": app}, settings={"mutations_sync": 2},
+        )
 
 
 def totals(since: int = 0, app: str = "") -> dict[str, Any]:

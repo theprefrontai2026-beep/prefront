@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyLink from "./CopyLink";
 import { setParams, useLoc } from "../lib/router";
 import { navTo, obsViewHref, onTab, sessionHref, traceHref } from "../routes";
-import { CLEAR_ALL_CONFIRM, clearAllTraceData, getChecks, type CheckInfo } from "../api";
+import { clearConfirm, clearAllTraceData, getChecks, type CheckInfo } from "../api";
 import { DEMOS, type DemoConfig } from "../demos";
 
 /* ── types (mirror oobingest/ch.py) ─────────────────────────────────────── */
@@ -1238,8 +1238,9 @@ function LlmView({ data, onOpenTrace }: { data: LlmView | null; onOpenTrace: (id
 
 /* ── Ingestion ──────────────────────────────────────────────────────────── */
 
-function IngestionView({ status, scenarios, onSync, onClear, busy }: {
-  status: Status | null; scenarios: Scenario[]; onSync: () => void; onClear: () => void; busy: boolean;
+function IngestionView({ status, scenarios, onSync, onClear, busy, appLabel }: {
+  status: Status | null; scenarios: Scenario[]; onSync: () => void;
+  onClear: (everything?: boolean) => void; busy: boolean; appLabel: string;
 }) {
   if (!status) return <Empty text="Loading…" />;
   const ch = status.clickhouse, px = status.phoenix, ot = status.otlp;
@@ -1295,7 +1296,18 @@ function IngestionView({ status, scenarios, onSync, onClear, busy }: {
           <h3>Scenario coverage</h3>
           <div className="pf-oob-actions">
             <button className="pf-btn sm" onClick={onSync} disabled={busy}>Sync from Phoenix now</button>
-            <button className="pf-btn sm reject" onClick={onClear} disabled={busy} title="Phoenix projects, every ClickHouse table (spans, findings, conformance) and the governed decision log. The lifetime counters behind /api/stats are cumulative by design and survive.">Clear all trace data</button>
+            {/* Two buttons, not one with a mode: the destructive blast radius
+                differs, so it is named in the label rather than hidden behind
+                a toggle someone can misread. */}
+            <button className="pf-btn sm reject" onClick={() => onClear(false)} disabled={busy}
+                    title={`This application's Phoenix project, spans, verdicts, conformance tags and governed decision log. Other applications are untouched, as are the cumulative counters behind /api/stats.`}>
+              Clear {appLabel} trace data
+            </button>
+            <button className="pf-btn sm reject" onClick={() => onClear(true)} disabled={busy}
+                    style={{ marginLeft: 8, opacity: 0.75 }}
+                    title="EVERY application's Phoenix projects, spans, verdicts and decision logs. The lifetime counters behind /api/stats are cumulative by design and survive.">
+              Clear all applications
+            </button>
           </div>
         </div>
         {scenarios.length ? (
@@ -1384,15 +1396,24 @@ export default function Observability({ active = true, demo }: { active?: boolea
     setBusy(true);
     try { await fetch("/oob/sync", { method: "POST" }); refresh(); } finally { setBusy(false); }
   };
-  const clear = async () => {
+  const clear = async (everything = false) => {
     // The sequence (and why Phoenix goes first) lives in api.ts's
     // clearAllTraceData - shared with Decision Traces' own button so the two
     // cannot drift into clearing different things. It also now clears the
     // governed decision log, which this button used to leave behind.
-    if (!window.confirm(CLEAR_ALL_CONFIRM)) return;
+    //
+    // Default is THIS application only. The all-applications form is still
+    // reachable, but it has to be asked for: this page is labelled with one
+    // application, and a button on it that silently destroyed every other
+    // application's evidence was the one piece of mislabelling that could not
+    // be corrected on the next render.
+    if (!window.confirm(clearConfirm(demo.label, everything))) return;
     setBusy(true);
     try {
-      const res = await clearAllTraceData(DEMOS.map((d) => d.id));
+      const res = await clearAllTraceData(
+        DEMOS.map((d) => d.id),
+        everything ? undefined : { appId: demo.id, project: demo.phoenixProject },
+      );
       if (!res.ok) setErr(`Everything else cleared, but the Phoenix purge failed (${res.phoenixError}) — its traces will be re-pulled on the next poll.`);
       // The trace we were looking at no longer exists — drop it from the URL.
       if (openTrace) navTo(obsViewHref("traces"), { replace: true });
@@ -1430,7 +1451,7 @@ export default function Observability({ active = true, demo }: { active?: boolea
       {view === "sessions" && <SessionsView since={since} project={project} facets={facets} refreshKey={tick} initialSession={openSess} onOpenSession={goSession} />}
       {view === "traces" && <TracesView since={since} project={project} facets={facets} refreshKey={tick} initialTrace={openTrace} onOpenTrace={goTrace} />}
       {view === "llm" && <LlmView data={llm} onOpenTrace={goTrace} />}
-      {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} />}
+      {view === "ingestion" && <IngestionView status={status} scenarios={scenarios} onSync={sync} onClear={clear} busy={busy} appLabel={demo.label} />}
     </div>
   );
 }

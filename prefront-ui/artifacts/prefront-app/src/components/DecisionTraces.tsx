@@ -18,7 +18,7 @@ import { DEMOS, type DemoConfig } from "../demos";
 import { SessionFlyout, parseSource, type EvalVerdict } from "./Observability";
 import { severityOf, SEVERITY_META, SEVERITY_ORDER, type SeverityLevel, type SeverityRule } from "../severity";
 import { useSeverityRules } from "../hooks/useSeverityRules";
-import { CLEAR_ALL_CONFIRM, clearAllTraceData } from "../api";
+import { clearConfirm, clearAllTraceData } from "../api";
 
 const DECISIONS: FeedDecision[] = ["ALLOWED", "MASKED", "APPROVAL", "BLOCKED"];
 
@@ -221,8 +221,9 @@ function useLinkedFinding(
     : { sessionId, spanId, eventId, detail: "", source: "", status: "", verdict: null };
 }
 
-function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true, app }: {
-  initialEffect?: string; initialSeverity?: string; rules: SeverityRule[]; active?: boolean; app: string;
+function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true, app, project, appLabel }: {
+  initialEffect?: string; initialSeverity?: string; rules: SeverityRule[]; active?: boolean;
+  app: string; project: string; appLabel: string;
 }) {
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -291,12 +292,15 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
     }
   }, [app]);
 
+  // Scoped to THIS application, matching Observability's button. This page is
+  // labelled with one application; a clear on it that took out every other
+  // application's evidence was mislabelling that could not be undone.
   const clearData = useCallback(async () => {
-    if (!window.confirm(CLEAR_ALL_CONFIRM)) return;
+    if (!window.confirm(clearConfirm(appLabel, false))) return;
     setClearing(true);
     setClearError("");
     try {
-      const res = await clearAllTraceData(DEMOS.map((demo) => demo.id));
+      const res = await clearAllTraceData(DEMOS.map((demo) => demo.id), { appId: app, project });
       if (!res.ok) {
         setClearError(`Everything else cleared, but the Phoenix purge failed (${res.phoenixError}) — its traces will be re-pulled on the next poll.`);
       }
@@ -307,7 +311,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
     } catch (e: any) {
       setClearError(String(e?.message || e));
     } finally { setClearing(false); }
-  }, [load]);
+  }, [load, app, project, appLabel]);
 
   // Re-fetch whenever the tab becomes visible again, not just on mount.
   // App.tsx keeps every tab MOUNTED and toggles `tab-hidden` (so tab state
@@ -767,7 +771,7 @@ export default function DecisionTraces({ active = true, demo, section: controlle
           Findings
         </button>
       </div>
-      {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} app={demo.id} />}
+      {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} app={demo.id} project={demo.phoenixProject} appLabel={demo.label} />}
       {section === "decisions" && <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">

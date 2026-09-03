@@ -98,8 +98,9 @@ def retention_facts() -> dict[str, str]:
     return out
 
 
-def truncate() -> None:
-    ch.truncate()
+def truncate(app: str = "") -> None:
+    """Clear the eval tables for one application, or all of them when empty."""
+    ch.truncate(app)
 
 
 # --- check enablement (evalengine.checks) -----------------------------------

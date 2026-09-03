@@ -83,7 +83,7 @@ class PhoenixPoller:
     def wake(self) -> None:
         self._wake.set()
 
-    async def purge(self) -> dict[str, Any]:
+    async def purge(self, project: str = "") -> dict[str, Any]:
         """Delete every Phoenix project this poller reads (all but Phoenix's own
         `default`) - `DELETE /v1/projects/{id}` drops the project and every
         trace in it; Phoenix recreates a project on the next span it receives
@@ -102,19 +102,33 @@ class PhoenixPoller:
                 for p in r.json().get("data", []):
                     if not p.get("id") or p.get("name") == "default":
                         continue
+                    # Scoped purge: one application's project only. Without
+                    # this, "clear this application" would delete every other
+                    # application's source traces too — and Phoenix, unlike
+                    # ClickHouse, is where they cannot be recovered from.
+                    if project and p.get("name") != project:
+                        continue
                     d = await http.delete(f"/v1/projects/{p['id']}")
                     if d.status_code in (200, 204):
                         deleted.append(p["name"])
                     else:
                         log.warning("phoenix purge: delete %s -> %s %s", p.get("name"), d.status_code, d.text[:200])
-            self.watermarks.clear()
-            self._seen.clear()
-            self._dropped.clear()
-            self._pending.clear()
-            self._alias.clear()
-            self.projects = []
-        log.info("phoenix purge: deleted projects %s", deleted)
-        return {"enabled": True, "deleted": deleted}
+            if project:
+                # Reset only what belongs to the purged project. Clearing the
+                # whole seen-set would make the poller re-ingest every OTHER
+                # project's spans on the next poll — re-creating rows the
+                # caller did not ask to touch, under a fresh ingested_at.
+                self.watermarks.pop(project, None)
+                self.projects = [p for p in self.projects if p != project]
+            else:
+                self.watermarks.clear()
+                self._seen.clear()
+                self._dropped.clear()
+                self._pending.clear()
+                self._alias.clear()
+                self.projects = []
+        log.info("phoenix purge: deleted projects %s (scope=%s)", deleted, project or "all")
+        return {"enabled": True, "deleted": deleted, "project": project or None}
 
     async def _loop(self) -> None:
         while True:

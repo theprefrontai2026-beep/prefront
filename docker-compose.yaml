@@ -227,6 +227,16 @@ services:
       # Framework packs are bundled; a directory here adds/replaces them.
       EVAL_COMPLIANCE_OVERLAY_PATH: ${EVAL_COMPLIANCE_OVERLAY_PATH:-}
       EVAL_FRAMEWORK_PACKS_DIR: ${EVAL_FRAMEWORK_PACKS_DIR:-}
+      # Per-application configuration (application_isolation_design.md Phase 3):
+      # a registry naming each subject application's OWN rule pack, catalog,
+      # overlay and disabled checks. EMPTY = single-tenant, and every
+      # application is evaluated against the EVAL_*_PATH artifacts above —
+      # byte-identical to the behaviour before the registry existed. The file
+      # is deployment vocabulary, so it lives with a demo, not here.
+      EVAL_APPLICATIONS_PATH: ${EVAL_APPLICATIONS_PATH:-}
+      # Translate a Phoenix project name to an application id when a deployment
+      # names them differently. Identity by default.
+      EVAL_PROJECT_APP_MAP: ${EVAL_PROJECT_APP_MAP:-}
       # Retention (TTL) on this service's eval_* tables; 0 = none. Pair with
       # OOB_RETENTION_DAYS on oob-ingest.
       EVAL_RETENTION_DAYS: ${EVAL_RETENTION_DAYS:-0}

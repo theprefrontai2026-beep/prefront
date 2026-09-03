@@ -672,6 +672,26 @@ def totals(project: str = "") -> dict[str, Any]:
     """, params)
 
 
-def truncate() -> None:
-    client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.spans")
-    client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.ingest_state")
+def truncate(project: str = "") -> None:
+    """Clear the span store — for ONE Phoenix project, or all of them.
+
+    `project` empty is the historical behaviour: TRUNCATE both tables, instant.
+    A scoped clear deletes only that project's spans, as an ALTER ... DELETE
+    mutation (`mutations_sync=2` so a caller that clears and re-reads does not
+    see what it just deleted), and deliberately LEAVES `ingest_state` alone:
+    those are per-project poll watermarks, and resetting another project's
+    would make the poller re-read spans it has already ingested. Only the
+    cleared project's watermark is removed, so its traces can be re-pulled.
+    """
+    if not project:
+        client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.spans")
+        client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.ingest_state")
+        return
+    client().command(
+        f"ALTER TABLE {config.CLICKHOUSE_DB}.spans DELETE WHERE project = %(p)s",
+        parameters={"p": project}, settings={"mutations_sync": 2},
+    )
+    client().command(
+        f"ALTER TABLE {config.CLICKHOUSE_DB}.ingest_state DELETE WHERE key LIKE %(k)s",
+        parameters={"k": f"phoenix:{project}:%"}, settings={"mutations_sync": 2},
+    )

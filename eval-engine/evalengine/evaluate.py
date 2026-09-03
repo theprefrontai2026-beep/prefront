@@ -23,6 +23,7 @@ from .family3 import population as population_checks
 from .family3.catalog import IntentCatalog
 from .provenance import build as build_provenance
 from .reconstruct import reconstruct
+from .applications import Registry
 from .visibility import VisibilityProfile
 
 
@@ -90,8 +91,30 @@ def evaluate_session(session_id: str, binding: BindingProfile, visibility: Visib
 
 def evaluate_and_persist(session_id: str, binding: BindingProfile, visibility: VisibilityProfile,
                          rule_pack: RulePack, catalog: IntentCatalog, force: bool = False,
-                         settings: CheckSettings | None = None) -> dict:
+                         settings: CheckSettings | None = None,
+                         apps: "Registry | None" = None) -> dict:
+    """Evaluate one session and persist its verdicts.
+
+    The four artifacts are the DEPLOYMENT-wide defaults. When `apps` is given
+    and the session's application registers its own, those replace them — so
+    each application is evaluated against its own rule pack and catalog
+    (application_isolation_design.md Phase 3), and the version key differs per
+    application for free, because it already composes those artifacts' own
+    versions.
+
+    The application is resolved BEFORE the already-evaluated check, since the
+    key depends on which artifacts apply.
+    """
     settings = settings if settings is not None else checks_mod.current()
+    # Resolved once, up front: the same value has to key the dedup check, the
+    # verdicts, the tags and the evaluated marker, and resolving it more than
+    # once could disagree if spans arrived in between.
+    app_id = store.session_app(session_id)
+    if apps is not None:
+        cfg = apps.for_app(app_id)
+        binding, visibility = cfg.binding, cfg.visibility
+        rule_pack, catalog = cfg.rule_pack, cfg.catalog
+        settings = cfg.settings(settings)
     vkey = version_key(binding, visibility, rule_pack, catalog, settings)
     if not force and store.is_evaluated(session_id, vkey):
         return {"session_id": session_id, "skipped": True, "reason": "already evaluated at this version"}
@@ -102,16 +125,6 @@ def evaluate_and_persist(session_id: str, binding: BindingProfile, visibility: V
         # mark_evaluated: that would permanently skip a session that was
         # simply not ready yet, since nothing else ever retries it.
         return {"session_id": session_id, "skipped": True, "reason": "no spans ingested yet"}
-    # Which application this session belongs to, resolved from its own spans'
-    # Phoenix project (application_isolation_design.md). Read here rather than
-    # inside persist() so the verdicts, the conformance tags and the evaluated
-    # marker all carry the SAME value — resolving it three times could disagree
-    # if spans arrived in between.
-    #
-    # It is deliberately NOT part of the version key: an application id
-    # describes WHOSE session this is, not how it was evaluated, so learning it
-    # must not invalidate an existing evaluation.
-    app_id = store.session_app(session_id)
     findings = evaluate_session(session_id, binding, visibility, rule_pack, catalog, spans, settings)
     counts = store.persist(findings, app_id)
     store.mark_evaluated(session_id, vkey, app_id)

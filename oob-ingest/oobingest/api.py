@@ -156,20 +156,42 @@ async def sync_now(relabel: bool = True):
 
 
 @app.delete("/oob/spans")
-async def clear():
-    await asyncio.to_thread(ch.truncate)
-    poller.watermarks.clear()
-    return {"ok": True}
+async def clear(project: str = ProjectQ):
+    """Clear ingested spans — for ONE application's Phoenix project, or all.
+
+    Every read here is project-scoped; a delete that is not would destroy other
+    applications' traces from a surface labelled with one. Empty `project`
+    keeps the old all-applications behaviour for callers that mean it.
+
+    Only the cleared project's watermark is dropped. Clearing every project's
+    would make the poller re-pull traces it has already ingested for
+    applications the caller never asked to touch.
+    """
+    await asyncio.to_thread(ch.truncate, project)
+    if project:
+        poller.watermarks.pop(project, None)
+    else:
+        poller.watermarks.clear()
+    return {"ok": True, "project": project or None,
+            "scope": "application" if project else "deployment"}
 
 
 @app.delete("/oob/phoenix")
-async def clear_phoenix():
-    """Delete the traces Phoenix itself holds (every project but `default`) and
-    reset the poller. Without this, DELETE /oob/spans is only a pause: the next
-    poll re-pulls everything from Phoenix and eval-engine re-evaluates it. The
-    UI's "Clear ClickHouse" calls this FIRST, then the ClickHouse truncates."""
+async def clear_phoenix(project: str = ProjectQ):
+    """Delete the traces Phoenix itself holds and reset the poller.
+
+    Without this, DELETE /oob/spans is only a pause: the next poll re-pulls
+    everything from Phoenix and eval-engine re-evaluates it. The UI calls this
+    FIRST, then the ClickHouse clears.
+
+    `project` deletes ONE application's Phoenix project; empty deletes every
+    project but Phoenix's own `default`, which is what this always did. The
+    scoped form is what makes "clear this application" honest end to end —
+    without it the span clear is scoped but the Phoenix purge behind it is not,
+    so clearing one application would still destroy every other's source data.
+    """
     try:
-        return await poller.purge()
+        return await poller.purge(project)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"phoenix purge failed: {type(e).__name__}: {e}")
 

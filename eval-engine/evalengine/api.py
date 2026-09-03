@@ -17,6 +17,7 @@ from . import checks as checks_mod
 from . import compliance as compliance_mod
 from . import config, evaluate, store, visibility as visibility_mod
 from .family1 import compilepack as rulepack_mod
+from . import applications
 from .family3 import catalog as catalog_mod
 from .worker import Worker
 
@@ -59,7 +60,17 @@ _rule_pack = _load_artifact("EVAL_RULE_PACK_PATH", config.RULE_PACK_PATH, rulepa
 _catalog = _load_artifact("EVAL_INTENT_CATALOG_PATH", config.INTENT_CATALOG_PATH, catalog_mod.load)
 _packs = compliance_mod.load_packs(config.FRAMEWORK_PACKS_DIR)
 _overlay = _load_artifact("EVAL_COMPLIANCE_OVERLAY_PATH", config.COMPLIANCE_OVERLAY_PATH, compliance_mod.load_overlay)
-worker = Worker(_binding, _visibility, _rule_pack, _catalog)
+# Per-application configuration (Phase 3). The deployment-wide artifacts above
+# become the DEFAULTS every application inherits when the registry is
+# unconfigured or does not mention it — so an unset EVAL_APPLICATIONS_PATH is
+# byte-identical to the single-tenant behaviour that predates this.
+_default_app = applications.AppConfig(
+    app_id="", binding=_binding, visibility=_visibility,
+    rule_pack=_rule_pack, catalog=_catalog, overlay=_overlay,
+)
+_apps = _load_artifact("EVAL_APPLICATIONS_PATH", config.APPLICATIONS_PATH,
+                       lambda p: applications.Registry(_default_app, p))
+worker = Worker(_binding, _visibility, _rule_pack, _catalog, _apps)
 _started_at = datetime.now(timezone.utc)
 
 
@@ -126,15 +137,22 @@ async def health():
 async def status(since: int = 0, app: str = AppQ):
     ok = await asyncio.to_thread(store.ch.ping)
     totals = await asyncio.to_thread(store.totals, since, app) if ok else {}
+    _cfg = _apps.for_app(app)
     return {
         "clickhouse": {"ok": ok, "url": config.CLICKHOUSE_URL, "database": config.CLICKHOUSE_DB, **totals},
         "worker": worker.status(),
+        # Profiles are reported for the REQUESTED application, not the
+        # deployment. Without this an application with no artifacts of its own
+        # still showed another application's rule count as if it were its own —
+        # the same mislabelling the data-side scoping fixed, one level up.
+        "application": {"id": app, "registered": _apps.registered(app) if app else None,
+                        "registry_configured": _apps.configured},
         "profiles": {
-            "trace_binding": {"path": config.TRACE_BINDING_PATH or "(bundled default)", "version": _binding.version},
-            "visibility": {"path": config.VISIBILITY_PROFILE_PATH or "(bundled default)", "version": _visibility.version},
-            "rule_pack": {"path": config.RULE_PACK_PATH or "(not configured)", "rule_count": len(_rule_pack.rules)},
+            "trace_binding": {"path": config.TRACE_BINDING_PATH or "(bundled default)", "version": _cfg.binding.version},
+            "visibility": {"path": config.VISIBILITY_PROFILE_PATH or "(bundled default)", "version": _cfg.visibility.version},
+            "rule_pack": {"path": config.RULE_PACK_PATH or "(not configured)", "rule_count": len(_cfg.rule_pack.rules)},
             "intent_catalog": {"path": config.INTENT_CATALOG_PATH or "(not configured)",
-                              "intent_count": len(_catalog.intents)},
+                              "intent_count": len(_cfg.catalog.intents)},
             "compliance_overlay": {"path": config.COMPLIANCE_OVERLAY_PATH or "(not configured)",
                                    "configured": _overlay.configured, "deployment": _overlay.deployment,
                                    "frameworks": list(_overlay.frameworks),
@@ -248,7 +266,12 @@ async def run(session_id: str, force: bool = False):
         raise HTTPException(status_code=404, detail="session not found (no spans)")
     result = await asyncio.to_thread(
         evaluate.evaluate_and_persist, session_id, _binding, _visibility, _rule_pack, _catalog, force,
-        checks_mod.current()
+        # The registry, same as the worker passes. Without it this route
+        # evaluates against the DEPLOYMENT defaults while the worker uses the
+        # application's own artifacts — two code paths producing different
+        # version keys for the same session, which is exactly the divergence
+        # Hard Rule 12 ("one code path") exists to prevent.
+        checks_mod.current(), _apps
     )
     return result
 
@@ -356,6 +379,17 @@ async def reset_checks():
 
 
 @app.delete("/eval/verdicts")
-async def clear():
-    await asyncio.to_thread(store.truncate)
-    return {"ok": True}
+async def clear(app: str = AppQ):
+    """Clear verdicts, conformance tags and evaluated-session markers.
+
+    `app` clears ONE application's; empty clears every application's. The
+    parameter exists because every read on this service is app-scoped now, and
+    a delete that is not would destroy other applications' evidence from a
+    surface labelled with one — mislabelling, but irreversible. Callers that
+    genuinely mean "everything" pass nothing and get the old behaviour.
+
+    Unattributed rows (empty app_id) are left alone by a scoped clear: they may
+    belong to any application, and guessing would delete another's evidence.
+    """
+    await asyncio.to_thread(store.truncate, app)
+    return {"ok": True, "app": app or None, "scope": "application" if app else "deployment"}
