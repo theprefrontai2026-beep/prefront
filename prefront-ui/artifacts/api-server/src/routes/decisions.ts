@@ -241,7 +241,15 @@ function normalizeDecision(g: any): DecisionLabel {
   const o = String(g?.outcome || g?.status || "").toUpperCase();
   if (o.startsWith("BLOCK")) return "BLOCKED";
   if (o.startsWith("APPROVAL") || o.includes("APPROVAL_REQUIRED")) return "APPROVAL";
+  // Masking is the ONE outcome that may not be named in the outcome string.
+  // One orchestrator reports it inline ("ALLOW (masked)"); another reports the
+  // runtime's own verdict, `allowed`, and carries the masked field names
+  // beside it — which is what the runtime actually returns. Reading only the
+  // string filed a call that withheld ssn, tax_id, bank_account_hint and
+  // credit_score under ALLOWED, so the log showed "0 MASKED" on the very row
+  // that exists to show masking.
   if (o.includes("MASK")) return "MASKED";
+  if (Array.isArray(g?.masked_fields) && g.masked_fields.length > 0) return "MASKED";
   return "ALLOWED";
 }
 
