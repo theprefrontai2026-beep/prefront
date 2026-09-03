@@ -1,0 +1,136 @@
+# SecureBank's Family 3 artifact — the approved-intent catalog eval-engine's
+# intent-conformance checks evaluate a call against (autonomous_build.md
+# §3.5). Read INLINE by securebank-mcp via PREFRONT_INTENT_CATALOG_PATH; the
+# four single-call-safe checks in family3/call.py run pre-execution on every
+# governed call (catalog_membership, entitlement, version_conformance,
+# side_effect_class — see eval-engine/CLAUDE.md § "Phase D / step 18").
+#
+# Hand-authored, like LoanPro's, and for the same reason: SecureBank's policy
+# ("SecureBank BRD") was never run through the skill-builder pipeline, so
+# there is no generated catalog to derive this from. Every entry is
+# transcribed from the two artifacts that ARE authoritative here —
+# policy/query_templates.yaml (tool name, params, returned columns) and
+# policy/policy.yaml (allowed_roles) — so it must be updated with them.
+#
+# Two properties this file depends on, both load-bearing:
+#
+#   * A tool's MCP name is its `intent_id` (server.py:80), so `intent` and
+#     `tool_name` are the same string for every SecureBank template.
+#   * catalog_membership BLOCKS an intent that is absent from this file
+#     (family3/call.py:23). An empty catalog short-circuits to allow
+#     (inline_checks.evaluate_pre_execution:171), but a PARTIAL one blocks
+#     whatever it omits — so all eight published intents are listed, and a
+#     newly published template must be added here in the same change.
+#
+# `allowed_callers.channels` is deliberately empty throughout. SecureBank's
+# IDENTITY_QUERY resolves user_id/name/email/role and carries no channel, so
+# the caller's channel is always "" — which family3/call.py:45 treats as a
+# data gap that passes, never as a violation. Declaring channels here would
+# be asserting a distinction this deployment cannot observe.
+intent_catalog:
+  version: 1
+  policy_document: SecureBank BRD
+  intents:
+    - intent: view_accounts
+      tool_name: view_accounts
+      params: []
+      side_effect: read
+      allowed_callers:
+        roles: [Account Holder, Bank Teller, Bank Manager]
+        channels: []
+      fields: [account_id, account_type, balance, status]
+      # An Account Holder's own accounts only; enforced natively by
+      # view_account_owner_only, declared here so the scope is visible to
+      # Family 3's filter checks as well.
+      mandatory_filters: ["user_id = caller"]
+      expected_volume: {rows_p99: 10}
+      policy: ["Stakeholders — Account Holder"]
+
+    - intent: view_account
+      tool_name: view_account
+      params: [account_id]
+      side_effect: read
+      allowed_callers:
+        roles: [Account Holder, Bank Teller, Bank Manager]
+        channels: []
+      # A precheck template: its SELECT feeds the decision rather than the
+      # caller, so it declares no result columns of its own (see
+      # query_templates.yaml). `fields` stays empty rather than guessed —
+      # family3/scope.py:_field_scope returns None on an empty approved set,
+      # so this degrades to no verdict instead of flagging every column.
+      fields: []
+      mandatory_filters: ["user_id = caller"]
+      expected_volume: {rows_p99: 1}
+      policy: ["Stakeholders — Account Holder"]
+
+    - intent: view_user
+      tool_name: view_user
+      params: [name_query]
+      side_effect: read
+      allowed_callers:
+        roles: [Bank Teller, Bank Manager]
+        channels: []
+      fields: [ssn]
+      restricted_fields: [ssn]
+      expected_volume: {rows_p99: 5}
+      policy: ["FR-USER-1", "FR-ACCT-3"]
+
+    - intent: view_users
+      tool_name: view_users
+      params: []
+      side_effect: read
+      allowed_callers:
+        roles: [Bank Teller, Bank Manager]
+        channels: []
+      fields: [ssn]
+      restricted_fields: [ssn]
+      expected_volume: {rows_p99: 25}
+      policy: ["FR-USER-1", "FR-ACCT-3"]
+
+    - intent: initiate_transfer
+      tool_name: initiate_transfer
+      params: [account_id, amount, counterparty_account]
+      side_effect: write
+      allowed_callers:
+        roles: [Account Holder, Bank Teller, Bank Manager]
+        channels: []
+      fields: []
+      # FR-TXN-3's Bank Manager approval above the threshold is enforced
+      # natively by transfer_requires_approval; recorded here as the
+      # obligation that closes this intent.
+      closing_obligation: manager_approval_above_threshold
+      expected_volume: {rows_p99: 1}
+      policy: ["FR-TXN-3", "FR-TXN-4", "BO-6"]
+
+    - intent: view_account_activity
+      tool_name: view_account_activity
+      params: [account_id]
+      side_effect: read
+      allowed_callers:
+        roles: [Bank Teller, Bank Manager]
+        channels: []
+      fields: [account_id, recent_transfer_out_count, recent_transfer_out_total, largest_transfer_out]
+      expected_volume: {rows_p99: 1}
+      policy: ["FR-TXN-4"]
+
+    - intent: view_loan_context
+      tool_name: view_loan_context
+      params: [loan_id]
+      side_effect: read
+      allowed_callers:
+        roles: [Bank Manager]
+        channels: []
+      fields: [loan_id, applicant_name, amount, credit_score, risk_rating, status, score_margin]
+      expected_volume: {rows_p99: 1}
+      policy: ["FR-LOAN-3"]
+
+    - intent: decide_loan
+      tool_name: decide_loan
+      params: [loan_id, decision]
+      side_effect: write
+      allowed_callers:
+        roles: [Bank Manager]
+        channels: []
+      fields: []
+      expected_volume: {rows_p99: 1}
+      policy: ["FR-LOAN-3"]

@@ -1,0 +1,53 @@
+# SecureBank's Family 1 artifact — the compiled rule pack eval-engine's
+# content engine evaluates against. Read INLINE by securebank-mcp via
+# PREFRONT_RULE_PACK_PATH; field_restriction runs POST-execution and its hits
+# are unioned into the response's masked_fields (server.py's
+# inline_post_masked). Hand-authored, like LoanPro's — SecureBank's policy
+# ("SecureBank BRD") was never run through the skill-builder pipeline, so
+# there is no compiled pack to derive this from.
+#
+# CONTENT RULES ONLY, deliberately. The other two Family 1 engines are not
+# wired into the inline path: family1/predicate.py and family1/temporal.py
+# would run in PARALLEL with the native governance/rules.py pipeline that
+# policy.yaml already drives, and the two rule representations are kept as
+# separate lowerings of the same approved policy (eval-engine/CLAUDE.md
+# § "Phase D / step 18"). Everything SecureBank enforces as a gate —
+# ownership, role restrictions, the transfer threshold and ceiling — lives in
+# policy.yaml and is enforced there. This file adds only what the native
+# pipeline has no equivalent for: field-level content restriction applied to
+# a result the deployment's own templates return raw.
+rule_pack:
+  version: 1
+  source_skill: securebank_brd
+  source_skill_version: "1"
+  rules:
+    - rule_id: R-SSN-MANAGER-ONLY
+      engine: content
+      check: field_restriction
+      effect: block
+      # The complement of policy.yaml's ssn_manager_only mask rule: named
+      # here as the roles the restriction BINDS, which is how
+      # content.py:_rule_binds_role reads it. Listing the restricted roles
+      # rather than the entitled one matters — a rule with no
+      # restricted_from_roles binds every role, so omitting this would mask
+      # the field from the Bank Manager the BRD entitles to see it.
+      restricted_from_roles: [Account Holder, Bank Teller]
+      # Both scopes. Unlike LoanPro — where the app is policy-blind, always
+      # returns the field raw, and a `result` detector would be a constant
+      # true — SecureBank's governed templates are the only path to this
+      # data, so a restricted role seeing `ssn` in a RESULT is itself the
+      # finding, not just an artifact of an ungoverned app.
+      detectors:
+        - field_names: [ssn]
+          scopes: [result, final_answer]
+      source:
+        document: "SecureBank BRD"
+        section: "FR-ACCT-3"
+        page: null
+        text: >
+          Sensitive field edits (interest rate, credit limit, SSN, credit
+          score, annual income) shall follow a maker-checker workflow
+          requiring Bank Manager approval before changes take effect. The
+          SSN field is visible to Bank Managers only; it is masked for all
+          other roles in system outputs, API responses and agent responses.
+  rejected: []

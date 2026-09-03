@@ -106,8 +106,23 @@ services:
       IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       DATABASE_URL: postgresql://securebank:securebank@securebank-db:5432/securebank
       POLICY_PATH: /artifacts/securebank-demo/policy.yaml
+      # Inline reuse of eval-engine's single-call-safe checks (step 18, see
+      # semanticmcp/governance/inline_checks.py). A DIRECT bind mount, not the
+      # artifacts named volume - that one is seeded once ("[ -f ] || cp") and
+      # then serves the stale copy forever, which is the documented staleness
+      # trap in the root CLAUDE.md. Same pattern loanpro-mcp uses.
+      #
+      # Setting these turns on family3/call.py pre-execution (catalog_membership,
+      # entitlement, version_conformance, side_effect_class) over
+      # intent_catalog.yaml, and family1/content.py post-execution
+      # (field_restriction) over rule_pack.yaml, folded into masked_fields.
+      # Both artifacts MUST list every published intent - a partial catalog
+      # blocks whatever it omits (family3/call.py:23).
+      PREFRONT_RULE_PACK_PATH: /securebank-policy/rule_pack.yaml
+      PREFRONT_INTENT_CATALOG_PATH: /securebank-policy/intent_catalog.yaml
     volumes:
       - artifacts:/artifacts:ro          # shared with the engine; read-only here
+      - ./policy:/securebank-policy:ro   # inline-check artifacts, read live
     ports: ["8100:8090"]                 # host 8100 (engine MCP owns 8090)
     depends_on:
       securebank-db: {condition: service_healthy}

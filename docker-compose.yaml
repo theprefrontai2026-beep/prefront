@@ -313,6 +313,19 @@ services:
       IDENTITY_QUERY: SELECT user_id, name, email, role FROM users WHERE email = :who
       ENABLE_WRITES: ${ENABLE_WRITES:-0}
       TRACE_PATH: /data/traces.jsonl
+      # Inline reuse of eval-engine's single-call-safe checks (step 18, see
+      # semanticmcp/governance/inline_checks.py). EMPTY by default and named
+      # by env only - unlike DATABASE_URL/POLICY_PATH above, this engine file
+      # does not point them at a demo. An artifact path is a DEPLOYMENT's
+      # vocabulary; the engine ships no default one, so both stay unset here
+      # and each demo wires its own (securebank-demo/, loanpro-demo/).
+      #
+      # Unset => family1/content + family3/call are no-ops and only Family 2's
+      # built-in parameter-side checks run (Hard Rule 9). A path that IS set
+      # but unreadable is a hard startup failure, never a silent degrade -
+      # see inline_checks.preload().
+      PREFRONT_RULE_PACK_PATH: ${PREFRONT_RULE_PACK_PATH:-}
+      PREFRONT_INTENT_CATALOG_PATH: ${PREFRONT_INTENT_CATALOG_PATH:-}
     volumes:
       - artifacts:/artifacts:ro
       - mcp_data:/data                # decision traces
