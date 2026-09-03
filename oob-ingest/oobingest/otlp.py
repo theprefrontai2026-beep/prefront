@@ -17,6 +17,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceResponse,
 )
 
+from . import config
 from .model import VERSION_OTLP, SpanRow, lift, parse_ts, stringify_attrs
 
 log = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ def decode(body: bytes, content_type: str, project: str) -> list[SpanRow]:
                     kind=str(attrs.get("openinference.span.kind", "")).upper(),
                     otel_kind=_OTEL_KINDS.get(int(kind), "INTERNAL"),
                     service=service,
-                    project=project,
+                    project=config.project_alias(project),
                     source="otlp",
                     start_time=start,
                     end_time=end,

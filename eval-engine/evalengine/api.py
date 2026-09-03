@@ -9,7 +9,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import binding as binding_mod
@@ -109,6 +109,13 @@ app = FastAPI(title="Prefront evaluation engine", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+# Scope reads to one subject application. See application_isolation_design.md:
+# an application is the unit of isolation, and until this existed every /eval/
+# read was deployment-wide — so a page labelled with one app counted every
+# other app's sessions under it.
+AppQ = Query(default="", description="Restrict to one subject application (its Phoenix project, or the id EVAL_PROJECT_APP_MAP translates it to). Empty = every application, which is the historical behaviour and correct for a single-app deployment.")
+
+
 @app.get("/eval/health")
 async def health():
     ok = await asyncio.to_thread(store.ch.ping)
@@ -116,9 +123,9 @@ async def health():
 
 
 @app.get("/eval/status")
-async def status(since: int = 0):
+async def status(since: int = 0, app: str = AppQ):
     ok = await asyncio.to_thread(store.ch.ping)
-    totals = await asyncio.to_thread(store.totals, since) if ok else {}
+    totals = await asyncio.to_thread(store.totals, since, app) if ok else {}
     return {
         "clickhouse": {"ok": ok, "url": config.CLICKHOUSE_URL, "database": config.CLICKHOUSE_DB, **totals},
         "worker": worker.status(),
@@ -145,14 +152,14 @@ async def status(since: int = 0):
 
 
 @app.get("/eval/coverage")
-async def coverage(since: int = 0):
+async def coverage(since: int = 0, app: str = AppQ):
     """Rule-pack coverage: which Family-1 rules have ever produced a verdict vs.
     which have never had matching traffic ("never hit"). Authoritative — counts
     over all verdicts server-side, not the capped UI slice. Degrades to
     configured=false / zero rules when no rule pack is loaded (Hard Rule 9).
     Optionally windowed to the last `since` seconds (never-hit within window)."""
     ok = await asyncio.to_thread(store.ch.ping)
-    counts = await asyncio.to_thread(store.rule_fire_counts, "family1", since) if ok else {}
+    counts = await asyncio.to_thread(store.rule_fire_counts, "family1", since, app) if ok else {}
     rules = [
         {"rule_id": r.rule_id, "check_id": r.check_id(), "engine": r.engine, "fired": counts.get(r.rule_id, 0)}
         for r in _rule_pack.rules
@@ -248,24 +255,26 @@ async def run(session_id: str, force: bool = False):
 
 @app.post("/eval/population")
 async def population(scenario_id: str = "", variant: str = "", baseline_variant: str = "",
-                     compare_variant: str = "", rule_id: str = ""):
+                     compare_variant: str = "", rule_id: str = "", app: str = AppQ):
     if not scenario_id and not rule_id:
         raise HTTPException(400, "supply scenario_id and/or rule_id")
     result = await asyncio.to_thread(
         evaluate.evaluate_population, scenario_id, variant, baseline_variant, compare_variant, rule_id,
-        _visibility, checks_mod.current()
+        _visibility, checks_mod.current(), app
     )
     return result
 
 
 @app.get("/eval/findings")
-async def findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0):
-    return await asyncio.to_thread(store.list_findings, check_id=check_id, family=family, limit=limit, offset=offset, since=since)
+async def findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0,
+                   app: str = AppQ):
+    return await asyncio.to_thread(store.list_findings, check_id=check_id, family=family, limit=limit,
+                                   offset=offset, since=since, app=app)
 
 
 @app.get("/eval/verdicts")
 async def verdicts(status: str = "", check_id: str = "", family: str = "", limit: int = 100, offset: int = 0,
-                   since: int = 0, include_disabled: bool = False):
+                   since: int = 0, include_disabled: bool = False, app: str = AppQ):
     """The unified feed: every verdict regardless of status (satisfied included),
     so a clean session shows up beside the violations, associated with the
     policy/rule it satisfied. `status` narrows to one outcome when set.
@@ -276,12 +285,13 @@ async def verdicts(status: str = "", check_id: str = "", family: str = "", limit
     Disabling a check has never DELETED anything; this is how a reader sees
     what the switch is hiding without having to turn the check back on."""
     return await asyncio.to_thread(store.list_feed, status=status, check_id=check_id, family=family,
-                                   limit=limit, offset=offset, since=since, include_disabled=include_disabled)
+                                   limit=limit, offset=offset, since=since,
+                                   include_disabled=include_disabled, app=app)
 
 
 @app.get("/eval/conformance")
-async def conformance(limit: int = 100, offset: int = 0, since: int = 0):
-    return await asyncio.to_thread(store.list_conformance, limit=limit, offset=offset, since=since)
+async def conformance(limit: int = 100, offset: int = 0, since: int = 0, app: str = AppQ):
+    return await asyncio.to_thread(store.list_conformance, limit=limit, offset=offset, since=since, app=app)
 
 
 @app.get("/eval/sessions/{session_id}/verdicts")

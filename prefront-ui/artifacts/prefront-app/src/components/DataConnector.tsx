@@ -94,11 +94,21 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
   const sqlInputRef = useRef<HTMLInputElement>(null);
 
   async function handleDisconnect() {
+    // The copy used to promise "the bundled demo baselines are kept". It sends
+    // keep_baselines:true, but the server resolves that to
+    // SEMANTICLAYER_KEEP_DATASOURCES, which defaults to EMPTY — so nothing is
+    // kept and EVERY published artifact dir is removed, demos included. That
+    // is not hypothetical: it wiped /artifacts/{example,loanpro-demo,
+    // securebank-demo} and took eval-engine down with it. A destructive
+    // confirmation that understates what it destroys is worse than no
+    // confirmation, so it now says what actually happens.
     if (!window.confirm(
       "Disconnect and forget everything?\n\n" +
       "This clears the connected datasource and its generated query templates " +
-      "on the server (the bundled demo baselines are kept), and " +
-      "clears the schema cached in this browser. This cannot be undone."
+      "on the server, and REMOVES EVERY PUBLISHED ARTIFACT DIRECTORY — including " +
+      "the bundled demos' — unless this deployment set SEMANTICLAYER_KEEP_DATASOURCES. " +
+      "Re-run each demo's seed job to restore them.\n\n" +
+      "It also clears the schema cached in this browser. This cannot be undone."
     )) return;
     setError(""); setStatus(""); setBusy(true);
     try {

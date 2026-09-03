@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
+from . import config
+
 # Source priority: a ReplacingMergeTree keeps the highest version, so a span
 # that arrives from BOTH sources resolves to the OTLP copy (it carries the real
 # resource attributes, e.g. service.name, which Phoenix's REST does not expose).
@@ -284,7 +286,7 @@ def from_phoenix(span: dict[str, Any], project: str) -> Optional[SpanRow]:
         kind=_s(span.get("span_kind")).upper(),
         otel_kind="",
         service=infer_service(name, attrs),
-        project=project,
+        project=config.project_alias(project),
         source="phoenix",
         start_time=parse_ts(span.get("start_time")),
         end_time=parse_ts(span.get("end_time") or span.get("start_time")),

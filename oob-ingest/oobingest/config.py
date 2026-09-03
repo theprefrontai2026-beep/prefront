@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import json as _json
 import os
 
 
@@ -19,6 +20,40 @@ CLICKHOUSE_DB = _env("CLICKHOUSE_DB", "prefront")
 PHOENIX_URL = _env("PHOENIX_URL", "http://phoenix:6006").rstrip("/")
 # Comma-separated Phoenix projects to tail; empty => every project Phoenix has.
 PHOENIX_PROJECTS = [p.strip() for p in _env("PHOENIX_PROJECTS").split(",") if p.strip()]
+# Rename a Phoenix project on the way IN, as a JSON object
+# (e.g. {"old-project": "new-project"}). The partition that separates one
+# subject application's traces from another's is the project
+# (application_isolation_design.md §5), so a project that has been RETIRED —
+# renamed when its services were partitioned — still sits in Phoenix and is
+# still polled, and its spans would keep arriving under the dead name. Worse,
+# they arrive as the SAME (trace_id, span_id) already stored under the new
+# name, so a ReplacingMergeTree resolves them back to the old project and
+# silently un-does the migration on every restart. Measured: 21 of 867 spans
+# reverted that way.
+#
+# Applied on both ingest paths, so a one-line alias fixes it permanently
+# instead of relabelling the table again after each restart. Config, never
+# code — the engine names no project (Hard Rule 1). A malformed value degrades
+# to no aliasing rather than stopping ingestion.
+def _json_env(name: str) -> dict[str, str]:
+    raw = _env(name, "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = _json.loads(raw)
+        return {str(k): str(v) for k, v in parsed.items()} if isinstance(parsed, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+PROJECT_ALIASES = _json_env("OOB_PROJECT_ALIASES")
+
+
+def project_alias(project: str) -> str:
+    """The canonical project name for `project` (identity if unmapped)."""
+    return PROJECT_ALIASES.get(project, project)
+
+
 PHOENIX_POLL_SECONDS = float(_env("PHOENIX_POLL_SECONDS", "5"))
 PHOENIX_PAGE_SIZE = int(_env("PHOENIX_PAGE_SIZE", "500"))
 # Re-read this far behind the watermark on every poll so late-arriving spans

@@ -18,9 +18,9 @@ def ensure_schema() -> None:
     ch.ensure_schema()
 
 
-def persist(findings: list[Finding]) -> dict[str, int]:
-    n_verdicts = ch.insert_verdicts(findings)
-    n_tags = ch.insert_conformance_tags(_derive_tags(findings))
+def persist(findings: list[Finding], app_id: str = "") -> dict[str, int]:
+    n_verdicts = ch.insert_verdicts(findings, app_id)
+    n_tags = ch.insert_conformance_tags(_derive_tags(findings), app_id)
     return {"verdicts": n_verdicts, "violations": len(_derive_violations(findings)), "conformance_tags": n_tags}
 
 
@@ -28,12 +28,17 @@ def is_evaluated(session_id: str, version_key: str) -> bool:
     return ch.is_evaluated(session_id, version_key)
 
 
-def mark_evaluated(session_id: str, version_key: str) -> None:
-    ch.mark_evaluated(session_id, version_key)
+def mark_evaluated(session_id: str, version_key: str, app_id: str = "") -> None:
+    ch.mark_evaluated(session_id, version_key, app_id)
 
 
 def session_spans(session_id: str) -> list[dict[str, Any]]:
     return ch.session_spans(session_id)
+
+
+def session_app(session_id: str) -> str:
+    """Which application this session belongs to ("" = unattributed)."""
+    return ch.session_app(session_id)
 
 
 def candidate_sessions(quiet_seconds: float, limit: int = 200) -> list[dict[str, Any]]:
@@ -44,12 +49,17 @@ def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
     return ch.session_shapes(scenario_id)
 
 
+def scenario_app(scenario_id: str) -> str:
+    """Which application a scenario's sessions belong to ("" if unknown)."""
+    return ch.scenario_app(scenario_id)
+
+
 def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> list[dict[str, Any]]:
     return ch.verdict_history(rule_id=rule_id, check_id=check_id, limit=limit)
 
 
-def rule_fire_counts(family: str = "family1", since: int = 0) -> dict[str, int]:
-    return ch.rule_fire_counts(family, since)
+def rule_fire_counts(family: str = "family1", since: int = 0, app: str = "") -> dict[str, int]:
+    return ch.rule_fire_counts(family, since, app)
 
 
 def list_verdicts(**kwargs) -> dict[str, Any]:
@@ -72,8 +82,8 @@ def list_conformance(**kwargs) -> dict[str, Any]:
     return ch.list_conformance(**kwargs)
 
 
-def totals(since: int = 0) -> dict[str, Any]:
-    return ch.totals(since)
+def totals(since: int = 0, app: str = "") -> dict[str, Any]:
+    return ch.totals(since, app)
 
 
 def verdict_rows_for_report(since: int = 0, cap: int = 20000) -> tuple[list[dict[str, Any]], bool]:

@@ -167,6 +167,14 @@ services:
       CLICKHOUSE_DB: prefront
       PHOENIX_URL: ${OOB_PHOENIX_URL:-http://phoenix:6006}
       PHOENIX_PROJECTS: ${OOB_PHOENIX_PROJECTS:-}      # empty = every Phoenix project
+      # Rename a RETIRED Phoenix project on ingest, as JSON. When services are
+      # partitioned per application, their old shared project stays in Phoenix
+      # and keeps being polled — re-delivering the SAME span ids under the dead
+      # name, which a ReplacingMergeTree then resolves back, undoing the
+      # migration on every restart. Empty unless a deployment has such a
+      # migration: the mapping is that deployment's vocabulary, not the
+      # engine's, so there is no default here.
+      OOB_PROJECT_ALIASES: ${OOB_PROJECT_ALIASES:-}
       PHOENIX_POLL_SECONDS: ${OOB_POLL_SECONDS:-5}
       PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-prefront}
       OOB_MODEL_PRICES: ${OOB_MODEL_PRICES:-}

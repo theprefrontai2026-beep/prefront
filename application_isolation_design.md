@@ -265,11 +265,37 @@ schema change and no new endpoint**. Add `project` to `/oob/status` to close the
 one gap. The `app_id` column can follow as normalization once §7.2 is settled —
 it is not a prerequisite.
 
-**Phase 2 — scope the verdicts.** Add `app_id` to `eval_verdicts`,
-`eval_conformance_tags`, `eval_evaluated_sessions` (same convention), resolved
-from the session's spans. Add `app` to the `/eval/*` read endpoints. Verdicts
-written before this are `""` — reported as "unattributed", never silently folded
-into an app.
+**Phase 2 — scope the verdicts. DONE.** `app_id` on all three `eval_*` tables
+via the self-healing `ADD COLUMN IF NOT EXISTS` convention, resolved once per
+evaluation from the session's spans' Phoenix project (and translated by
+`EVAL_PROJECT_APP_MAP` where a deployment's project names differ from its
+application ids). `app` added to `/eval/status`, `/eval/findings`,
+`/eval/verdicts`, `/eval/conformance` and `/eval/coverage`, and threaded through
+the UI. Deliberately NOT in the version key: an app id says whose session this
+is, not how it was evaluated, so learning it must not invalidate an existing
+evaluation.
+
+Two things this phase got wrong first, both worth keeping:
+
+- **Population checks were silently excluded.** Their `session_id` is synthetic
+  (`population:<id>`) and matches no span, so the session→spans resolver left
+  them unattributed — and an app-scoped read then dropped a whole check family
+  from the application's findings. `scenario_app()` resolves them from the
+  scenario's sessions instead; a `rule_id`-only run has no scenario and stays
+  unattributed unless the caller names the app.
+- **Relabelling spans is not durable on its own.** A retired Phoenix project
+  keeps being polled, re-delivering the same span ids under the dead name, and
+  the ReplacingMergeTree resolves them back — measured: 21 of 867 spans reverted
+  across one restart, which then mis-attributed a whole session's verdicts.
+  Fixed at the source with `OOB_PROJECT_ALIASES`, applied on both ingest paths,
+  so the migration holds instead of needing to be re-run.
+
+**Still deployment-wide after Phase 2, and visible on the page:** the ARTIFACTS.
+`/eval/status.profiles` reports the single `EVAL_RULE_PACK_PATH` /
+`EVAL_INTENT_CATALOG_PATH`, so an app with no artifacts of its own still shows
+"9 rules live · 17 intents in the catalog" — another application's. Verdict
+DATA is app-scoped; artifact CONFIG is not. That is Phase 3, and until it lands
+those two counters remain cross-app.
 
 **Phase 3 — per-app configuration.** Replace the single-valued
 `EVAL_*_PATH` env vars with a registry lookup, keeping the env vars as the

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json as _json
 import os
 
 # 0.2.0: content.evaluate emits final_answer-scoped verdicts per TURN rather
@@ -64,6 +65,30 @@ COMPLIANCE_ROW_CAP = int(_env("EVAL_COMPLIANCE_ROW_CAP", "20000"))
 # outlived their verdicts re-creates the verdicts at the CURRENT artifact
 # versions (the version key sees an unevaluated session, which is correct).
 RETENTION_DAYS = int(_env("EVAL_RETENTION_DAYS", "0"))
+
+# Optional Phoenix-project -> application-id translation, as a JSON object
+# (e.g. {"some-legacy-project": "the-app-id"}). A project NOT in the map is used as the
+# application id unchanged, which is the identity default and the right answer
+# whenever a deployment names its projects after its applications.
+#
+# It is config, never code: the engine must name no application (Hard Rule 1),
+# and the map is exactly where a deployment's vocabulary is allowed to live. A
+# malformed value degrades to the identity mapping rather than failing startup —
+# an unreadable ARTIFACT is fatal (see api.py's _load_artifact), but this is a
+# convenience translation, and refusing to start over it would be worse than
+# recording the raw project name.
+def _json_env(name: str) -> dict[str, str]:
+    raw = _env(name, "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = _json.loads(raw)
+        return {str(k): str(v) for k, v in parsed.items()} if isinstance(parsed, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+PROJECT_APP_MAP = _json_env("EVAL_PROJECT_APP_MAP")
 
 # Deployment mode for the standalone worker/API. Phase A only ever runs OOB;
 # "inline" mode of the *combinator* is exercised by semantic-mcp-server

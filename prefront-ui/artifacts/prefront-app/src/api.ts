@@ -215,8 +215,13 @@ export function parseSchema(ddl: string, datasourceId: string) {
 }
 
 /** Forget all connected datasources server-side: clears the semantic-layer
- *  datasource/function/query-template store and removes published artifact dirs
- *  (the securebank-demo baseline is kept). */
+ *  datasource/function/query-template store and removes published artifact dirs.
+ *
+ *  `keep_baselines: true` does NOT mean "the demo baselines survive" — the
+ *  server resolves it to SEMANTICLAYER_KEEP_DATASOURCES, which is EMPTY by
+ *  default, so every artifact dir goes. This comment previously claimed the
+ *  securebank-demo baseline was kept; it is not, and the resulting wipe took
+ *  eval-engine down (it reads its rule pack from that volume). */
 export function resetDatasources() {
   return fetch("/design/semantic/reset", {
     method: "POST",

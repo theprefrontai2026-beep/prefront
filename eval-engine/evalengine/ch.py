@@ -66,6 +66,20 @@ _ADDED_VERDICT_COLUMNS = (
     ("event_id", "String"),
 )
 
+# Columns added to EVERY eval_* table after it first shipped, applied with
+# ADD COLUMN IF NOT EXISTS so an older volume self-heals (same convention as
+# _ADDED_VERDICT_COLUMNS above, which predates this and stays verdict-only).
+#
+# app_id: which subject application this session belongs to
+# (application_isolation_design.md). Deliberately NOT in any ORDER BY — it is a
+# property of the session, and every key already leads with session_id, so
+# adding it would rewrite the sort order for no gain. Rows written before this
+# column existed read as "" and are reported as UNATTRIBUTED rather than folded
+# into an application, so a verdict is never silently credited to the wrong app.
+_ADDED_COLUMNS_ALL = (
+    ("app_id", "LowCardinality(String)"),
+)
+
 DDL_CONFORMANCE = f"""
 CREATE TABLE IF NOT EXISTS {config.CLICKHOUSE_DB}.eval_conformance_tags
 (
@@ -152,6 +166,9 @@ def ensure_schema() -> None:
     c.command(DDL_SETTINGS)
     for name, typ in _ADDED_VERDICT_COLUMNS:
         c.command(f"ALTER TABLE {config.CLICKHOUSE_DB}.eval_verdicts ADD COLUMN IF NOT EXISTS {name} {typ}")
+    for table in _RETENTION_TABLES:
+        for name, typ in _ADDED_COLUMNS_ALL:
+            c.command(f"ALTER TABLE {config.CLICKHOUSE_DB}.{table} ADD COLUMN IF NOT EXISTS {name} {typ}")
     apply_retention(config.RETENTION_DAYS)
 
 
@@ -251,6 +268,43 @@ def session_spans(session_id: str) -> list[dict[str, Any]]:
                {"s": session_id})
 
 
+def session_app(session_id: str) -> str:
+    """Which application this session belongs to, from its spans.
+
+    The Phoenix project is the ingestion partition (application_isolation_
+    design.md §5), so it is what identifies the application here. Translated
+    through EVAL_PROJECT_APP_MAP when a deployment's project names differ from
+    its application ids; unmapped projects pass through unchanged.
+
+    Aliased `app`, never `project`: `any(project) AS project` shadows the column
+    for the whole query and any WHERE touching it raises ILLEGAL_AGGREGATION —
+    the alias trap documented in the root CLAUDE.md, which had silently broken
+    `?project=` on two oob-ingest endpoints for exactly this reason.
+
+    Returns "" when the session has no spans or they carry no project. That is
+    UNATTRIBUTED, and callers must keep it distinct from a real application.
+    """
+    r = one(f"SELECT any(project) AS app FROM {SPANS_T} WHERE session_id = %(s)s",
+            {"s": session_id})
+    project = str(r.get("app") or "")
+    return config.PROJECT_APP_MAP.get(project, project)
+
+
+def scenario_app(scenario_id: str) -> str:
+    """Which application a scenario's sessions belong to ("" if unknown).
+
+    Population checks are keyed by SCENARIO, not session — their synthetic
+    `session_id` ("population:<id>") matches no span — so session_app cannot
+    attribute them. Without this they would stay unattributed forever and be
+    excluded from every app-scoped read, which would quietly drop a whole check
+    family from an application's findings.
+    """
+    r = one(f"SELECT any(project) AS app FROM {SPANS_T} WHERE scenario_id = %(s)s",
+            {"s": scenario_id})
+    project = str(r.get("app") or "")
+    return config.PROJECT_APP_MAP.get(project, project)
+
+
 def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
     """Population material (Hard Rule 13: aggregates only, never raw payloads
     across sessions): one row per session sharing `scenario_id`, collapsed to
@@ -279,6 +333,21 @@ def session_shapes(scenario_id: str) -> list[dict[str, Any]]:
 
 
 # --- disabled-check filtering ------------------------------------------------
+
+def _app_clause(params: dict[str, Any], app: str) -> str:
+    """` AND app_id = ...` for one application, or "" for every application.
+
+    Empty `app` means deployment-wide, which is both the historical behaviour
+    and the right answer for a single-application deployment. Note "" is also
+    what an UNATTRIBUTED row stores, so filtering to a real application
+    correctly excludes rows written before app_id existed rather than sweeping
+    them in — see _ADDED_COLUMNS_ALL.
+    """
+    if not app:
+        return ""
+    params["app"] = app
+    return " AND app_id = %(app)s"
+
 
 def _disabled_clause(params: dict[str, Any], include_disabled: bool = False) -> str:
     """` AND check_id NOT IN (...)` for the deployment's disabled checks, or
@@ -357,7 +426,7 @@ def verdict_history(rule_id: str = "", check_id: str = "", limit: int = 500) -> 
     )
 
 
-def rule_fire_counts(family: str = "family1", since: int = 0) -> dict[str, int]:
+def rule_fire_counts(family: str = "family1", since: int = 0, app: str = "") -> dict[str, int]:
     """How many verdicts (any status) each rule_id has produced, for one family.
     A rule declared in the pack but absent from this map has never had matching
     traffic - "never hit". Reads all verdicts (satisfied included), not the
@@ -368,10 +437,11 @@ def rule_fire_counts(family: str = "family1", since: int = 0) -> dict[str, int]:
     if family:
         where += " AND family = %(f)s"
         params["f"] = family
+    where += _app_clause(params, app)
     if since and int(since) > 0:
         where += " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
         params["since"] = int(since)
-    where += _disabled_clause(params)
+    where += _app_clause(params, app) + _disabled_clause(params)
     result = rows(f"SELECT rule_id, count() AS n FROM {VERDICTS_T} WHERE {where} GROUP BY rule_id", params)
     return {str(r["rule_id"]): int(r["n"]) for r in result}
 
@@ -404,11 +474,11 @@ def is_evaluated(session_id: str, version_key: str) -> bool:
     return bool(r.get("n"))
 
 
-def mark_evaluated(session_id: str, version_key: str) -> None:
+def mark_evaluated(session_id: str, version_key: str, app_id: str = "") -> None:
     client().insert(
         f"{config.CLICKHOUSE_DB}.eval_evaluated_sessions",
-        [[session_id, version_key]],
-        column_names=["session_id", "version_key"],
+        [[session_id, version_key, app_id]],
+        column_names=["session_id", "version_key", "app_id"],
     )
 
 
@@ -454,7 +524,7 @@ _TAG_COLS = [
 ]
 
 
-def insert_verdicts(findings: Iterable) -> int:
+def insert_verdicts(findings: Iterable, app_id: str = "") -> int:
     findings = list(findings)
     if not findings:
         return 0
@@ -468,15 +538,16 @@ def insert_verdicts(findings: Iterable) -> int:
             json.dumps(v.source) if v.source else "", f.mode,
             f.versions.engine_version, f.versions.binding_profile_version,
             f.versions.visibility_profile_version, f.versions.rule_pack_version,
-            f.versions.catalog_version, f.evaluated_at, event_id,
+            f.versions.catalog_version, f.evaluated_at, event_id, app_id,
         ])
     if not data:
         return 0
-    client().insert(f"{config.CLICKHOUSE_DB}.eval_verdicts", data, column_names=_VERDICT_COLS)
+    client().insert(f"{config.CLICKHOUSE_DB}.eval_verdicts", data,
+                    column_names=[*_VERDICT_COLS, "app_id"])
     return len(data)
 
 
-def insert_conformance_tags(tags: Iterable) -> int:
+def insert_conformance_tags(tags: Iterable, app_id: str = "") -> int:
     data = []
     for t in tags:
         src = t.source or {}
@@ -485,11 +556,12 @@ def insert_conformance_tags(tags: Iterable) -> int:
             str(src.get("document", "")), str(src.get("clause_id", "")),
             str(src.get("section", "")), int(src.get("page", 0) or 0), str(src.get("text", "")),
             list(t.evidence.span_ids), t.versions.engine_version, t.versions.rule_pack_version,
-            t.versions.catalog_version, t.evaluated_at,
+            t.versions.catalog_version, t.evaluated_at, app_id,
         ])
     if not data:
         return 0
-    client().insert(f"{config.CLICKHOUSE_DB}.eval_conformance_tags", data, column_names=_TAG_COLS)
+    client().insert(f"{config.CLICKHOUSE_DB}.eval_conformance_tags", data,
+                    column_names=[*_TAG_COLS, "app_id"])
     return len(data)
 
 
@@ -501,7 +573,7 @@ TAGS_T = f"{config.CLICKHOUSE_DB}.eval_conformance_tags FINAL"
 
 def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", family: str = "",
                   limit: int = 100, offset: int = 0, since: int = 0,
-                  include_disabled: bool = False) -> dict[str, Any]:
+                  include_disabled: bool = False, app: str = "") -> dict[str, Any]:
     where = ["1 = 1"]
     params: dict[str, Any] = {}
     if session_id:
@@ -519,7 +591,7 @@ def list_verdicts(session_id: str = "", status: str = "", check_id: str = "", fa
     if since and int(since) > 0:
         where.append("evaluated_at >= now() - INTERVAL %(since)s SECOND")
         params["since"] = int(since)
-    where_sql = " AND ".join(where) + _disabled_clause(params, include_disabled)
+    where_sql = " AND ".join(where) + _app_clause(params, app) + _disabled_clause(params, include_disabled)
     params["limit"] = max(1, min(int(limit), 2000))
     params["offset"] = max(0, int(offset))
     total = one(f"SELECT count() AS n FROM {VERDICTS_T} WHERE {where_sql}", params).get("n", 0)
@@ -591,8 +663,10 @@ def _occurred_at(items: list[dict[str, Any]]) -> None:
         r["occurred_at"] = (by_span.get(sids[0]) if sids else None) or by_session.get(r.get("session_id"), "")
 
 
-def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
-    result = list_verdicts(status="violated", check_id=check_id, family=family, limit=limit, offset=offset, since=since)
+def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset: int = 0, since: int = 0,
+                  app: str = "") -> dict[str, Any]:
+    result = list_verdicts(status="violated", check_id=check_id, family=family, limit=limit, offset=offset,
+                           since=since, app=app)
     result["findings"] = result.pop("verdicts")
     queries = _first_user_messages(sorted({f["session_id"] for f in result["findings"]}))
     for f in result["findings"]:
@@ -602,7 +676,7 @@ def list_findings(check_id: str = "", family: str = "", limit: int = 100, offset
 
 
 def list_feed(status: str = "", check_id: str = "", family: str = "", limit: int = 100, offset: int = 0,
-              since: int = 0, include_disabled: bool = False) -> dict[str, Any]:
+              since: int = 0, include_disabled: bool = False, app: str = "") -> dict[str, Any]:
     """Cross-session verdicts of EVERY status (or one, when `status` is set),
     newest first, with each session's first user turn joined in - the unified
     Decision Traces feed. Unlike list_findings (violated only) this also returns
@@ -616,7 +690,7 @@ def list_feed(status: str = "", check_id: str = "", family: str = "", limit: int
     `disabled_checks`, so a caller can label them rather than mixing them in
     silently. Default off: the hide rule stands unless asked."""
     result = list_verdicts(status=status, check_id=check_id, family=family, limit=limit, offset=offset,
-                           since=since, include_disabled=include_disabled)
+                           since=since, include_disabled=include_disabled, app=app)
     if include_disabled:
         result["disabled_checks"] = sorted(checks_mod.current().disabled)
     queries = _first_user_messages(sorted({v["session_id"] for v in result["verdicts"]}))
@@ -634,7 +708,7 @@ def session_conformance(session_id: str) -> list[dict[str, Any]]:
     )
 
 
-def list_conformance(limit: int = 100, offset: int = 0, since: int = 0) -> dict[str, Any]:
+def list_conformance(limit: int = 100, offset: int = 0, since: int = 0, app: str = "") -> dict[str, Any]:
     """Cross-session conformance tags, newest first - the POSITIVE evidence
     (a rule was applied and satisfied, with its policy clause cited) as a
     single list, mirroring list_findings' shape/cap for the violated side.
@@ -685,7 +759,7 @@ def truncate() -> None:
     client().command(f"TRUNCATE TABLE {config.CLICKHOUSE_DB}.eval_evaluated_sessions")
 
 
-def totals(since: int = 0) -> dict[str, Any]:
+def totals(since: int = 0, app: str = "") -> dict[str, Any]:
     """Table totals, optionally windowed to the last `since` seconds by
     evaluated_at (all three tables carry it). since=0 -> all time.
 
@@ -719,18 +793,19 @@ def totals(since: int = 0) -> dict[str, Any]:
         t = " AND evaluated_at >= now() - INTERVAL %(since)s SECOND"
         params["since"] = int(since)
     d = _disabled_clause(params)
+    a = _app_clause(params, app)
     return one(
         f"""
         SELECT
-          (SELECT count() FROM {VERDICTS_T} WHERE 1=1{t}{d}) AS verdicts,
-          (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated'{t}{d}) AS findings,
-          (SELECT count() FROM {TAGS_T} WHERE 1=1{t}{d}) AS conformance_tags,
-          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}) AS sessions_evaluated,
+          (SELECT count() FROM {VERDICTS_T} WHERE 1=1{t}{a}{d}) AS verdicts,
+          (SELECT count() FROM {VERDICTS_T} WHERE status = 'violated'{t}{a}{d}) AS findings,
+          (SELECT count() FROM {TAGS_T} WHERE 1=1{t}{a}{d}) AS conformance_tags,
+          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}{a}) AS sessions_evaluated,
           (SELECT uniqExact(session_id) FROM {VERDICTS_T}
-             WHERE status = 'violated'{t}{d}) AS sessions_with_findings,
-          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}
+             WHERE status = 'violated'{t}{a}{d}) AS sessions_with_findings,
+          (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}{a}
              AND session_id NOT IN (
-               SELECT session_id FROM {VERDICTS_T} WHERE status = 'violated'{t}{d}
+               SELECT session_id FROM {VERDICTS_T} WHERE status = 'violated'{t}{a}{d}
              )) AS sessions_clean
         """,
         params,

@@ -221,8 +221,8 @@ function useLinkedFinding(
     : { sessionId, spanId, eventId, detail: "", source: "", status: "", verdict: null };
 }
 
-function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true }: {
-  initialEffect?: string; initialSeverity?: string; rules: SeverityRule[]; active?: boolean;
+function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true, app }: {
+  initialEffect?: string; initialSeverity?: string; rules: SeverityRule[]; active?: boolean; app: string;
 }) {
   const [rows, setRows] = useState<EvalVerdict[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -275,7 +275,11 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       // deployment emits far more satisfied rows than violations, and we don't
       // want those to push older violations past the window (violations still
       // sort to the top regardless).
-      const res = await fetch("/eval/verdicts?limit=1000&include_disabled=true");
+      // Scoped to this application (application_isolation_design.md Phase 2).
+      // Unscoped, this feed showed every application's verdicts under whichever
+      // app's label the page happened to be wearing.
+      const res = await fetch(
+        `/eval/verdicts?limit=1000&include_disabled=true&app=${encodeURIComponent(app)}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
       setRows(json.verdicts || []);
@@ -285,7 +289,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
       setError(String(e?.message || e));
       setStatus("error");
     }
-  }, []);
+  }, [app]);
 
   const clearData = useCallback(async () => {
     if (!window.confirm(CLEAR_ALL_CONFIRM)) return;
@@ -763,7 +767,7 @@ export default function DecisionTraces({ active = true, demo, section: controlle
           Findings
         </button>
       </div>
-      {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} />}
+      {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} app={demo.id} />}
       {section === "decisions" && <>
       <section className="pf-panel">
         <div className="pf-dash-panel-head">

@@ -102,17 +102,27 @@ def evaluate_and_persist(session_id: str, binding: BindingProfile, visibility: V
         # mark_evaluated: that would permanently skip a session that was
         # simply not ready yet, since nothing else ever retries it.
         return {"session_id": session_id, "skipped": True, "reason": "no spans ingested yet"}
+    # Which application this session belongs to, resolved from its own spans'
+    # Phoenix project (application_isolation_design.md). Read here rather than
+    # inside persist() so the verdicts, the conformance tags and the evaluated
+    # marker all carry the SAME value — resolving it three times could disagree
+    # if spans arrived in between.
+    #
+    # It is deliberately NOT part of the version key: an application id
+    # describes WHOSE session this is, not how it was evaluated, so learning it
+    # must not invalidate an existing evaluation.
+    app_id = store.session_app(session_id)
     findings = evaluate_session(session_id, binding, visibility, rule_pack, catalog, spans, settings)
-    counts = store.persist(findings)
-    store.mark_evaluated(session_id, vkey)
-    return {"session_id": session_id, "skipped": False, "version_key": vkey, **counts}
+    counts = store.persist(findings, app_id)
+    store.mark_evaluated(session_id, vkey, app_id)
+    return {"session_id": session_id, "skipped": False, "version_key": vkey, "app_id": app_id, **counts}
 
 
 def evaluate_population(
     scenario_id: str = "", variant: str = "",
     baseline_variant: str = "", compare_variant: str = "",
     rule_id: str = "", visibility: VisibilityProfile = None,
-    settings: CheckSettings | None = None,
+    settings: CheckSettings | None = None, app: str = "",
 ) -> dict:
     """Population checks (autonomous_build.md step 17): on-demand aggregate
     computation, not tied to any single session's evaluation. Persists
@@ -137,5 +147,12 @@ def evaluate_population(
     versions = VersionStamp(engine_version=config.ENGINE_VERSION)
     evaluated_at = datetime.now(timezone.utc).isoformat()
     findings = combine_oob(verdicts, visibility or VisibilityProfile(version="", captures={}), versions, evaluated_at)
-    counts = store.persist(findings)
-    return {"scenario_id": scenario_id, "rule_id": rule_id, "verdicts": len(findings), **counts}
+    # A population verdict's session_id is synthetic ("population:<id>") and
+    # matches no span, so session_app cannot attribute it. Resolve from the
+    # SCENARIO's sessions instead; an explicit `app` from the caller wins.
+    # A rule_id-only run has no scenario to resolve from and stays
+    # unattributed unless the caller says which application it meant.
+    app_id = app or (store.scenario_app(scenario_id) if scenario_id else "")
+    counts = store.persist(findings, app_id)
+    return {"scenario_id": scenario_id, "rule_id": rule_id, "app_id": app_id,
+            "verdicts": len(findings), **counts}
