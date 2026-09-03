@@ -222,6 +222,13 @@ check id is rejected at load rather than silently matching nothing.
 
 ## 8. Per-APPLICATION settings: scope check enablement to a subject app
 
+**A design now exists for the missing half: `application_isolation_design.md`**
+(PROPOSED, not built). It answers this entry's first design question — "What
+identifies an application?" — and gives the per-app switch the boundary object
+it needs, so the detail lives there and this entry is the pointer. Note the
+scope is wider than this entry: an application also owns its artifacts, its
+datasource, and whether it runs inline, out-of-band or both.
+
 **Half built.** The per-check half shipped; the per-application half did not.
 Related to entry 7 but a different mechanism — that one waives *findings*
 reactively, per tool, with a reason; this one configures *which checks run at
