@@ -39,7 +39,23 @@ type Turn = {
 type Run = Omit<Scenario, "turns"> & {
   session_id: string; trace_id: string | null; variant: string; repeat_index: number;
   turns: Turn[]; tools_called: string[]; error: string | null;
+  /** Present only for an application governed IN-BAND: the decision Prefront
+   *  made on the call. An out-of-band application has no decision to report —
+   *  its evidence is the evaluator's findings, not a runtime verdict. */
+  governed?: {
+    intent: string; outcome: string; status: string;
+    reasons: string[]; masked_fields: string[]; approver_roles: string[];
+  };
 };
+
+/** Verdict-chip tone from the runtime's own outcome string. */
+function verdictTone(outcome: string): string {
+  const o = (outcome || "").toUpperCase();
+  if (o.startsWith("BLOCK")) return "v-block";
+  if (o.includes("APPROVAL")) return "v-appr";
+  if (o.includes("MASK")) return "v-mask";
+  return "v-allow";
+}
 
 const FAMILY_TONE: Record<string, string> = { F1: "f1", F2: "f2", F3: "f3", POP: "pop", BASE: "base" };
 
@@ -232,13 +248,11 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
       <div className="pf-panel">
         <h2><span className="pf-step-badge">1</span>Run the sessions</h2>
         <p className="pf-hint">
-          <strong>{app.label}</strong> — {app.tagline} Each row below is a <strong>session</strong> — a
-          signed-in caller on a channel, one or more user turns — designed so that its trace exhibits
-          one of the failure modes Prefront's out-of-band checks detect. <em>LLM</em> sessions let the
-          model pick the tools; <em>scripted</em> sessions replay an exact tool sequence through the
-          same MCP path so the finding is guaranteed. Nothing here is enforced or judged: the verdicts
-          belong to the evaluator — click <strong>Inspect session ▸</strong> on any run to see the
-          ingested trace.
+          <strong>{app.label}</strong> — {app.tagline} Each row below is a <strong>session</strong>: a
+          signed-in caller, one or more user turns. What a run REPORTS depends on where Prefront sits
+          for this application — a decision it made in-band, or the findings the out-of-band evaluator
+          raised about a session it only observed. Nothing on this page enforces or judges anything;
+          it runs the catalogue and shows what came back.
         </p>
         <div className="pf-fields">
           <label style={{ gridColumn: "1 / -1" }}>Demo server URL
@@ -337,11 +351,25 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
                             </button>
                           </div>
                           <div className="pf-diff-side-body">
-                            <span className="pf-verdict v-leak">UNGOVERNED</span>
+                            {run.governed
+                              ? <span className={`pf-verdict ${verdictTone(run.governed.outcome)}`}>{run.governed.outcome || "GOVERNED"}</span>
+                              : <span className="pf-verdict v-leak">UNGOVERNED</span>}
                             <div className="pf-diff-reason"><span className="lbl">tools</span>{run.tools_called.length ? run.tools_called.map((t, i) => <code key={i} style={{ marginRight: 6 }}>{t}</code>) : "none"}</div>
+                            {run.governed?.reasons?.length ? (
+                              <div className="pf-diff-reason"><span className="lbl">why</span>{run.governed.reasons[0]}</div>
+                            ) : null}
+                            {run.governed?.masked_fields?.length ? (
+                              <div className="pf-diff-reason"><span className="lbl">masked</span>{run.governed.masked_fields.join(", ")}</div>
+                            ) : null}
                             {run.error && <div className="pf-diff-err">{run.error}</div>}
                             {(open[run.session_id] ?? open[s.id]) && <Transcript run={run} sensitive={sensitive} />}
-                            <button className="pf-btn sm" style={{ marginTop: 8 }} onClick={() => setFlyout({ sessionId: run.session_id, scenario: s })}>Inspect session ▸</button>
+                            {/* Only when there IS an out-of-band session. An
+                                in-band application has no trace to pull back,
+                                and the flyout would sit on "not ingested yet"
+                                forever — a wait that never ends reads as a bug. */}
+                            {run.session_id
+                              ? <button className="pf-btn sm" style={{ marginTop: 8 }} onClick={() => setFlyout({ sessionId: run.session_id, scenario: s })}>Inspect session ▸</button>
+                              : <div className="pf-hint" style={{ marginTop: 8 }}>Governed in-band — no out-of-band trace to inspect.</div>}
                           </div>
                         </div>
                         <div className="pf-diff-side">

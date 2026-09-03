@@ -13,8 +13,13 @@ export default function App() {
       <header className="verdict-header">
         <div className="verdict-wordmark">Verdict</div>
         <div className="verdict-tagline">
-          Business decision evaluator — run {app.label}'s scenario catalogue
-          against Prefront's out-of-band checks.
+          {/* What a run reports depends on where Prefront sits for this
+              application. Claiming "out-of-band checks" over an in-band
+              application with no tap is simply false. */}
+          Business decision evaluator — run {app.label}'s scenario catalogue{" "}
+          {app.outOfBand
+            ? "against Prefront's out-of-band checks."
+            : "through Prefront's governed runtime."}
         </div>
         {/* Rendered only when there is a choice to make. A switcher offering
             one option is noise, and a deployment with one application is the

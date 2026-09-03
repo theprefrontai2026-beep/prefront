@@ -64,6 +64,16 @@ export interface AppIdentity {
    *  address is in fact known and correct. */
   scenarioCatalogue: boolean;
 
+  /** Whether this application's agent is TAPPED for out-of-band evaluation —
+   *  its traces reach oob-ingest and eval-engine raises findings about them.
+   *
+   *  This is what a run REPORTS, and the two are mutually informative rather
+   *  than opposite: an out-of-band application produces shadow findings about
+   *  a session Prefront only observed; an in-band one produces the decision
+   *  Prefront actually made. Saying "out-of-band checks" over an application
+   *  that has no tap is simply false, which is what this exists to prevent. */
+  outOfBand: boolean;
+
   /** Fields the runtime treats as sensitive: highlighted in a transcript when
    *  an ungoverned run surfaces them. Application vocabulary, never engine. */
   sensitiveFields: string[];
@@ -78,27 +88,31 @@ export const APPLICATIONS: AppIdentity[] = [
     phoenixProject: "loanpro",
     orchestratorUrl: "http://localhost:8098",
     scenarioCatalogue: true,
+    outOfBand: true,
     sensitiveFields: ["ssn", "tax_id", "bank_account_hint", "credit_score", "internal_risk_score"],
   },
   {
     id: "securebank",
     label: "SecureBank",
     tagline:
-      "Retail banking — governed in-band by Prefront's MCP; no out-of-band tap and no scenario catalogue.",
+      "Retail banking — governed in-band by Prefront's MCP: each scenario runs through the governed runtime and reports the decision it made.",
     phoenixProject: "securebank",
-    // Its real address — the field should show it rather than looking
-    // unconfigured. But this orchestrator runs a governed-vs-ungoverned DIFF,
-    // not the session catalogue Verdict drives: /api/scenarios returns a bare
-    // list and there is no /api/run. So the URL is populated and the
-    // capability is declared false.
     orchestratorUrl: "http://localhost:8095",
-    scenarioCatalogue: false,
+    // Its orchestrator now serves the catalogue shape Verdict drives —
+    // /api/scenarios grouped into families plus /api/run — adapted on the
+    // SERVER so Verdict stays a single-protocol client rather than growing a
+    // branch per subject app. Runs return the GOVERNED decision, which is what
+    // there is to evaluate for an in-band application.
+    scenarioCatalogue: true,
+    // No OTLP tap: governed in-band, so there is nothing for the evaluator to
+    // observe after the fact. See securebank-demo/docker-compose.yml.
+    outOfBand: false,
     sensitiveFields: ["ssn"],
   },
 ];
 
-/** LoanPro is the application both front-ends open on: it is the only one with
- *  a runnable catalogue and an out-of-band tap. */
+/** LoanPro is the application both front-ends open on: it is the one with an
+ *  out-of-band tap, so it is where shadow findings appear. */
 export const DEFAULT_APP: AppId = "loanpro";
 
 /** Resolve an id from a URL param or storage. Falls back to DEFAULT_APP rather

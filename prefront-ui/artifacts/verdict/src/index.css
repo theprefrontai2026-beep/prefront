@@ -303,6 +303,16 @@ code { font-family: var(--app-font-mono); font-size: 0.875em; }
   font-family: var(--app-font-mono);
 }
 
+/* Verdict-chip tones. `v-leak` marks an UNGOVERNED run (nothing stopped it);
+   the other four are the runtime's own decisions, for an application Prefront
+   governs in-band. Severity reads left to right: allow < mask < approval <
+   block, so the colour matches how much the call was constrained. */
+.pf-verdict.v-leak  { background: #fee2e2; color: #991b1b; }
+.pf-verdict.v-allow { background: #dcfce7; color: #166534; }
+.pf-verdict.v-mask  { background: #cffafe; color: #155e75; }
+.pf-verdict.v-appr  { background: #fef3c7; color: #92400e; }
+.pf-verdict.v-block { background: #fee2e2; color: #991b1b; }
+
 .pf-diff-reason { font-size: 12px; color: var(--ink-soft); margin: 3px 0; }
 
 .pf-diff-reason .lbl {
