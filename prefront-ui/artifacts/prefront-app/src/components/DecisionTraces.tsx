@@ -624,12 +624,6 @@ export default function DecisionTraces({ active = true, demo, section: controlle
   const [internal, setInternal] = useState<TracesSection>("findings");
   const rawSection = controlled ?? internal;
   const setSection = (s: TracesSection) => { setInternal(s); onSection?.(s); };
-  // The Decisions view is disabled: the /api/decisions store is empty for the
-  // active (ungoverned) demo, so Decision Traces shows Findings only. The
-  // decisions markup below is retained but never rendered.
-  const section = "findings" as TracesSection;
-  void rawSection;
-  void setSection;
   // Canonicalise a bare /traces to /traces/findings (replace — it is an app
   // correction, not a place the user navigated to, so Back skips it). The URL
   // grammar already has /traces/decisions for when that view comes back.
@@ -670,6 +664,34 @@ export default function DecisionTraces({ active = true, demo, section: controlle
   // Refetch when the tab becomes visible again — newly-run scenarios show up.
   useEffect(() => { if (active) load(); }, [active, load]);
 
+  // POST /api/decisions/refresh runs this demo's governed catalogue
+  // server-side and persists every governed result. It is the ONLY write path
+  // into this store — the component that used to POST each interactive run was
+  // removed with the Runtime tab — and it had no caller anywhere in the UI,
+  // which is much of why the store looked structurally empty.
+  const [populating, setPopulating] = useState(false);
+  const [populateError, setPopulateError] = useState("");
+  const populate = useCallback(async () => {
+    setPopulating(true);
+    setPopulateError("");
+    try {
+      const res = await fetch("/api/decisions/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ demo: demo.id }),
+      });
+      const json = await res.json();
+      // A demo with no orchestrator configured 400s naming the env var to set;
+      // surface that rather than leaving an unexplained empty log behind.
+      if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
+      await load();
+    } catch (e: any) {
+      setPopulateError(String(e?.message || e));
+    } finally {
+      setPopulating(false);
+    }
+  }, [demo.id, load]);
+
   const roles = useMemo(() => uniqueSorted(traces.map((t) => t.role)), [traces]);
   const callers = useMemo(() => uniqueSorted(traces.map((t) => t.caller)), [traces]);
   const intents = useMemo(() => uniqueSorted(traces.map((t) => t.intent)), [traces]);
@@ -709,14 +731,38 @@ export default function DecisionTraces({ active = true, demo, section: controlle
       return next;
     });
 
+  // The Decisions view is SELF-ENABLING rather than hardcoded off. It was
+  // disabled outright because /api/decisions is structurally empty for an
+  // ungoverned demo (the api-server only persists a row carrying a `governed`
+  // key), which made it a permanently empty panel. But that is a property of
+  // the DATA, not of the tab — a deployment with a governed lane fills it —
+  // so it keys off the store instead: shown when there are decisions to show,
+  // disabled with a reason when there are not. Findings stays the landing view
+  // either way.
+  const decisionsAvailable = traces.length > 0;
+  const section: TracesSection = rawSection;
+
   const activeFilters = picked.size + (role ? 1 : 0) + (caller ? 1 : 0) + (intent ? 1 : 0) + (policy ? 1 : 0) + (q.trim() ? 1 : 0);
   const clearAll = () => { setPicked(new Set()); setRole(""); setCaller(""); setIntent(""); setPolicy(""); setQ(""); };
 
   return (
     <main className="pf-tr">
-      {/* Decisions sub-tab hidden for now — this tab shows Findings only, so the
-          single-button sub-nav is dropped. `setSection` stays wired below for
-          when it's restored. */}
+      <div className="pf-oob-views" style={{ marginBottom: 14 }}>
+        <button
+          className={`pf-oob-view ${section === "decisions" ? "active" : ""}`}
+          type="button"
+          onClick={() => setSection("decisions")}
+        >
+          Decisions{decisionsAvailable ? ` (${traces.length})` : ""}
+        </button>
+        <button
+          className={`pf-oob-view ${section === "findings" ? "active" : ""}`}
+          type="button"
+          onClick={() => setSection("findings")}
+        >
+          Findings
+        </button>
+      </div>
       {section === "findings" && <FindingsSection initialEffect={findingsEffect} initialSeverity={findingsSeverity} rules={severityRules} active={active} />}
       {section === "decisions" && <>
       <section className="pf-panel">
@@ -787,7 +833,20 @@ export default function DecisionTraces({ active = true, demo, section: controlle
         )}
         {status !== "error" && filtered.length === 0 && (
           <div className="pf-dash-feed-status">
-            {traces.length === 0 ? "No governed decisions recorded — this log fills only for demos with a governed orchestrator (see the Findings tab for shadow-evaluation evidence)." : "No decisions match these filters."}
+            {traces.length === 0 ? (
+              <>
+                No governed decisions recorded. This log fills only for a demo running a
+                governed runtime — Prefront in the request path, deciding before the tool
+                runs. For an ungoverned deployment the evidence is out-of-band instead;
+                see the Findings tab.
+                <div style={{ marginTop: 10 }}>
+                  <button className="pf-dash-link" type="button" onClick={populate} disabled={populating}>
+                    {populating ? "Running the governed catalogue…" : "Populate from the demo →"}
+                  </button>
+                  {populateError && <div className="pf-dash-feed-status error" style={{ marginTop: 8 }}>{populateError}</div>}
+                </div>
+              </>
+            ) : "No decisions match these filters."}
           </div>
         )}
         {filtered.length > 0 && (

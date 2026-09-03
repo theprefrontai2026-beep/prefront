@@ -13,11 +13,17 @@ import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 const router = Router();
 
 // Where the live governance catalog runs, per bundled demo. Each demo ships its
-// own orchestrator; the request's ?demo= (or body.demo) selects which. The bare
-// ORCHESTRATOR_URL is the default (securebank) for legacy callers.
-const ORCHESTRATOR_DEFAULT = process.env.ORCHESTRATOR_URL ?? "http://securebank-orchestrator:8095";
-function orchestratorFor(demo: string): string {
-  return process.env[`ORCHESTRATOR_URL_${demo.toUpperCase()}`] || ORCHESTRATOR_DEFAULT;
+// own orchestrator; the request's ?demo= (or body.demo) selects which.
+//
+// Resolution is ORCHESTRATOR_URL_<DEMO>, then the bare ORCHESTRATOR_URL as an
+// opt-in fallback for a single-orchestrator deployment, then NOTHING. There is
+// deliberately no hardcoded default: this used to fall back to SecureBank's
+// orchestrator while compose defaulted the bare var to LoanPro's, so a demo
+// with no per-demo var set would silently refresh against a DIFFERENT demo's
+// catalog and persist those decisions under this demo's scope. Wrong data
+// under a confident label is worse than a 400 naming the variable to set.
+function orchestratorFor(demo: string): string | null {
+  return process.env[`ORCHESTRATOR_URL_${demo.toUpperCase()}`] || process.env.ORCHESTRATOR_URL || null;
 }
 
 // The demo scope is a short slug (matches the SPA's DemoConfig.id). Everything is
@@ -400,10 +406,17 @@ router.post("/decisions", async (req, res) => {
  */
 router.post("/decisions/refresh", async (req, res) => {
   const demo = demoOf(req.body?.demo);
+  const orchestrator = orchestratorFor(demo);
+  if (!orchestrator) {
+    res.status(400).json({
+      error: `no orchestrator configured for demo '${demo}' — set ORCHESTRATOR_URL_${demo.toUpperCase()}`,
+    });
+    return;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 115_000);
   try {
-    const r = await fetch(`${orchestratorFor(demo)}/api/diff`, { signal: controller.signal });
+    const r = await fetch(`${orchestrator}/api/diff`, { signal: controller.signal });
     const diff: any = await r.json();
     if (!Array.isArray(diff)) {
       throw new Error(diff?.error || "orchestrator did not return a diff array");

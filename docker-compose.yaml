@@ -349,13 +349,20 @@ services:
       # These are URL DEFAULTS ONLY (a naming convention, not demo code) -
       # they resolve to nothing until the matching demo compose is up, same
       # as this service's other env vars resolve to nothing until their own
-      # dependency exists. The bare ORCHESTRATOR_URL is the legacy-caller
-      # default.
-      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://loanpro-orchestrator:8098}
+      # dependency exists.
+      #
+      # One var PER DEMO, and deliberately no bare ORCHESTRATOR_URL: this file
+      # used to default the bare var to LoanPro while the api-server's own code
+      # defaulted it to SecureBank, so a demo with no per-demo var set would
+      # refresh against whichever of the two won and persist those decisions
+      # under the wrong demo's scope. orchestratorFor() now returns null in
+      # that case and the route 400s naming the variable to set. The bare var
+      # still works if an operator exports it (a single-orchestrator
+      # deployment) - it is just not defaulted to a demo here.
       ORCHESTRATOR_URL_SECUREBANK: ${ORCHESTRATOR_URL_SECUREBANK:-http://securebank-orchestrator:8095}
+      ORCHESTRATOR_URL_LOANPRO: ${ORCHESTRATOR_URL_LOANPRO:-http://loanpro-orchestrator:8098}
       # decision_trace rows kept per demo (pruned on write); 0 = never prune.
       DECISION_TRACE_CAP: ${DECISION_TRACE_CAP:-100}
-      ORCHESTRATOR_URL_LOANPRO: ${ORCHESTRATOR_URL_LOANPRO:-http://loanpro-orchestrator:8098}
     ports: ["8080:8080"]
     depends_on:
       api-db:

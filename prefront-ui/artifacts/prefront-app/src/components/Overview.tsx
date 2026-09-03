@@ -236,6 +236,16 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
       sub: "tool calls no intent declares", onClick: onOpenObservability },
   ];
 
+  // Governed (inline) decision counters from /api/stats — cumulative and never
+  // pruned, so this is a lifetime total, not a window like everything above it.
+  const gov = d.governed;
+  const govOutcomes = [
+    { key: "allowed", label: "Allowed", count: gov?.allowed ?? 0 },
+    { key: "masked", label: "Allowed · masked", count: gov?.masked ?? 0 },
+    { key: "approval", label: "Approval required", count: gov?.approval ?? 0 },
+    { key: "blocked", label: "Blocked", count: gov?.blocked ?? 0 },
+  ];
+
   return (
     <div className="pf-ov2">
       {/* ── Hero ── */}
@@ -450,6 +460,62 @@ export default function Overview({ demo, active = true, onOpenFindings, onOpenFi
         {/* Severity distribution over time — beside the breakdown */}
         <SeverityHistogram data={hist} />
       </div>
+
+      {/* ── Governed runtime (INLINE enforcement) ────────────────────────
+          Everything above this point is SHADOW evaluation — what Prefront
+          would have decided about an agent it did not sit in front of. This
+          band is the other mode: decisions Prefront actually made in-band,
+          before the tool ran, read from the api-server's decision store.
+
+          Rendered only when that store has rows. A deployment with no
+          governed runtime has none, and an empty "0 blocked" panel would read
+          as "nothing was blocked" rather than "nothing was governed" — the
+          exact conflation the shadow-evaluation labelling elsewhere on this
+          page exists to avoid. This is also the one band on the Overview
+          allowed to say "blocked" in the indicative: these calls really were
+          stopped. */}
+      {gov && gov.total > 0 && (
+        <div className="pf-ov2-band">
+          <div className="pf-ov2-band-lead">
+            <div className="pf-ov2-eyebrow">Governed runtime</div>
+            <div className="pf-ov2-band-value">{num(gov.total)}</div>
+            <div className="pf-ov2-kpi-sub">
+              decisions enforced in-band · {num(gov.agentsActive)} agent{gov.agentsActive === 1 ? "" : "s"}
+            </div>
+          </div>
+          <div className="pf-ov2-band-mid">
+            <div className="pf-ov2-band-head">
+              <span className="pf-ov2-eyebrow">Outcomes</span>
+              <span className="pf-ov2-kpi-sub">
+                {num(gov.maskedFields)} field{gov.maskedFields === 1 ? "" : "s"} masked before the caller saw them
+              </span>
+            </div>
+            <div className="pf-ov2-stack">
+              {govOutcomes.map((o, i) => o.count > 0 && (
+                <div key={o.key} className={`pf-ov2-stack-seg s${i}`}
+                     style={{ width: `${(o.count / gov.total) * 100}%` }}
+                     title={`${o.label}: ${o.count}`} />
+              ))}
+            </div>
+            <div className="pf-ov2-legend">
+              {govOutcomes.map((o, i) => (
+                <span key={o.key} className="pf-ov2-legend-item">
+                  <span className={`pf-ov2-swatch s${i}`} />
+                  {o.label} · {num(o.count)}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="pf-ov2-band-tail">
+            <div className="pf-ov2-eyebrow">Stopped</div>
+            <div className="pf-ov2-band-value">{num(gov.blocked + gov.approval)}</div>
+            {/* blocked + approval_required together: both are calls that did
+               not reach the datasource as asked. One number, because the split
+               is already in the legend beside it. */}
+            <div className="pf-ov2-kpi-sub">calls blocked or routed for approval</div>
+          </div>
+        </div>
+      )}
 
       {/* ── Foot ── */}
       <div className="pf-ov2-foot">
