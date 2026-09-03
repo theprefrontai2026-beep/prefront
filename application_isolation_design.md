@@ -369,11 +369,15 @@ independently as `TODO` entry 18.
 **4. `rule_audit_log` carries no `demo` column** while the `decision_*` tables
 beside it do.
 
-**And a limit worth stating plainly:** `TRUNCATE`, per-table TTLs and one shared
-ClickHouse database make this **soft isolation** — a scoping convention, not a
-boundary. Nothing enforces that a query carries the filter. That is adequate for
-several demos in one deployment; it is not a tenancy boundary, and should not be
-described as one.
+**And a limit worth stating plainly:** one shared ClickHouse database and an
+OPTIONAL scope on every read make this **soft isolation** — a scoping
+convention, not a boundary. Nothing enforces that a query carries the filter.
+That is adequate for several demos in one deployment; it is not a tenancy
+boundary, and should not be described as one.
+
+**`enforced_isolation_design.md` is the successor** that closes exactly this:
+one canonical key, a store handle with no unscoped form, and a static guard
+that fails the build when a read bypasses it. PROPOSED, not built.
 
 ---
 
