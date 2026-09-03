@@ -79,3 +79,62 @@ def test_skill_versions(store):
     )
     versions = store.list_skill_versions()
     assert len(versions) == 1 and versions[0]["skill_id"] == "cr_fin_001"
+
+
+# --- per-application isolation (application_isolation_design.md §6b) --------
+# skill-builder had no scoping at all: every uploaded policy and every rule
+# derived from it lived in one pool, so two applications' corpora interleaved.
+# Only the two ROOTS carry app_id — source_documents and skill_versions. The
+# other nine tables reach an application through document_id.
+
+def _app_doc(store, app_id, text, version="1.0"):
+    return store.add_document(
+        file_name="p.md", file_type="md", raw_text=text,
+        domain="credit_collections", version=version, app_id=app_id,
+    )
+
+
+def test_documents_are_scoped_to_their_application(store):
+    _app_doc(store, "alpha", "alpha policy")
+    _app_doc(store, "beta", "beta policy")
+    assert [d["app_id"] for d in store.list_documents("alpha")] == ["alpha"]
+    assert [d["app_id"] for d in store.list_documents("beta")] == ["beta"]
+
+
+def test_no_app_id_returns_every_application(store):
+    # The historical behaviour, and correct for a single-app deployment.
+    _app_doc(store, "alpha", "alpha policy")
+    _app_doc(store, "beta", "beta policy")
+    assert len(store.list_documents()) == 2
+
+
+def test_unattributed_documents_are_excluded_from_a_scoped_read(store):
+    # A document predating app_id must NOT be shown under whichever app is
+    # selected — unattributed, never reassigned.
+    _app_doc(store, "alpha", "alpha policy")
+    store.add_document(file_name="p.md", file_type="md", raw_text="legacy",
+                       domain="credit_collections", version="1.0")
+    assert len(store.list_documents()) == 2
+    assert [d["raw_text"] for d in store.list_documents("alpha")] == ["alpha policy"]
+
+
+def test_candidate_rules_inherit_their_document_application(store):
+    # Candidate rules carry no app of their own; they reach it through the
+    # document, which is the whole point of scoping only the roots.
+    a = _app_doc(store, "alpha", "alpha policy")
+    b = _app_doc(store, "beta", "beta policy")
+    for doc in (a, b):
+        store.replace_candidate_rules(doc["document_id"], [_rule(None)])
+    assert len(store.list_candidate_rules(app_id="alpha")) == 1
+    assert len(store.list_candidate_rules(app_id="beta")) == 1
+    assert len(store.list_candidate_rules()) == 2
+
+
+def test_skill_versions_carry_the_application_themselves(store):
+    # The one table with no FK to source_documents.
+    store.add_skill_version(skill_id="s1", version="1.0", domain="d",
+                            status="published", artifact_json="{}", app_id="alpha")
+    store.add_skill_version(skill_id="s2", version="1.0", domain="d",
+                            status="published", artifact_json="{}", app_id="beta")
+    assert [v["skill_id"] for v in store.list_skill_versions("alpha")] == ["s1"]
+    assert len(store.list_skill_versions()) == 2

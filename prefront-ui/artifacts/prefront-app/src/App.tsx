@@ -437,7 +437,7 @@ export default function App() {
               schema={schema}
               metrics={parseKV(metricsText)}
               intents={intents}
-              setIntents={setIntents}
+              appId={demo.id}
               reviewers={reviewers}
               myId={myId}
               onFocusRule={focus}

@@ -15,7 +15,15 @@ interface Props {
   schema: any;
   metrics: Record<string, string>;
   intents: string;
-  setIntents: (v: string) => void;
+  // The subject application whose policy corpus this studio is editing
+  // (application_isolation_design.md §6b). Every document read and upload is
+  // scoped by it; without it two applications' policies shared one pool.
+  appId: string;
+  // `setIntents` used to be declared and destructured here and NEVER called —
+  // only Semantic.tsx edits the intent list. A prop that asserts an ownership
+  // the component does not have is how the Policy Studio / Business Graph
+  // boundary blurred in the first place, so it is gone rather than left as a
+  // no-op.
   // Collaboration
   reviewers: Reviewer[];
   myId: string | null;
@@ -28,7 +36,7 @@ const POLICY_TABS = ["rules", "ledger", "atoms", "validation", "unresolved", "au
 type PolicyTab = typeof POLICY_TABS[number];
 
 export default function PolicyStudio({
-  onRules, schema, metrics, intents, setIntents,
+  onRules, schema, metrics, intents, appId,
   reviewers, myId, onFocusRule, broadcastRuleStatus, remoteRuleUpdates,
 }: Props) {
   const [docs, setDocs] = useState<any[]>([]);
@@ -166,7 +174,7 @@ export default function PolicyStudio({
 
   /* Load docs on mount */
   useEffect(() => {
-    api.listDocuments().then(res => {
+    api.listDocuments(appId).then(res => {
       const list = Array.isArray(res) ? res : (res.documents || []);
       setDocs(list);
       if (list.length && !activeDocId) setActiveDocId(list[0].document_id, { replace: true });
@@ -191,11 +199,11 @@ export default function PolicyStudio({
         const file = fileRef.current?.files?.[0];
         if (!file) throw new Error("Choose a file first");
         setUploadStatus("Uploading…");
-        result = await api.uploadFile({ file, domain, version });
+        result = await api.uploadFile({ file, domain, version, appId });
       } else {
         if (!textInput.trim()) throw new Error("Paste policy text first");
         setUploadStatus("Uploading…");
-        result = await api.uploadText({ text: textInput.trim(), fileName, domain, version });
+        result = await api.uploadText({ text: textInput.trim(), fileName, domain, version, appId });
       }
       const doc = result.document || result;
       setDocs(prev => {
@@ -207,7 +215,7 @@ export default function PolicyStudio({
       setUploadStatus(`Uploaded — ${doc.file_name || fileName}`);
       // upload returns only {document_id, status}; refresh the list to get the
       // full document record (file_name, domain, status, …).
-      api.listDocuments()
+      api.listDocuments(appId)
         .then(r => setDocs(Array.isArray(r) ? r : (r.documents || [])))
         .catch(() => {});
     } catch (e: any) {

@@ -63,6 +63,16 @@ class SourceDocument(Base):
     # vocabulary the binder can resolve. See schema_pack.py.
     ddl: Mapped[str | None] = mapped_column(Text)
     datasource_id: Mapped[str | None] = mapped_column(String)
+    # Which subject APPLICATION this document belongs to
+    # (application_isolation_design.md). The isolation root: the other ten
+    # tables reach it through document_id, so scoping here scopes them all.
+    #
+    # Distinct from BOTH neighbours above and `domain` below:
+    #   domain        a grounding vocabulary pack, default "general" — two apps
+    #                 can share one, one app may need several
+    #   datasource_id one of the app's datasources — an application HAS MANY
+    # Nullable: a document predating this is UNATTRIBUTED, never reassigned.
+    app_id: Mapped[str | None] = mapped_column(String, index=True)
 
 
 class DocumentSection(Base):
@@ -151,6 +161,9 @@ class SkillVersion(Base):
     skill_id: Mapped[str] = mapped_column(String, nullable=False)
     version: Mapped[str] = mapped_column(String, nullable=False)
     domain: Mapped[str] = mapped_column(String, nullable=False)
+    # The one table with no foreign key to source_documents, so it carries the
+    # application itself rather than inheriting it. See SourceDocument.app_id.
+    app_id: Mapped[str | None] = mapped_column(String, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     artifact_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string
     approved_by: Mapped[str | None] = mapped_column(String)

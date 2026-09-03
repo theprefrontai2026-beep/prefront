@@ -12,27 +12,38 @@ async function jsonOrThrow(res: Response) {
   return body;
 }
 
-export function listDocuments() {
-  return fetch("/design/skills/documents").then(jsonOrThrow);
+/** Uploaded policy documents. `appId` scopes to one subject application
+ *  (application_isolation_design.md §6b) — skill-builder had no isolation key
+ *  at all, so two applications' policy corpora shared one pool. Omitting it
+ *  returns every application, which is right for a single-app deployment; a
+ *  document uploaded before app_id existed is unattributed and excluded from a
+ *  scoped read rather than shown under whichever app is selected. */
+export function listDocuments(appId?: string) {
+  const q = appId ? `?app_id=${encodeURIComponent(appId)}` : "";
+  return fetch(`/design/skills/documents${q}`).then(jsonOrThrow);
 }
 
 export function deleteDocument(documentId: string) {
   return fetch(`/design/skills/documents/${documentId}`, { method: "DELETE" }).then(jsonOrThrow);
 }
 
-export function uploadText({ text, fileName, domain, version }: { text: string; fileName: string; domain: string; version: string }) {
+// `domain` and `appId` are DIFFERENT things and both are sent: domain names a
+// grounding vocabulary pack (two apps may share one), appId names the subject
+// application this policy belongs to.
+export function uploadText({ text, fileName, domain, version, appId }: { text: string; fileName: string; domain: string; version: string; appId?: string }) {
   return fetch("/design/skills/documents/upload", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text, file_name: fileName, domain, version }),
+    body: JSON.stringify({ text, file_name: fileName, domain, version, app_id: appId }),
   }).then(jsonOrThrow);
 }
 
-export function uploadFile({ file, domain, version }: { file: File; domain: string; version: string }) {
+export function uploadFile({ file, domain, version, appId }: { file: File; domain: string; version: string; appId?: string }) {
   const form = new FormData();
   form.append("file", file);
   if (domain) form.append("domain", domain);
   if (version) form.append("version", version);
+  if (appId) form.append("app_id", appId);
   return fetch("/design/skills/documents/upload", {
     method: "POST",
     body: form,
@@ -75,8 +86,9 @@ export function getExtractRulesProgress(documentId: string) {
   return fetch(`/design/skills/documents/${documentId}/extract-rules/progress`).then(jsonOrThrow);
 }
 
-export function listAllRules() {
-  return fetch("/design/skills/candidate-rules").then(jsonOrThrow);
+export function listAllRules(appId?: string) {
+  const q = appId ? `?app_id=${encodeURIComponent(appId)}` : "";
+  return fetch(`/design/skills/candidate-rules${q}`).then(jsonOrThrow);
 }
 
 export function listRules(documentId: string) {

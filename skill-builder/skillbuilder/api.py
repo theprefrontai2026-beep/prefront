@@ -168,6 +168,19 @@ class UploadJSON(BaseModel):
     # is derived from it to ground extraction/validation (see _pack_for).
     ddl: Optional[str] = None
     datasource_id: Optional[str] = None
+    # Which subject application this document belongs to. Optional: a
+    # single-application deployment omits it and every read stays unfiltered,
+    # exactly as before (Hard Rule 9).
+    app_id: Optional[str] = None
+
+
+# Scope a collection read to one subject application
+# (application_isolation_design.md §6b). Empty = every application: the
+# historical behaviour, and correct for a single-application deployment.
+# A record uploaded before app_id existed is UNATTRIBUTED and is excluded from
+# a scoped read rather than shown under whichever application is selected.
+_APP_Q = ("Restrict to one subject application. Empty = every application. "
+          "Records predating app_id are unattributed and excluded when set.")
 
 
 class ExtractRulesBody(BaseModel):
@@ -279,6 +292,7 @@ async def upload_document(request: Request):
         document_id = form.get("document_id")
         ddl = form.get("ddl")
         datasource_id = form.get("datasource_id")
+        app_id = form.get("app_id")
         ddl_upload = form.get("ddl_file")
         if ddl_upload is not None and hasattr(ddl_upload, "read"):
             ddl = (await ddl_upload.read()).decode("utf-8", "replace")
@@ -296,6 +310,7 @@ async def upload_document(request: Request):
         domain, owner, version = body.domain, body.owner, body.version
         uploaded_by, document_id = body.uploaded_by, body.document_id
         ddl, datasource_id = body.ddl, body.datasource_id
+        app_id = body.app_id
 
     doc = store().add_document(
         file_name=file_name,
@@ -308,6 +323,7 @@ async def upload_document(request: Request):
         document_id=document_id,
         ddl=ddl,
         datasource_id=datasource_id,
+        app_id=app_id,
     )
     if ddl:
         log.info(
@@ -588,8 +604,9 @@ def run_full_extraction(document_id: str, body: StageBody = Body(default=StageBo
 
 
 @app.get("/design/skills/candidate-rules")
-def list_candidate_rules(document_id: Optional[str] = Query(default=None)):
-    rows = store().list_candidate_rules(document_id)
+def list_candidate_rules(document_id: Optional[str] = Query(default=None),
+                         app_id: Optional[str] = Query(default=None, description=_APP_Q)):
+    rows = store().list_candidate_rules(document_id, app_id)
     # Attach the originating clause's verbatim text (provenance) so the UI can show
     # the exact policy-document text a rule was generated from. The candidate already
     # carries source_clause_id + source_evidence; we join the clause for full text.
@@ -935,6 +952,11 @@ def publish_skill(skill_id: str, body: PublishBody):
         artifact_json=json.dumps(artifact),
         approved_by="policy_admin",
         approved_at=_now(),
+        # Inherited from the source document rather than taken from the request:
+        # a published skill belongs to the same application as the policy it was
+        # compiled from, and letting a caller name a different one is how a
+        # skill ends up filed under the wrong app.
+        app_id=doc.get("app_id"),
     )
     return {
         "skill_id": skill_id,
@@ -946,8 +968,8 @@ def publish_skill(skill_id: str, body: PublishBody):
 
 
 @app.get("/design/skills/documents")
-def list_documents():
-    return {"documents": store().list_documents()}
+def list_documents(app_id: Optional[str] = Query(default=None, description=_APP_Q)):
+    return {"documents": store().list_documents(app_id)}
 
 
 @app.delete("/design/skills/documents/{document_id}")
@@ -961,8 +983,8 @@ def delete_document(document_id: str):
 
 
 @app.get("/design/skills/versions")
-def list_versions():
-    return {"skill_versions": store().list_skill_versions()}
+def list_versions(app_id: Optional[str] = Query(default=None, description=_APP_Q)):
+    return {"skill_versions": store().list_skill_versions(app_id)}
 
 
 def _now() -> str:

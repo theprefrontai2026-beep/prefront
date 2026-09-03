@@ -90,6 +90,7 @@ class Store:
         document_id: Optional[str] = None,
         ddl: Optional[str] = None,
         datasource_id: Optional[str] = None,
+        app_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Insert a document, or return the existing row if content is identical.
 
@@ -118,6 +119,7 @@ class Store:
                 uploaded_by=uploaded_by,
                 ddl=ddl,
                 datasource_id=datasource_id,
+                app_id=app_id,
             )
             s.add(doc)
             s.flush()
@@ -130,11 +132,20 @@ class Store:
                 raise KeyError(f"document not found: {document_id}")
             return _as_dict(doc)
 
-    def list_documents(self) -> list[dict[str, Any]]:
+    def list_documents(self, app_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Uploaded documents, newest first, optionally for ONE application.
+
+        `app_id` empty/None = every application, which is the historical
+        behaviour and correct for a single-application deployment. A document
+        uploaded before app_id existed carries None and is therefore excluded
+        from a scoped read rather than being shown under whichever application
+        happens to be selected — unattributed, never reassigned.
+        """
         with self._session() as s:
-            rows = s.scalars(
-                select(SourceDocument).order_by(SourceDocument.uploaded_at.desc())
-            ).all()
+            stmt = select(SourceDocument)
+            if app_id:
+                stmt = stmt.where(SourceDocument.app_id == app_id)
+            rows = s.scalars(stmt.order_by(SourceDocument.uploaded_at.desc())).all()
             return [_as_dict(r) for r in rows]
 
     def set_document_status(self, document_id: str, status: str) -> None:
@@ -313,12 +324,20 @@ class Store:
         return n
 
     def list_candidate_rules(
-        self, document_id: Optional[str] = None
+        self, document_id: Optional[str] = None, app_id: Optional[str] = None
     ) -> list[dict[str, Any]]:
+        """Candidate rules, optionally narrowed to one document and/or one
+        application. Candidate rules carry no app of their own — they reach it
+        through their document (application_isolation_design.md), which is why
+        this joins rather than filtering a column."""
         with self._session() as s:
             stmt = select(CandidateRuleRow)
             if document_id:
                 stmt = stmt.where(CandidateRuleRow.document_id == document_id)
+            if app_id:
+                stmt = stmt.where(CandidateRuleRow.document_id.in_(
+                    select(SourceDocument.document_id).where(SourceDocument.app_id == app_id)
+                ))
             stmt = stmt.order_by(CandidateRuleRow.created_at)
             return [self._row_with_rule(r) for r in s.scalars(stmt).all()]
 
@@ -401,6 +420,7 @@ class Store:
         artifact_json: str,
         approved_by: Optional[str] = None,
         approved_at: Optional[str] = None,
+        app_id: Optional[str] = None,
     ) -> str:
         sid = _uuid()
         with self._session() as s:
@@ -414,6 +434,7 @@ class Store:
                     artifact_json=artifact_json,
                     approved_by=approved_by,
                     approved_at=approved_at,
+                    app_id=app_id,
                 )
             )
         return sid
@@ -566,19 +587,25 @@ class Store:
 
     # -- skill versions -------------------------------------------------------
 
-    def list_skill_versions(self) -> list[dict[str, Any]]:
+    def list_skill_versions(self, app_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Published skill versions, newest first, optionally for one
+        application. skill_versions is the ONE table with no foreign key back
+        to source_documents, so it carries app_id itself rather than
+        inheriting it."""
         cols = (
             "skill_version_id",
             "skill_id",
             "version",
             "domain",
+            "app_id",
             "status",
             "approved_by",
             "approved_at",
             "created_at",
         )
         with self._session() as s:
-            rows = s.scalars(
-                select(SkillVersion).order_by(SkillVersion.created_at.desc())
-            ).all()
+            stmt = select(SkillVersion)
+            if app_id:
+                stmt = stmt.where(SkillVersion.app_id == app_id)
+            rows = s.scalars(stmt.order_by(SkillVersion.created_at.desc())).all()
             return [{c: getattr(r, c) for c in cols} for r in rows]
