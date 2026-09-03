@@ -47,13 +47,22 @@ export interface AppIdentity {
    *  compose's PHOENIX_PROJECT_NAME. */
   phoenixProject: string;
 
-  /** This application's scenario orchestrator, or "" when it has none.
-   *  Absolute because it is a cross-origin fetch (those services send
-   *  permissive CORS). "" means the application ships no runnable catalogue —
-   *  Verdict must offer it as unrunnable rather than pointing at another
-   *  application's orchestrator, which is how one app's results end up
-   *  labelled as another's. */
+  /** This application's orchestrator, or "" when it has none at all. Absolute
+   *  because it is a cross-origin fetch (those services send permissive CORS).
+   *  Populated even when Verdict cannot DRIVE it — see `scenarioCatalogue`. */
   orchestratorUrl: string;
+
+  /** Whether that orchestrator serves the SESSION CATALOGUE Verdict drives:
+   *  `GET /api/scenarios` shaped `{families:[…]}` plus `GET /api/run`.
+   *
+   *  Separate from `orchestratorUrl` because "has no orchestrator" and "has one
+   *  Verdict cannot drive" are different facts, and collapsing them into an
+   *  empty URL hid the second: SecureBank's orchestrator is real and serves
+   *  :8095, but its /api/scenarios returns a bare LIST and it exposes /api/diff
+   *  instead of /api/run — a governed-vs-ungoverned diff, not a catalogue of
+   *  sessions. Blanking the URL made the field look unconfigured when the
+   *  address is in fact known and correct. */
+  scenarioCatalogue: boolean;
 
   /** Fields the runtime treats as sensitive: highlighted in a transcript when
    *  an ungoverned run surfaces them. Application vocabulary, never engine. */
@@ -68,6 +77,7 @@ export const APPLICATIONS: AppIdentity[] = [
       "Loan origination — an ungoverned agent whose sessions exhibit every failure mode the out-of-band checks detect.",
     phoenixProject: "loanpro",
     orchestratorUrl: "http://localhost:8098",
+    scenarioCatalogue: true,
     sensitiveFields: ["ssn", "tax_id", "bank_account_hint", "credit_score", "internal_risk_score"],
   },
   {
@@ -76,10 +86,13 @@ export const APPLICATIONS: AppIdentity[] = [
     tagline:
       "Retail banking — governed in-band by Prefront's MCP; no out-of-band tap and no scenario catalogue.",
     phoenixProject: "securebank",
-    // Deliberately empty. SecureBank's orchestrator (:8095) runs a
-    // governed-vs-ungoverned diff, NOT the session catalogue Verdict drives —
-    // pointing Verdict at it would produce a confident, wrong-shaped result.
-    orchestratorUrl: "",
+    // Its real address — the field should show it rather than looking
+    // unconfigured. But this orchestrator runs a governed-vs-ungoverned DIFF,
+    // not the session catalogue Verdict drives: /api/scenarios returns a bare
+    // list and there is no /api/run. So the URL is populated and the
+    // capability is declared false.
+    orchestratorUrl: "http://localhost:8095",
+    scenarioCatalogue: false,
     sensitiveFields: ["ssn"],
   },
 ];

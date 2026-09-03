@@ -169,12 +169,17 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
   const [repeat, setRepeat] = useState(0);
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
-  // An application that ships no scenario catalogue has no orchestrator, and
-  // the registry says so with an empty URL. Naming that state is the point:
-  // without it, selecting such an application produced a bare fetch failure
-  // that reads as "the server is down" rather than "this application has
-  // nothing to run".
-  const runnable = Boolean(app.orchestratorUrl);
+  // Whether Verdict can DRIVE this application's orchestrator, which is not the
+  // same as whether it has one. The address is always populated (the field
+  // should show the known server, not look unconfigured); the capability is
+  // declared separately, because SecureBank's orchestrator is real and running
+  // but serves a governed-vs-ungoverned diff rather than the session catalogue
+  // — /api/scenarios returns a bare list and there is no /api/run.
+  //
+  // Naming that state is the point: without it, selecting such an application
+  // produced a bare fetch failure reading as "the server is down" rather than
+  // "this server does not serve a catalogue".
+  const runnable = Boolean(app.orchestratorUrl) && app.scenarioCatalogue;
 
   async function loadCatalog() {
     if (!runnable) return;
@@ -266,9 +271,11 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
         </div>
         {!runnable && (
           <p className="pf-hint" style={{ marginTop: 10 }}>
-            <strong>{app.label}</strong> ships no scenario catalogue — it has no orchestrator to run
-            one. Its evidence is in-band (governed decisions), not out-of-band sessions. Pick an
-            application that has one, or point the field above at a compatible orchestrator.
+            <strong>{app.label}</strong>'s orchestrator (shown above) does not serve a session
+            catalogue — it runs a governed-vs-ungoverned diff, so there is no <code>/api/run</code>
+            for Verdict to drive. Its evidence is in-band (governed decisions), not out-of-band
+            sessions. Pick an application with a catalogue, or point the field above at a
+            compatible orchestrator.
           </p>
         )}
         {error && <p className="pf-error">{error}<span style={{ color: "var(--muted)", marginLeft: 8 }}>— is the demo server running?</span></p>}
