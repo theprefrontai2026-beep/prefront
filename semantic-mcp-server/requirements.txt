@@ -1,6 +1,6 @@
 # Prefront — Semantic MCP Server (runtime POC)
 psycopg[binary]>=3.2   # Postgres access
-mcp>=1.0               # MCP server (stdio + SSE/HTTP)
+mcp>=1.0,<2            # MCP server (stdio + SSE/HTTP); 2.x drops the decorator API
 pyyaml>=6.0            # read query_templates.yaml
 starlette>=0.37        # HTTP transport app
 uvicorn>=0.29          # ASGI server for --http mode

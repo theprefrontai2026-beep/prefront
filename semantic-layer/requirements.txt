@@ -2,7 +2,7 @@
 openai>=1.0
 pydantic>=2.0
 pyyaml>=6.0
-mcp>=1.0
+mcp>=1.0,<2            # 2.x drops the decorator API used by mcp_server.build_server
 sqlglot>=25.0          # design-time SQL §14 validation (AST checks)
 # Data Connector API (catalog parse / live introspection)
 fastapi>=0.110
