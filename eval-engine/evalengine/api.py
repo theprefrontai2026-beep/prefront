@@ -24,12 +24,41 @@ logging.basicConfig(level=config.EVAL_LOG_LEVEL.upper(),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("evalengine")
 
-_binding = binding_mod.load(config.TRACE_BINDING_PATH)
-_visibility = visibility_mod.load(config.VISIBILITY_PROFILE_PATH)
-_rule_pack = rulepack_mod.load(config.RULE_PACK_PATH)
-_catalog = catalog_mod.load(config.INTENT_CATALOG_PATH)
+def _load_artifact(var: str, path: str, load):
+    """Load one configured artifact, or fail with a message that names it.
+
+    An EMPTY path means "this deployment ships without the artifact" and each
+    loader returns its empty value, so the family degrades to zero verdicts
+    (Hard Rule 9). A path that is SET but does not resolve is a
+    MISCONFIGURATION, and these run at module scope - so an unhandled
+    FileNotFoundError here means uvicorn never starts and the whole service is
+    down with a bare traceback naming only a path.
+
+    That is not hypothetical. A deployment's seed step guarded the copy of
+    several artifacts on the presence of just ONE of them, so on a volume
+    created before a later artifact joined that list it never landed, and this
+    service died at import. The seed was fixed; this makes the failure legible
+    either way. Same rule as the inline gateway's own preload(), for the same
+    reason: an artifact that is configured and absent must say so, loudly.
+    """
+    try:
+        return load(path)
+    except Exception as e:
+        if not path:
+            raise
+        raise RuntimeError(
+            f"{var}={path!r} could not be loaded: {type(e).__name__}: {e}. "
+            f"Unset it to run without this artifact; a set-but-unreadable path "
+            f"is never treated as unconfigured."
+        ) from e
+
+
+_binding = _load_artifact("EVAL_TRACE_BINDING_PATH", config.TRACE_BINDING_PATH, binding_mod.load)
+_visibility = _load_artifact("EVAL_VISIBILITY_PROFILE_PATH", config.VISIBILITY_PROFILE_PATH, visibility_mod.load)
+_rule_pack = _load_artifact("EVAL_RULE_PACK_PATH", config.RULE_PACK_PATH, rulepack_mod.load)
+_catalog = _load_artifact("EVAL_INTENT_CATALOG_PATH", config.INTENT_CATALOG_PATH, catalog_mod.load)
 _packs = compliance_mod.load_packs(config.FRAMEWORK_PACKS_DIR)
-_overlay = compliance_mod.load_overlay(config.COMPLIANCE_OVERLAY_PATH)
+_overlay = _load_artifact("EVAL_COMPLIANCE_OVERLAY_PATH", config.COMPLIANCE_OVERLAY_PATH, compliance_mod.load_overlay)
 worker = Worker(_binding, _visibility, _rule_pack, _catalog)
 _started_at = datetime.now(timezone.utc)
 

@@ -118,12 +118,21 @@ services:
     command:
       - sh
       - -c
+      # PER-FILE guard, deliberately. This used to gate the copy of FOUR files
+      # on whether ONE of them (query_templates.yaml) was already present, so
+      # on any volume created before rule_pack.yaml/intent_catalog.yaml were
+      # added to the list they never landed — and eval-engine, which reads
+      # them by EVAL_RULE_PACK_PATH, died at import with FileNotFoundError.
+      # A file added here must reach an EXISTING volume, so each one carries
+      # its own test. (Still copy-if-absent, not overwrite: a republished
+      # artifact must not be silently reverted to the committed one. To force
+      # a refresh, delete the file from the volume or rebuild it — see the
+      # root CLAUDE.md's "demo seed jobs only copy when the file is ABSENT".)
       - mkdir -p /artifacts/loanpro-demo &&
-        ([ -f /artifacts/loanpro-demo/query_templates.yaml ] ||
-         cp /src/query_templates.yaml /src/policy.yaml /src/rule_pack.yaml /src/intent_catalog.yaml
-            /artifacts/loanpro-demo/) &&
-        ([ -f /artifacts/loanpro-demo/compliance_overlay.yaml ] ||
-         cp /src/compliance_overlay.yaml /artifacts/loanpro-demo/) &&
+        for f in query_templates.yaml policy.yaml rule_pack.yaml intent_catalog.yaml
+                 compliance_overlay.yaml; do
+          [ -f "/artifacts/loanpro-demo/$$f" ] || cp "/src/$$f" /artifacts/loanpro-demo/;
+        done &&
         echo "loanpro curated artifacts ready in /artifacts/loanpro-demo"
     volumes:
       - artifacts:/artifacts
