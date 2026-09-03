@@ -38,7 +38,7 @@ one demo produces traces at a time.
 cosmetic — it is reported as `mode`/`shadow` in `/eval/status` and
 `/eval/compliance` (`api.py:142,195-196`) and drives no behaviour — and it is
 deployment-wide. Mode is now genuinely a **per-datasource** property, rolled up
-per application (§3):
+per application (§4):
 
 | app | inline (in-band) | out-of-band |
 |---|---|---|
@@ -49,10 +49,40 @@ A single `EVAL_MODE` cannot describe those two at once.
 
 ---
 
-## 2. Why this is also the answer to the Policy Studio / Business Graph question
+## 2. The Overview is the sharpest case
 
-The separation complaint that started this is a symptom. Neither tab should own
-application identity — but because nothing else does, each view improvises:
+Raised separately, and it is the clearest evidence for the whole proposal: the
+Overview is the landing page, it is **presented under an application** (the
+sidebar carries the app badge, the hero reads "SHADOW EVALUATION"), and it takes
+`demo` as a prop — yet **7 of its 8 data sources carry no application scope at
+all** (`useOverviewData.ts:72-80`):
+
+| source | scoped? |
+|---|---|
+| `/eval/status`, `/eval/findings`, `/eval/conformance`, `/eval/coverage` | no |
+| `/oob/status`, `/oob/overview`, `/oob/sessions` | no |
+| `/api/stats?demo=` | **yes** |
+
+`demo` reaches exactly two reads: that one, and `useSeverityRules(demo.id)`
+(`Overview.tsx:142`). Everything that forms the headline — sessions evaluated,
+findings, the severity breakdown, findings over time, rules live, off-catalog
+calls — is deployment-wide.
+
+So this is not merely "not app-specific". It is **confidently mislabelled**: if
+SecureBank produced traces alongside LoanPro, the page would count both and
+title the result LoanPro. An unscoped page that looked unscoped would be honest;
+this one asserts a scope it does not apply.
+
+It is also not fixable in the UI alone — see §5, which turns out to be a better
+story on the OOB half than on the eval half.
+
+---
+
+## 3. Why this is also the answer to the Policy Studio / Business Graph question
+
+The separation complaint that started this is the same symptom. Neither tab
+should own application identity — but because nothing else does, each view
+improvises:
 
 - `BusinessGraph.tsx:784-802` and `DataGraph.tsx:921-941` each hold their own
   `bound` state, their own `getPolicy(datasourceId)` effect and their own
@@ -76,14 +106,14 @@ selected app**", and the improvisation has one place to live.
 
 ---
 
-## 3. The boundary object
+## 4. The boundary object
 
 An **Application** is the unit of isolation. One registry entry declares
 everything that is currently spread across compose files, env vars and a UI
 constant:
 
 **An application HAS MANY datasources, and the two stay separate concepts**
-(settled; see §6.1). That is not a detail — it splits the artifacts into two
+(settled; see §7.1). That is not a detail — it splits the artifacts into two
 tiers, and the split falls exactly where the code already puts it:
 
 | tier | artifacts | written / read by | evidence |
@@ -102,7 +132,7 @@ application:
   id: loanpro                 # the isolation key, everywhere
   label: LoanPro
   telemetry:
-    phoenix_project: loanpro  # the ingestion partition (see §4)
+    phoenix_project: loanpro  # the ingestion partition (see §5)
 
   # Per-APP: the agent's policy and approved-intent surface. One each,
   # spanning every datasource below. Today these are single-valued env vars.
@@ -115,7 +145,7 @@ application:
     disabled: []              # TODO entry 8's per-app set
 
   # Per-DATASOURCE: how the agent reaches each one, and what Prefront
-  # publishes for it. `mode` lives HERE, not on the application — see §6.2.
+  # publishes for it. `mode` lives HERE, not on the application — see §7.2.
   datasources:
     - id: loanpro-demo        # -> /artifacts/loanpro-demo/{query_templates,policy}.yaml
       mode: inline            # a governed MCP sits in front of it
@@ -141,7 +171,7 @@ Three properties this must have, carried from existing rules:
 
 ---
 
-## 4. What identifies a session's application
+## 5. What identifies a session's application
 
 Three candidates were checked against the live store:
 
@@ -162,16 +192,47 @@ This also isolates at the **source**: two apps' traces stop sharing a Phoenix
 project, so the mixing `prefront-ui/CLAUDE.md:103` warns about cannot occur even
 before the column exists.
 
+### 5.1 The OOB half is already built — and unused
+
+Worth stating plainly, because it changes the cost of Phase 1 and corrects an
+earlier assumption that all of this was greenfield. On the oob-ingest side the
+partition is **fully implemented end to end**:
+
+- `project` is a column on `spans` (`ch.py:32`);
+- `_since_clause` genuinely filters it — `project = %(project)s`
+  (`ch.py:202-210`), not a decorative parameter;
+- five read endpoints already accept it — `/oob/overview`, `/oob/facets`,
+  `/oob/traces`, `/oob/sessions`, `/oob/sessions/population` (`api.py:66,173-211`);
+- the poller already handles a LIST of projects with a per-project watermark
+  (`config.py:21`, `ingest_state`);
+- and `prefront_tracing.py:121` already lets each service name its project.
+
+Nothing uses it. Every service reports to one project (`prefront` — measured:
+all 867 spans), and the UI passes `project` on none of its calls. **The
+partition is unused, not absent**, which is why §5 chose it over inventing an
+identifier.
+
+Two gaps remain on that side: `/oob/status` takes no `project`, and eval-engine
+has no equivalent at all — **0 of 14 `/eval/*` endpoints accept any scope**. So
+the honest split is:
+
+| half | to make the Overview app-specific |
+|---|---|
+| OOB (`/oob/*`) | config + pass the parameter. No schema change, no new endpoint |
+| eval (`/eval/*`) | genuinely new work — the `app_id` column and read filters of Phases 2-3 |
+
 ---
 
-## 5. Phased change
+## 6. Phased change
 
 Each phase is independently shippable and leaves the system working.
 
-**Phase 1 — partition the telemetry.** Set `PHOENIX_PROJECT_NAME` per demo
-compose. Add `app_id` to `spans` via the existing self-healing
-`ALTER TABLE … ADD COLUMN IF NOT EXISTS` convention (`ch.py`), populated from the
-project. Add an optional `app` filter to `/oob/*`. No eval-engine change yet.
+**Phase 1 — partition the telemetry.** Cheaper than first estimated, per §5.1:
+set `PHOENIX_PROJECT_NAME` per demo compose, and pass `project=` from the UI's
+OOB reads. That alone makes the OOB half of every page app-specific, with **no
+schema change and no new endpoint**. Add `project` to `/oob/status` to close the
+one gap. The `app_id` column can follow as normalization once §7.2 is settled —
+it is not a prerequisite.
 
 **Phase 2 — scope the verdicts.** Add `app_id` to `eval_verdicts`,
 `eval_conformance_tags`, `eval_evaluated_sessions` (same convention), resolved
@@ -193,16 +254,16 @@ vocabulary moved into the registry; `setIntents` dropped from Policy Studio.
 Tabs render mode-appropriately — an inline-only app shows no shadow-evaluation
 panels, an OOB-only app shows no Decisions view.
 
-**Phase 5 — rename `demo` to `app_id`.** Simplified by §6.1: `demo=loanpro` was
+**Phase 5 — rename `demo` to `app_id`.** Simplified by §7.1: `demo=loanpro` was
 always an application label and `datasource_id=loanpro-demo` a datasource one,
 so this is a rename with no merge and `datasource_id` is untouched. Last,
 because it is the only step that breaks a stored value.
 
 ---
 
-## 6. Decisions
+## 7. Decisions
 
-### 6.1 SETTLED — an application has many datasources; the two stay separate
+### 7.1 SETTLED — an application has many datasources; the two stay separate
 
 Confirmed. Consequences, all of which simplify rather than complicate:
 
@@ -210,13 +271,13 @@ Confirmed. Consequences, all of which simplify rather than complicate:
   keyed by datasource — no path moves, and semantic-layer needs no change to
   where it writes.
 - **Artifacts split into two tiers** along a line the code already draws
-  (§3): query templates and the bound policy bundle are per-datasource because
+  (§4): query templates and the bound policy bundle are per-datasource because
   they bind to one schema or tool surface; the rule pack, intent catalog,
   compliance overlay and trace binding are per-app because they describe the
   agent, which may cross datasources within a single session.
 - **`app_id` is the isolation key on spans and verdicts, not `datasource_id`.**
   A session is an agent's, and an agent belongs to an application. Recording a
-  datasource per *tool call* is a later refinement (§6.5), not part of the
+  datasource per *tool call* is a later refinement (§7.5), not part of the
   isolation work.
 - **Phase 5 gets simpler.** `demo=loanpro` was always an application label and
   `datasource_id=loanpro-demo` a datasource one; they were never two names for
@@ -225,7 +286,7 @@ Confirmed. Consequences, all of which simplify rather than complicate:
 - **One app may run several governed MCP instances** — one per inline
   datasource, since each serves exactly one `query_templates.yaml`.
 
-### 6.2 NEW, created by 6.1 — is `mode` per-datasource or per-application?
+### 7.2 NEW, created by 7.1 — is `mode` per-datasource or per-application?
 
 Asked as an application property ("its own ... oob or inline mode properties"),
 but once an app has several datasources the honest answer is that an application
@@ -234,33 +295,33 @@ path, and there is one access path per datasource.** An app could reasonably
 govern its own Postgres inline while only observing a third-party MCP
 out-of-band.
 
-Proposed (and drafted in §3): declare `mode` on the datasource, derive the
+Proposed (and drafted in §4): declare `mode` on the datasource, derive the
 application's `modes` as the union. Strictly more expressive, collapses to the
 asked-for answer when an app has one datasource, and avoids two declarations
 that can contradict each other. **This is the one place the design extends the
 instruction rather than implementing it — worth a yes/no before Phase 1**, since
 it decides where the field lives.
 
-### 6.3 Open — what happens to an unattributed session?
+### 7.3 Open — what happens to an unattributed session?
 
 One whose spans carry no project mapping. Proposed: a reserved `""` app that is
 reported, never merged into a real one. It must not read as "clean" — the same
 distinction `TODO` entry 8 draws between "passed" and "never checked".
 
-### 6.4 Open — does mode gate evaluation, or only presentation?
+### 7.4 Open — does mode gate evaluation, or only presentation?
 
 An inline-only app produces no traces, so OOB is vacuous for it either way. But
 an app declaring `mode: inline` that *does* emit traces should probably still be
 evaluated, with mode shaping the UI rather than suppressing evidence. Suppressing
 evaluation because of a declaration is how an engine goes quietly blind.
 
-### 6.5 Open — does per-app check enablement replace or nest under the deployment-wide set?
+### 7.5 Open — does per-app check enablement replace or nest under the deployment-wide set?
 
 `TODO` entry 8 leaves this open. Two independent switches with unclear
 precedence is the worst of the three outcomes. Related: whether a *tool call*
 records which datasource it hit, which only matters once an app has several.
 
-### 6.6 Open — multi-app in one Phoenix project
+### 7.6 Open — multi-app in one Phoenix project
 
 The proposal assumes one project per app. A customer who cannot partition their
 collector needs a fallback — probably a span-attribute binding in
