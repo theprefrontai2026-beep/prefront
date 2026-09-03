@@ -37,7 +37,8 @@ one demo produces traces at a time.
 **Mode is in the same state.** `EVAL_MODE` exists (`config.py:71`) but is
 cosmetic — it is reported as `mode`/`shadow` in `/eval/status` and
 `/eval/compliance` (`api.py:142,195-196`) and drives no behaviour — and it is
-deployment-wide. Mode is now genuinely a **per-application** property:
+deployment-wide. Mode is now genuinely a **per-datasource** property, rolled up
+per application (§3):
 
 | app | inline (in-band) | out-of-band |
 |---|---|---|
@@ -81,22 +82,50 @@ An **Application** is the unit of isolation. One registry entry declares
 everything that is currently spread across compose files, env vars and a UI
 constant:
 
+**An application HAS MANY datasources, and the two stay separate concepts**
+(settled; see §6.1). That is not a detail — it splits the artifacts into two
+tiers, and the split falls exactly where the code already puts it:
+
+| tier | artifacts | written / read by | evidence |
+|---|---|---|---|
+| **per-datasource** | `query_templates.yaml`, `policy.yaml` | semantic-layer writes them; one governed MCP instance serves ONE of them | `api.py:76,321` (`/artifacts/<datasource_id>/`); `--templates=/artifacts/<ds>/query_templates.yaml` in both demo composes |
+| **per-application** | `rule_pack.yaml`, `intent_catalog.yaml`, `compliance_overlay.yaml`, `trace_binding.yaml` | eval-engine reads them — today as one env var per DEPLOYMENT | `config.py:40,46,47,54` |
+
+The reason the tiers differ: a query template binds an intent to **one** schema
+or tool surface, so it can only be per-datasource. A rule pack and an intent
+catalog describe the **agent's** approved behaviour, and one agent may reach
+across several datasources in a single session — so they are per-app, and their
+entries name tools that may resolve to different datasources.
+
 ```yaml
 application:
-  id: loanpro                 # the scope key, everywhere
+  id: loanpro                 # the isolation key, everywhere
   label: LoanPro
-  modes: [inline, oob]        # what this app actually runs
-  datasource_id: loanpro-demo # -> /artifacts/<id>/ (semantic-layer)
   telemetry:
     phoenix_project: loanpro  # the ingestion partition (see §4)
-  artifacts:                  # today: one env var per deployment
-    rule_pack:        rule_pack.yaml
-    intent_catalog:   intent_catalog.yaml
+
+  # Per-APP: the agent's policy and approved-intent surface. One each,
+  # spanning every datasource below. Today these are single-valued env vars.
+  artifacts:
+    rule_pack:          rule_pack.yaml
+    intent_catalog:     intent_catalog.yaml
     compliance_overlay: compliance_overlay.yaml
-    trace_binding:    ""      # "" = the bundled default profile
+    trace_binding:      ""    # "" = the bundled default profile
   checks:
     disabled: []              # TODO entry 8's per-app set
+
+  # Per-DATASOURCE: how the agent reaches each one, and what Prefront
+  # publishes for it. `mode` lives HERE, not on the application — see §6.2.
+  datasources:
+    - id: loanpro-demo        # -> /artifacts/loanpro-demo/{query_templates,policy}.yaml
+      mode: inline            # a governed MCP sits in front of it
+      runtime: http://loanpro-mcp:8090/sse
+    - id: loanpro-warehouse   # illustrative: same app, second datasource
+      mode: oob               # observed only; no governed MCP
 ```
+
+The application's own `modes` is then **derived** — the union of its
+datasources' — not declared. One less place to disagree with itself.
 
 Three properties this must have, carried from existing rules:
 
@@ -164,30 +193,75 @@ vocabulary moved into the registry; `setIntents` dropped from Policy Studio.
 Tabs render mode-appropriately — an inline-only app shows no shadow-evaluation
 panels, an OOB-only app shows no Decisions view.
 
-**Phase 5 — retire the `demo` column** in favour of `app_id`, or keep `demo` as
-its alias. Decided last, when the two vocabularies are known to agree.
+**Phase 5 — rename `demo` to `app_id`.** Simplified by §6.1: `demo=loanpro` was
+always an application label and `datasource_id=loanpro-demo` a datasource one,
+so this is a rename with no merge and `datasource_id` is untouched. Last,
+because it is the only step that breaks a stored value.
 
 ---
 
-## 6. Open decisions — these need answering before Phase 2
+## 6. Decisions
 
-1. **Is "application" the same thing as "datasource"?** Today
-   `datasource_id=loanpro-demo` and `demo=loanpro` are different strings for
-   nearly the same thing. One app with two datasources is plausible; two apps
-   sharing one datasource is also plausible. If they are distinct, the registry
-   needs both keys — and every `/artifacts/<datasource_id>/` path stays keyed by
-   datasource, not app.
-2. **What happens to an unattributed session** — one whose spans carry no
-   project mapping? Proposed: a reserved `""` app that is reported, never
-   merged. It must not read as "clean".
-3. **Does an app's mode gate evaluation, or only presentation?** An inline-only
-   app produces no traces, so OOB is vacuous for it either way; but an app
-   declaring `modes: [inline]` that *does* emit traces should probably still be
-   evaluated, and the mode should shape the UI rather than suppress evidence.
-4. **Does per-app check enablement replace or nest under the deployment-wide
-   set?** `TODO` entry 8 leaves this open; two independent switches with
-   unclear precedence is the worst outcome.
-5. **Multi-app in one Phoenix project.** The proposal assumes one project per
-   app. A customer who cannot partition their collector needs a fallback —
-   probably a span-attribute binding in `trace_binding.yaml`, which is already
-   the per-subject-app artifact.
+### 6.1 SETTLED — an application has many datasources; the two stay separate
+
+Confirmed. Consequences, all of which simplify rather than complicate:
+
+- **The registry carries both keys**, and `/artifacts/<datasource_id>/` stays
+  keyed by datasource — no path moves, and semantic-layer needs no change to
+  where it writes.
+- **Artifacts split into two tiers** along a line the code already draws
+  (§3): query templates and the bound policy bundle are per-datasource because
+  they bind to one schema or tool surface; the rule pack, intent catalog,
+  compliance overlay and trace binding are per-app because they describe the
+  agent, which may cross datasources within a single session.
+- **`app_id` is the isolation key on spans and verdicts, not `datasource_id`.**
+  A session is an agent's, and an agent belongs to an application. Recording a
+  datasource per *tool call* is a later refinement (§6.5), not part of the
+  isolation work.
+- **Phase 5 gets simpler.** `demo=loanpro` was always an application label and
+  `datasource_id=loanpro-demo` a datasource one; they were never two names for
+  one thing. So `demo` → `app_id` is a rename with no merge, and
+  `datasource_id` is untouched.
+- **One app may run several governed MCP instances** — one per inline
+  datasource, since each serves exactly one `query_templates.yaml`.
+
+### 6.2 NEW, created by 6.1 — is `mode` per-datasource or per-application?
+
+Asked as an application property ("its own ... oob or inline mode properties"),
+but once an app has several datasources the honest answer is that an application
+does not *have* a mode: **Prefront either does or does not sit in the access
+path, and there is one access path per datasource.** An app could reasonably
+govern its own Postgres inline while only observing a third-party MCP
+out-of-band.
+
+Proposed (and drafted in §3): declare `mode` on the datasource, derive the
+application's `modes` as the union. Strictly more expressive, collapses to the
+asked-for answer when an app has one datasource, and avoids two declarations
+that can contradict each other. **This is the one place the design extends the
+instruction rather than implementing it — worth a yes/no before Phase 1**, since
+it decides where the field lives.
+
+### 6.3 Open — what happens to an unattributed session?
+
+One whose spans carry no project mapping. Proposed: a reserved `""` app that is
+reported, never merged into a real one. It must not read as "clean" — the same
+distinction `TODO` entry 8 draws between "passed" and "never checked".
+
+### 6.4 Open — does mode gate evaluation, or only presentation?
+
+An inline-only app produces no traces, so OOB is vacuous for it either way. But
+an app declaring `mode: inline` that *does* emit traces should probably still be
+evaluated, with mode shaping the UI rather than suppressing evidence. Suppressing
+evaluation because of a declaration is how an engine goes quietly blind.
+
+### 6.5 Open — does per-app check enablement replace or nest under the deployment-wide set?
+
+`TODO` entry 8 leaves this open. Two independent switches with unclear
+precedence is the worst of the three outcomes. Related: whether a *tool call*
+records which datasource it hit, which only matters once an app has several.
+
+### 6.6 Open — multi-app in one Phoenix project
+
+The proposal assumes one project per app. A customer who cannot partition their
+collector needs a fallback — probably a span-attribute binding in
+`trace_binding.yaml`, which is already the per-subject-app artifact.
