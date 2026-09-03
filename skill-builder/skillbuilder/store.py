@@ -94,17 +94,40 @@ class Store:
     ) -> dict[str, Any]:
         """Insert a document, or return the existing row if content is identical.
 
-        Identity is (file_hash, version): same bytes at the same version is the
-        same immutable document. New content -> new row.
+        Identity is (file_hash, version, app_id). The application is part of it
+        because two applications uploading the SAME policy text are two
+        documents: each is reviewed, has rules extracted, and is approved
+        independently, and collapsing them would let one application's review
+        state appear under another's.
+
+        Identity used to be (file_hash, version) alone, which broke the moment
+        documents became application-scoped: re-uploading text that already
+        existed returned the OTHER application's row (or an unattributed one),
+        the caller set it active, the scoped document list then excluded it,
+        and the UI's "Extract rules" button silently disabled itself because
+        its active document had vanished. Found exactly that way.
+
+        An existing UNATTRIBUTED row (uploaded before app_id existed) is
+        ADOPTED by the first application to re-upload it rather than being
+        left stranded and invisible to every scoped read. Adoption only ever
+        fills a blank; it never moves a document between applications.
         """
         file_hash = "sha256:" + hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
         with self._session() as s:
             existing = s.scalars(
                 select(SourceDocument).where(SourceDocument.file_hash == file_hash)
             ).all()
-            for row in existing:
-                if (row.version or "") == (version or ""):
-                    return _as_dict(row)
+            same_version = [r for r in existing if (r.version or "") == (version or "")]
+            for row in same_version:
+                if (row.app_id or "") == (app_id or ""):
+                    return _as_dict(row)          # true duplicate
+            if app_id:
+                for row in same_version:
+                    if not row.app_id:
+                        row.app_id = app_id       # adopt the unattributed row
+                        s.flush()
+                        return _as_dict(row)
+            # Same bytes, but this application has no copy: it gets its own.
 
             doc = SourceDocument(
                 document_id=document_id or _uuid(),

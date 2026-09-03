@@ -138,3 +138,63 @@ def test_skill_versions_carry_the_application_themselves(store):
                             status="published", artifact_json="{}", app_id="beta")
     assert [v["skill_id"] for v in store.list_skill_versions("alpha")] == ["s1"]
     assert len(store.list_skill_versions()) == 2
+
+
+# --- document identity includes the application -----------------------------
+# Regression: identity was (file_hash, version), so re-uploading text that
+# already existed returned ANOTHER application's row (or an unattributed one).
+# The caller set it active, the scoped list then excluded it, and the UI's
+# "Extract rules" button silently disabled itself because its active document
+# had vanished. Found exactly that way.
+
+TEXT = "identical policy bytes"
+
+
+def _up(store, app_id, version="1.0"):
+    return store.add_document(file_name="d.md", file_type="md", raw_text=TEXT,
+                              domain="general", version=version, app_id=app_id)
+
+
+def test_same_bytes_in_two_applications_are_two_documents(store):
+    a = _up(store, "alpha")
+    b = _up(store, "beta")
+    assert a["document_id"] != b["document_id"]
+    assert a["app_id"] == "alpha" and b["app_id"] == "beta"
+    # And each application sees exactly its own.
+    assert [d["document_id"] for d in store.list_documents("alpha")] == [a["document_id"]]
+    assert [d["document_id"] for d in store.list_documents("beta")] == [b["document_id"]]
+
+
+def test_re_upload_within_one_application_still_dedupes(store):
+    a = _up(store, "alpha")
+    assert _up(store, "alpha")["document_id"] == a["document_id"]
+    assert len(store.list_documents("alpha")) == 1
+
+
+def test_an_unattributed_document_is_adopted_not_stranded(store):
+    # Uploaded before app_id existed; the first application to re-upload it
+    # claims it, rather than getting back a row every scoped read excludes.
+    legacy = _up(store, None)
+    assert legacy["app_id"] is None
+    claimed = _up(store, "alpha")
+    assert claimed["document_id"] == legacy["document_id"], "adopt, do not duplicate"
+    assert claimed["app_id"] == "alpha"
+    assert [d["document_id"] for d in store.list_documents("alpha")] == [legacy["document_id"]]
+
+
+def test_adoption_never_moves_a_document_between_applications(store):
+    a = _up(store, "alpha")
+    b = _up(store, "beta")
+    assert store.list_documents("alpha")[0]["document_id"] == a["document_id"]
+    assert store.list_documents("beta")[0]["document_id"] == b["document_id"]
+    assert a["app_id"] == "alpha"
+
+
+def test_the_returned_document_is_always_visible_to_the_caller(store):
+    # The invariant the bug violated: whatever add_document returns for an
+    # application must appear in that application's list, or the caller sets
+    # an active document that its own list does not contain.
+    _up(store, None)                       # a pre-existing unattributed row
+    doc = _up(store, "alpha")
+    ids = {d["document_id"] for d in store.list_documents("alpha")}
+    assert doc["document_id"] in ids

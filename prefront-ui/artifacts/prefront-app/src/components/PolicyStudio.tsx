@@ -215,8 +215,28 @@ export default function PolicyStudio({
       setUploadStatus(`Uploaded — ${doc.file_name || fileName}`);
       // upload returns only {document_id, status}; refresh the list to get the
       // full document record (file_name, domain, status, …).
+      //
+      // MERGE rather than replace. This used to overwrite `docs` outright,
+      // which meant a document missing from the refreshed list silently
+      // removed itself — and since `activeDoc` is derived from `docs`, the
+      // "Extract rules" button (disabled on `!activeDoc`) went dead with no
+      // error anywhere. That is exactly what a scoping mismatch produced once
+      // documents became application-scoped. The root cause is fixed in the
+      // store, but the UI should not turn a data mismatch into a dead control
+      // either: keeping the just-uploaded document means the next failure of
+      // this shape is visible instead of silent.
       api.listDocuments(appId)
-        .then(r => setDocs(Array.isArray(r) ? r : (r.documents || [])))
+        .then(r => {
+          const list = (Array.isArray(r) ? r : (r.documents || [])) as any[];
+          const present = list.some(d => d.document_id === doc.document_id);
+          setDocs(present ? list : [doc, ...list]);
+          if (!present) {
+            setUploadError(
+              `Uploaded, but this document is not in ${appId}'s list — it may belong to another application. ` +
+              `Extraction will act on it, but it will not persist in the sidebar.`,
+            );
+          }
+        })
         .catch(() => {});
     } catch (e: any) {
       setUploadError(String(e.message || e));
