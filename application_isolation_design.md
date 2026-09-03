@@ -318,6 +318,56 @@ because it is the only step that breaks a stored value.
 
 ---
 
+## 6b. Where this design does NOT reach — audited, not assumed
+
+Phases 1-3 scope the runtime data path and eval-engine's config. Four gaps
+remain, measured rather than inferred. None is closed by Phase 3.
+
+**Isolation rests on THREE keys that were never reconciled.** `app_id`
+(spans, eval_*), `demo` (decision_*, severity_rule), `datasource_id`
+(query_templates, functions, datasources). They coincide today only because each
+bundled demo happens to use matching strings. §7.1 settled that an application
+has MANY datasources — so `app_id` and `datasource_id` are genuinely not
+interchangeable, and anywhere that conflates them breaks the first time an app
+has two.
+
+**1. skill-builder has no scoping at all.** Ten tables — `source_documents`,
+`document_sections`, `policy_clauses`, `candidate_rules`,
+`approved_policy_rules`, `skill_versions`, `extraction_runs`,
+`document_profiles`, `policy_atoms`, `unresolved_items` — and **zero**
+occurrences of any app/demo/tenant column (`grep -cE "demo|app_id|
+application_id|tenant" skill-builder/skillbuilder/db.py` → 0). Every policy
+document and extracted rule lives in one undivided pool, so two applications
+onboarding different policies interleave in Policy Studio with nothing to
+separate them. This is the largest gap and the one furthest from the data path
+this design started with.
+
+**2. Every destructive operation is all-or-nothing.** `DELETE /eval/verdicts`
+is `TRUNCATE TABLE`; `DELETE /oob/spans` truncates `spans` AND `ingest_state`;
+`POST /design/semantic/reset` removes every artifact dir. So the UI's "Clear
+all trace data", sitting on a page labelled with ONE application, destroys
+every application's. That is the same mislabelling as §2, except destructive —
+and it is not hypothetical: the semantic reset wiped
+`/artifacts/{example,loanpro-demo,securebank-demo}` during Phase 2 and took
+eval-engine down with it.
+
+**3. Retention is one number per deployment.** `OOB_RETENTION_DAYS` and
+`EVAL_RETENTION_DAYS` are single ints applied as ClickHouse TTLs on whole
+tables, so one app cannot keep traces for 90 days while another keeps 7 —
+which differing regulatory regimes are exactly what require. Already flagged
+independently as `TODO` entry 18.
+
+**4. `rule_audit_log` carries no `demo` column** while the `decision_*` tables
+beside it do.
+
+**And a limit worth stating plainly:** `TRUNCATE`, per-table TTLs and one shared
+ClickHouse database make this **soft isolation** — a scoping convention, not a
+boundary. Nothing enforces that a query carries the filter. That is adequate for
+several demos in one deployment; it is not a tenancy boundary, and should not be
+described as one.
+
+---
+
 ## 7. Decisions
 
 ### 7.1 SETTLED — an application has many datasources; the two stay separate
