@@ -108,6 +108,38 @@ def reload() -> None:
     _catalog = None
 
 
+def preload() -> None:
+    """Load both artifacts NOW, so a misconfigured path fails at startup.
+
+    Both loaders treat an EMPTY path as "unconfigured" and return the empty
+    artifact (Hard Rule 9 - a deployment that ships neither runs Family 2
+    only). But a path that is SET and does not resolve raises out of the
+    first governed call instead, taking down every call over that connection
+    with a bare FileNotFoundError long after the operator could act on it.
+
+    Governance must not degrade quietly: a typo'd path silently disabling
+    Family 1's content rules and Family 3's catalog checks is exactly the
+    "engine goes blind" failure the whole design guards against. So this is
+    deliberately a LOUD startup check rather than a fallback to EMPTY -
+    called from server.build_server(), which every entry point (stdio serve,
+    serve_http, the CLI's one-shot `call`) goes through.
+    """
+    for var, path, load in (
+        ("PREFRONT_RULE_PACK_PATH", RULE_PACK_PATH, rule_pack),
+        ("PREFRONT_INTENT_CATALOG_PATH", INTENT_CATALOG_PATH, intent_catalog),
+    ):
+        if not path:
+            continue
+        try:
+            load()
+        except Exception as e:
+            raise RuntimeError(
+                f"{var}={path!r} could not be loaded: {type(e).__name__}: {e}. "
+                f"Unset it to run without this artifact; a set-but-unreadable "
+                f"path is never treated as unconfigured."
+            ) from e
+
+
 def _step(
     intent: str, tool_name: str, args: dict[str, Any], result: Any, side_effect: str, seq: int = 0,
 ) -> Step:
@@ -204,12 +236,31 @@ def evaluate_family2_parameter_side(
     return ("allow" if effect == "flag" else effect), own, current
 
 
-def restricted_field_names(result: Any) -> set[str]:
+def restricted_field_names(result: Any, caller_role: str = "") -> set[str]:
     """The union of every content-engine detector's field_names actually
     present in `result` (by key name, same matching content.py's own
     _field_in_result uses) - what the caller should mask before returning
     this result, regardless of whether the native policy.yaml rules already
-    caught it (idempotent either way)."""
+    caught it (idempotent either way).
+
+    A rule carrying `restricted_from_roles` binds only those roles, exactly
+    as content.py:_rule_binds_role does. Without that filter this masked the
+    field for EVERY role, including the ones the policy explicitly entitles
+    to see it - a "not X, but Y" substitution rule (LoanPro's
+    R-CREDIT-SCORE-OFFICER-RESTRICTION: a Loan Officer sees the tier band,
+    an Underwriter sees the raw score) would then deny X to everyone and
+    make Y unreachable. Over-masking fails safe, but it enforces something
+    the policy does not say.
+
+    An EMPTY `caller_role` keeps the old, role-blind behaviour: with no
+    identity resolved there is no basis to narrow a restriction, and masking
+    more is the safe direction.
+
+    Detector `scopes` are deliberately NOT consulted here. Inline, masking
+    the RESULT is the mechanism that keeps a field out of the final answer,
+    so a `final_answer`-scoped rule must still mask - unlike the OOB path,
+    where the two are separate observations of an already-finished session.
+    """
     from ..evalengine.provenance import flatten
 
     def normalize(name: str) -> str:
@@ -219,6 +270,8 @@ def restricted_field_names(result: Any) -> set[str]:
     present = {normalize(p.rsplit(".", 1)[-1].split("[")[0]) for p, _ in flatten(result)}
     hits: set[str] = set()
     for rule in rule_pack().by_engine("content"):
+        if caller_role and rule.restricted_from_roles and caller_role not in rule.restricted_from_roles:
+            continue
         for det in rule.detectors:
             for fname in det.get("field_names") or []:
                 if normalize(fname) in present:

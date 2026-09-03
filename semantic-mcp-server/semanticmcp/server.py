@@ -396,7 +396,7 @@ async def _call_governed(
             caller.role or "", caller.attrs.get("channel", "") or "",
         )
         inline_checks_trace.extend(_dc.asdict(v) for v in verdicts)
-        return inline_checks.restricted_field_names(result_obj)
+        return inline_checks.restricted_field_names(result_obj, caller.role or "")
 
     if kind == "precheck":
         wa = tool.get("write_action") or {}
@@ -466,6 +466,10 @@ def build_server(dsn: str, templates_path: str | Path):
         import mcp.types as types
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("the `mcp` package is required to serve; `uv pip install mcp`") from e
+
+    # Fail loudly here if either inline-checks artifact is configured but
+    # unreadable — never at the first governed call. See inline_checks.preload.
+    inline_checks.preload()
 
     policy = PolicyRegistry(_policy_path(templates_path))
     registry = _Registry(templates_path,
