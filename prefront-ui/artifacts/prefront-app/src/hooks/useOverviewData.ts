@@ -53,6 +53,9 @@ export type OverviewData = {
 };
 
 export function useOverviewData(demo: DemoConfig, active: boolean, since = 86400): OverviewData {
+  // This application's trace partition. Every /oob/ read below is scoped by it,
+  // so the page stops counting another app's sessions under this app's name.
+  const project = demo.phoenixProject;
   const [evalStatus, setEvalStatus] = useState<EvalStatus | null>(null);
   const [oobStatus, setOobStatus] = useState<OobStatus | null>(null);
   const [overview, setOverview] = useState<OobOverview | null>(null);
@@ -70,16 +73,23 @@ export function useOverviewData(demo: DemoConfig, active: boolean, since = 86400
     const one = <T,>(key: string, url: string, set: (v: T) => void) =>
       getJSON<T>(url).then(set).catch((e) => { errs[key] = String(e?.message || e); });
     Promise.all([
+      // NOTE the asymmetry, and it is the point of application_isolation_
+      // design.md: the /oob/ reads below are scoped to THIS application's
+      // Phoenix project, but the /eval/ reads cannot be — eval-engine has no
+      // application concept at all yet (0 of 14 endpoints take a scope). So
+      // this page is app-specific on its out-of-band half and still
+      // deployment-wide on its evaluation half. That is a deliberate
+      // intermediate state, not an oversight; §6 Phases 2-3 close it.
       one<EvalStatus>("eval", `/eval/status${qs({ since })}`, setEvalStatus),
-      one<OobStatus>("oob", "/oob/status", setOobStatus),
-      one<OobOverview>("overview", `/oob/overview${qs({ since })}`, setOverview),
+      one<OobStatus>("oob", `/oob/status${qs({ project })}`, setOobStatus),
+      one<OobOverview>("overview", `/oob/overview${qs({ since, project })}`, setOverview),
       one<{ findings: EvalVerdict[] }>("findings", `/eval/findings${qs({ since, limit: FINDINGS_LIMIT })}`, (d) => setFindings(d.findings || [])),
       one<{ conformance_tags: ConformanceTag[] }>("conformance", `/eval/conformance${qs({ since, limit: 200 })}`, (d) => setConformance(d.conformance_tags || [])),
-      one<{ sessions: SessionRow[] }>("sessions", `/oob/sessions${qs({ since, limit: 500 })}`, (d) => setSessions(d.sessions || [])),
+      one<{ sessions: SessionRow[] }>("sessions", `/oob/sessions${qs({ since, limit: 500, project })}`, (d) => setSessions(d.sessions || [])),
       one<AgentStats>("governed", `/api/stats${qs({ demo: demo.id })}`, setGoverned),
       one<Coverage>("coverage", `/eval/coverage${qs({ since })}`, setCoverage),
     ]).finally(() => { setErrors(errs); setLoading(false); });
-  }, [demo.id, since]);
+  }, [demo.id, project, since]);
 
   useEffect(() => { load(); }, [load]);
   // Refetch on tab activation — a scenario run elsewhere shows up on return.

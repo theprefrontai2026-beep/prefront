@@ -23,7 +23,17 @@ export interface DemoConfig {
   glyph: string;        // short badge glyph (emoji)
   scenarioCount: number;
 
+  // The Phoenix project this application's services report to — the partition
+  // that isolates its traces from every other app's, and the value every /oob/
+  // read is scoped by (application_isolation_design.md §5). Must match the
+  // demo compose's PHOENIX_PROJECT_NAME. An application HAS MANY datasources,
+  // so this is keyed to the APP, never to `datasourceId`.
+  phoenixProject: string;
+
   // Data Connector defaults (prefills for connecting this demo's datasource).
+  // One app may have several datasources; this is the one the Data Connector
+  // prefills. The full per-datasource registry (with each one's inline/oob
+  // mode) lands with the phase that consumes it.
   datasourceId: string;
   ddlPlaceholder: string;
   // Prefilled (not just a placeholder — an actual editable default value) MCP
@@ -65,6 +75,7 @@ export const DEMOS: DemoConfig[] = [
     accent: "#2563eb",
     glyph: "🏦",
     scenarioCount: 8,
+    phoenixProject: "securebank",
     datasourceId: "securebank",
     ddlPlaceholder:
       "CREATE TABLE users (\n  user_id INT PRIMARY KEY,\n  name TEXT,\n  role TEXT,\n  ssn TEXT\n);\n\nCREATE TABLE accounts (\n  account_id INT PRIMARY KEY,\n  user_id INT REFERENCES users(user_id),\n  balance NUMERIC,\n  status TEXT\n);",
@@ -89,6 +100,7 @@ export const DEMOS: DemoConfig[] = [
     accent: "#7c3aed",
     glyph: "💳",
     scenarioCount: 34,
+    phoenixProject: "loanpro",
     datasourceId: "loanpro",
     ddlPlaceholder:
       "CREATE TABLE users (\n  user_id INT PRIMARY KEY,\n  name TEXT,\n  role TEXT,\n  ssn TEXT\n);\n\nCREATE TABLE loan_applications (\n  loan_id INT PRIMARY KEY,\n  applicant_id INT,\n  requested_amount NUMERIC,\n  status TEXT\n);",

@@ -459,7 +459,7 @@ export default function App() {
             />
           </div>
           <div className={tab === "oob" ? "" : "tab-hidden"}>
-            <Observability active={tab === "oob"} />
+            <Observability active={tab === "oob"} demo={demo} />
           </div>
         </div>
       </div>

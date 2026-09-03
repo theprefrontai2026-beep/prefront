@@ -21,7 +21,7 @@ import CopyLink from "./CopyLink";
 import { setParams, useLoc } from "../lib/router";
 import { navTo, obsViewHref, onTab, sessionHref, traceHref } from "../routes";
 import { CLEAR_ALL_CONFIRM, clearAllTraceData, getChecks, type CheckInfo } from "../api";
-import { DEMOS } from "../demos";
+import { DEMOS, type DemoConfig } from "../demos";
 
 /* ── types (mirror oobingest/ch.py) ─────────────────────────────────────── */
 
@@ -1323,7 +1323,7 @@ export const STATUS_TONE: Record<string, string> = { violated: "red", satisfied:
 
 /* ── root ───────────────────────────────────────────────────────────────── */
 
-export default function Observability({ active = true }: { active?: boolean }) {
+export default function Observability({ active = true, demo }: { active?: boolean; demo: DemoConfig }) {
   // View and open artifact both come from the URL:
   //   /observability/<view>, /observability/sessions/<id>,
   //   /observability/traces/<id>?span=<span_id>
@@ -1335,7 +1335,14 @@ export default function Observability({ active = true }: { active?: boolean }) {
   const openSess = here && view === "sessions" ? loc.segs[2] ?? null : null;
   const openTrace = here && view === "traces" ? loc.segs[2] ?? null : null;
   const [since, setSince] = useState<number>(86400);
-  const [project, setProject] = useState("");
+  // Default to THIS application's Phoenix project, not "" (every project).
+  // "" was a silent cross-app default: an app-labelled page counting whatever
+  // else happened to be in the store. The dropdown below still allows widening
+  // or switching, which is an explicit operator action — see
+  // application_isolation_design.md §5 for why the default is the fix and
+  // hard-scoping is a later decision.
+  const [project, setProject] = useState(demo.phoenixProject);
+  useEffect(() => { setProject(demo.phoenixProject); }, [demo.phoenixProject]);
   const [auto, setAuto] = useState(true);
   const [tick, setTick] = useState(0);
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -1356,7 +1363,7 @@ export default function Observability({ active = true }: { active?: boolean }) {
     const jobs: Promise<any>[] = [
       getJSON<Overview>(`/oob/overview${p}`).then((d) => alive && setOverview(d)),
       getJSON<Facets>(`/oob/facets${p}`).then((d) => alive && setFacets(d)),
-      getJSON<Status>("/oob/status").then((d) => alive && setStatus(d)),
+      getJSON<Status>(`/oob/status${qs({ project })}`).then((d) => alive && setStatus(d)),
     ];
     if (view === "llm") jobs.push(getJSON<LlmView>(`/oob/llm${p}`).then((d) => alive && setLlm(d)));
     if (view === "ingestion") jobs.push(getJSON<{ scenarios: Scenario[] }>(`/oob/scenarios${p}`).then((d) => alive && setScenarios(d.scenarios)));

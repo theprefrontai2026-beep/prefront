@@ -118,9 +118,16 @@ async def health():
 
 
 @app.get("/oob/status")
-async def status():
+async def status(project: str = ProjectQ):
+    """Ingestion health. `project` scopes the SPAN COUNTS to one application's
+    partition; the phoenix/otlp/retention blocks stay deployment-wide, because
+    they describe the ingest pipeline itself and not any one app's data.
+
+    This was the only /oob/ read endpoint without the parameter, which made it
+    the one place an app-scoped page still showed a deployment-wide number.
+    """
     ok = await asyncio.to_thread(ch.ping)
-    totals = await asyncio.to_thread(ch.totals) if ok else {}
+    totals = await asyncio.to_thread(ch.totals, project) if ok else {}
     return {
         "clickhouse": {"ok": ok, "url": config.CLICKHOUSE_URL, "database": config.CLICKHOUSE_DB, **totals},
         "phoenix": poller.status(),

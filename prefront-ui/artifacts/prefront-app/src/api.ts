@@ -356,9 +356,10 @@ export function suggestComplianceOverlay(body: {
 // ── Check enablement (eval-engine, /eval/checks) ─────────────────────────────
 // Which of the engine's checks this deployment runs. NOT demo-scoped, unlike
 // the severity mapping above: `/eval/*` is the engine's own surface and knows
-// nothing about demos (see prefront-ui/CLAUDE.md's caveat on the same point
-// for `/oob/*`), so this is one setting for the deployment, and the panel
-// says so rather than implying a per-demo one.
+// nothing about applications, so this is one setting for the DEPLOYMENT and the
+// panel says so rather than implying a per-app one. (`/oob/*` no longer shares
+// that limitation — it partitions by Phoenix project, one per application; see
+// application_isolation_design.md. eval-engine's half is Phases 2-3 there.)
 
 export interface CheckInfo {
   check_id: string;

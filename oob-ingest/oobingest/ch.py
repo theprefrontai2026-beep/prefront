@@ -439,12 +439,21 @@ def list_traces(since_s: Optional[int], project: str, *, service: str = "", kind
                countIf(kind='TOOL' OR tool_name != '') AS tool_calls,
                arrayDistinct(groupArrayIf(llm_model, llm_model != '')) AS models,
                anyIf(scenario_id, scenario_id != '') AS scenario_id,
-               any(project) AS project
+               # Aliased `proj`, renamed back to `project` in the outer SELECT.
+               # `any(project) AS project` shadows the COLUMN for the whole
+               # query, so the per-span `project = ...` filter _since_clause
+               # puts in WHERE resolves to this aggregate and ClickHouse raises
+               # ILLEGAL_AGGREGATION. Same alias trap the t_start/t_end rename
+               # below already works around (root CLAUDE.md, "ClickHouse alias
+               # trap") - which is why ?project= 500'd on both these endpoints
+               # from the day the parameter was added.
+               any(project) AS proj
         FROM {T} WHERE {where}
         GROUP BY trace_id {having_sql}
     """
     total = one(f"SELECT count() AS n FROM ({base})", params).get("n", 0)
-    data = rows(f"SELECT * EXCEPT (t_start, t_end), t_start AS start_time, t_end AS end_time "
+    data = rows(f"SELECT * EXCEPT (t_start, t_end, proj), t_start AS start_time, "
+                f"t_end AS end_time, proj AS project "
                 f"FROM ({base}) ORDER BY t_start DESC LIMIT %(limit)s OFFSET %(offset)s", params)
     return {"traces": data, "total": total, "limit": params["limit"], "offset": params["offset"]}
 
@@ -511,12 +520,21 @@ def list_sessions(since_s: Optional[int], project: str, *, role: str = "", chann
                arrayDistinct(groupArrayIf(intent_name, intent_name != '')) AS intents,
                argMinIf(substring(input_value, 1, 240), start_time, name LIKE 'turn %%') AS first_input,
                argMaxIf(substring(output_value, 1, 240), start_time, name LIKE 'turn %%') AS last_output,
-               any(project) AS project
+               # Aliased `proj`, renamed back to `project` in the outer SELECT.
+               # `any(project) AS project` shadows the COLUMN for the whole
+               # query, so the per-span `project = ...` filter _since_clause
+               # puts in WHERE resolves to this aggregate and ClickHouse raises
+               # ILLEGAL_AGGREGATION. Same alias trap the t_start/t_end rename
+               # below already works around (root CLAUDE.md, "ClickHouse alias
+               # trap") - which is why ?project= 500'd on both these endpoints
+               # from the day the parameter was added.
+               any(project) AS proj
         FROM {T} WHERE {where}
         GROUP BY session_id {having_sql}
     """
     total = one(f"SELECT count() AS n FROM ({base})", params).get("n", 0)
-    data = rows(f"SELECT * EXCEPT (t_start, t_end), t_start AS start_time, t_end AS end_time "
+    data = rows(f"SELECT * EXCEPT (t_start, t_end, proj), t_start AS start_time, "
+                f"t_end AS end_time, proj AS project "
                 f"FROM ({base}) ORDER BY t_start DESC LIMIT %(limit)s OFFSET %(offset)s", params)
     return {"sessions": data, "total": total, "limit": params["limit"], "offset": params["offset"]}
 
@@ -637,13 +655,21 @@ def facets(since_s: Optional[int], project: str) -> dict[str, list[str]]:
     }
 
 
-def totals() -> dict[str, Any]:
+def totals(project: str = "") -> dict[str, Any]:
+    """Span/trace counts, optionally for ONE Phoenix project.
+
+    The project is how a deployment partitions one subject application's traces
+    from another's (see application_isolation_design.md). Empty = every project,
+    which is both the historical behaviour and the right answer for a single-app
+    deployment or an operator looking at ingestion health as a whole.
+    """
+    where, params = ("WHERE project = %(project)s", {"project": project}) if project else ("", {})
     return one(f"""
         SELECT count() AS spans, uniqExact(trace_id) AS traces,
                countIf(source='phoenix') AS from_phoenix, countIf(source='otlp') AS from_otlp,
                min(start_time) AS oldest, max(start_time) AS newest
-        FROM {T}
-    """)
+        FROM {T} {where}
+    """, params)
 
 
 def truncate() -> None:

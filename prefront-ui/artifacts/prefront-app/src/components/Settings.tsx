@@ -5,9 +5,10 @@
  *
  *   Checks (`ChecksSection`) — which of the engine's checks this deployment
  *     runs, grouped by family. Talks to EVAL-ENGINE (GET/PUT/DELETE
- *     /eval/checks), so it is DEPLOYMENT-wide, not per demo: `/eval/*` is the
- *     engine's own surface and has no notion of a demo (the same caveat
- *     prefront-ui/CLAUDE.md records for `/oob/*`). Disabling a check stops it
+ *     /eval/checks), so it is DEPLOYMENT-wide, not per app: `/eval/*` is the
+ *     engine's own surface and has no notion of an application. (`/oob/*` does
+ *     now — it partitions by Phoenix project; see application_isolation_
+ *     design.md, whose Phases 2-3 close the same gap here.) Disabling a check stops it
  *     evaluating AND hides its existing verdicts everywhere, so it is a real
  *     switch rather than a display filter — the panel copy says so.
  *   Finding severity — a customer-editable ordered rule-list that derives each

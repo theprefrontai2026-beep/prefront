@@ -227,7 +227,38 @@ the honest split is:
 
 Each phase is independently shippable and leaves the system working.
 
-**Phase 1 — partition the telemetry.** Cheaper than first estimated, per §5.1:
+**Phase 1 — partition the telemetry. DONE for the OOB half.** What shipped:
+each demo compose sets its own Phoenix project via a per-app override var
+(`LOANPRO_PHOENIX_PROJECT` / `SECUREBANK_PHOENIX_PROJECT` — deliberately not the
+shared `PHOENIX_PROJECT_NAME`, which one global `.env` value would collapse back
+into a single project); `phoenixProject` joins the app registry in `demos.ts`;
+every `/oob/` read in the SPA passes it; and `/oob/status` gained the `project`
+parameter it was the only read endpoint to lack. Existing spans were relabelled
+`prefront` → `loanpro` after verifying all 867 were LoanPro's (its scenario ids,
+its services, no foreign sessions).
+
+Two things surfaced doing it, both recorded because they change what the rest of
+this document should assume:
+
+- **`?project=` had never worked on `/oob/sessions` or `/oob/traces`.** Both
+  aliased `any(project) AS project`, which shadows the COLUMN for the whole
+  query, so the per-span filter in `WHERE` resolved to the aggregate and
+  ClickHouse raised `ILLEGAL_AGGREGATION` — a 500 on every use of a parameter
+  that had been in the signature all along. This is the alias trap the root
+  `CLAUDE.md` already documents, and the fix is the outer-rename the same file's
+  `list_traces` already used for `t_start`/`t_end`. So §5.1's "built and unused"
+  was half right: built, unused, **and broken where it counted** — nothing had
+  ever exercised it.
+- **The Overview is now scoped on its OOB half only, and the headline is on the
+  other half.** "N sessions evaluated", the severity breakdown and findings over
+  time all come from `/eval/*` and remain deployment-wide, so the same number
+  still shows under both apps. Measured after the change: `demo=loanpro` and
+  `demo=securebank` both read "129 sessions evaluated". The page is no longer
+  silently cross-app in its trace counts, but it is not yet honest end to end —
+  Phases 2-3 are what finish it, and until they land the Overview should not be
+  described as app-specific.
+
+Original description: Cheaper than first estimated, per §5.1:
 set `PHOENIX_PROJECT_NAME` per demo compose, and pass `project=` from the UI's
 OOB reads. That alone makes the OOB half of every page app-specific, with **no
 schema change and no new endpoint**. Add `project` to `/oob/status` to close the
@@ -286,7 +317,7 @@ Confirmed. Consequences, all of which simplify rather than complicate:
 - **One app may run several governed MCP instances** — one per inline
   datasource, since each serves exactly one `query_templates.yaml`.
 
-### 7.2 NEW, created by 7.1 — is `mode` per-datasource or per-application?
+### 7.2 SETTLED — `mode` lives on the datasource
 
 Asked as an application property ("its own ... oob or inline mode properties"),
 but once an app has several datasources the honest answer is that an application
@@ -295,12 +326,12 @@ path, and there is one access path per datasource.** An app could reasonably
 govern its own Postgres inline while only observing a third-party MCP
 out-of-band.
 
-Proposed (and drafted in §4): declare `mode` on the datasource, derive the
-application's `modes` as the union. Strictly more expressive, collapses to the
-asked-for answer when an app has one datasource, and avoids two declarations
-that can contradict each other. **This is the one place the design extends the
-instruction rather than implementing it — worth a yes/no before Phase 1**, since
-it decides where the field lives.
+**Confirmed: `mode` is declared on the datasource** (drafted in §4), with the
+application's `modes` derived as the union. Strictly more expressive, collapses
+to the app-level answer when an app has one datasource, and avoids two
+declarations that can contradict each other. The field is not yet consumed
+anywhere — it lands with the phase that needs it, rather than shipping as unused
+config.
 
 ### 7.3 Open — what happens to an unattributed session?
 

@@ -35,7 +35,15 @@ x-llm-env: &llm-env
 
 x-tracing-env: &tracing-env
   PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006}
-  PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-prefront}
+  # This demo is an APPLICATION, and its Phoenix project is the partition
+  # that isolates its traces from every other app's (application_isolation_
+  # design.md §5). oob-ingest polls every project Phoenix has when
+  # PHOENIX_PROJECTS is empty, so a new project name needs no ingest config.
+  #
+  # Deliberately a PER-APP override var, not the shared PHOENIX_PROJECT_NAME:
+  # one global value exported in .env would collapse every app back into a
+  # single project and silently undo the partition.
+  PHOENIX_PROJECT_NAME: ${SECUREBANK_PHOENIX_PROJECT:-securebank}
   PREFRONT_TRACING: ${PREFRONT_TRACING:-1}
 
 x-oob-tap-env: &oob-tap-env
