@@ -55,6 +55,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
+      // The shared APPLICATION registry. An alias rather than a workspace
+      // package: both Dockerfiles build with `pnpm install --frozen-lockfile`,
+      // so adding a package would break the image until the lockfile were
+      // regenerated. See lib/apps/registry.ts.
+      "@apps": path.resolve(import.meta.dirname, "..", "..", "lib", "apps", "registry.ts"),
       "@assets": path.resolve(import.meta.dirname, "..", "..", "attached_assets"),
     },
     dedupe: ["react", "react-dom"],

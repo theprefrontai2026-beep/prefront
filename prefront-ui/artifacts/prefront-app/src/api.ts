@@ -404,10 +404,22 @@ export interface ChecksResponse {
   enabled: number;
   /** Only on PUT: ids the engine did not recognise and therefore dropped. */
   unknown?: string[];
+  /** Which set is in force: the deployment's, or this application's registry
+   *  entry overriding it. */
+  source?: "deployment" | "application";
+  /** False when an application's registry entry overrides the deployment set —
+   *  saving here would write a set that application ignores. */
+  editable?: boolean;
 }
 
-export function getChecks(): Promise<ChecksResponse> {
-  return fetch("/eval/checks").then(jsonOrThrow);
+/** `appId` reports the set actually IN FORCE for that application, which is not
+ *  always the deployment's: a registered application may declare its own
+ *  disabled set in the registry, and that REPLACES the deployment-wide one.
+ *  The response's `source`/`editable` say which is in force, so a panel can
+ *  avoid appearing to accept an edit that would not apply. */
+export function getChecks(appId?: string): Promise<ChecksResponse> {
+  const q = appId ? `?app=${encodeURIComponent(appId)}` : "";
+  return fetch(`/eval/checks${q}`).then(jsonOrThrow);
 }
 
 /** Replace the whole disabled set (the engine takes the list, not a diff). */

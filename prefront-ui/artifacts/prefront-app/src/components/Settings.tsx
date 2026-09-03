@@ -119,7 +119,7 @@ function CheckRow({ c, disabled, open, onOpen, onToggle }: {
   );
 }
 
-function ChecksSection() {
+function ChecksSection({ appId }: { appId: string }) {
   const [data, setData] = useState<ChecksResponse | null>(null);
   const [disabledIds, setDisabledIds] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -140,8 +140,8 @@ function ChecksSection() {
 
   const load = useCallback(() => {
     setStatus("loading"); setError("");
-    getChecks().then(apply).catch((e) => { setError(String(e?.message || e)); setStatus("error"); });
-  }, [apply]);
+    getChecks(appId).then(apply).catch((e) => { setError(String(e?.message || e)); setStatus("error"); });
+  }, [apply, appId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -328,7 +328,7 @@ export default function Settings({ demo, active = true, onSaved }: {
 
   return (
     <main className="pf-tr">
-      <ChecksSection />
+      <ChecksSection appId={demo.id} />
 
       <section className="pf-panel">
         <div className="pf-dash-panel-head">

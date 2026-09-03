@@ -104,6 +104,30 @@ code { font-family: var(--app-font-mono); font-size: 0.875em; }
 .verdict-wordmark { font-size: 22px; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
 .verdict-tagline { font-size: 13px; color: var(--muted); margin-top: 2px; }
 
+/* Application switcher. Verdict shows ONE application at a time — the header
+   names it and every panel below belongs to it — so this is a plain segmented
+   control rather than a dropdown: the choice is short, and which one is active
+   should be readable without opening anything. */
+.verdict-apps { display: flex; gap: 6px; margin-top: 10px; }
+.verdict-app {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+.verdict-app:hover { color: var(--ink); border-color: var(--muted); }
+.verdict-app.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
+  font-weight: 600;
+  cursor: default;
+}
+
 /* ── Panels / cards ─────────────────────────────────────────────────────── */
 .pf-panel {
   background: var(--surface);

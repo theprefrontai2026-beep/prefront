@@ -17,7 +17,7 @@
  * doesn't have. The inline session flyout below is self-sufficient.
  */
 import { useEffect, useMemo, useState } from "react";
-import type { DemoConfig } from "../demo";
+import type { AppIdentity } from "../demo";
 import { SessionDetail } from "./SessionDetail";
 
 type Finding = { check: string; evidence: string; policy?: string };
@@ -157,9 +157,9 @@ function SessionFlyout({ sessionId, scenario, onClose }: {
   );
 }
 
-export default function SessionRunner({ demo }: { demo: DemoConfig }) {
+export default function SessionRunner({ app }: { app: AppIdentity }) {
   const [flyout, setFlyout] = useState<{ sessionId: string; scenario: Scenario } | null>(null);
-  const [server, setServer] = useState(demo.orchestratorUrl);
+  const [server, setServer] = useState(app.orchestratorUrl);
   const [families, setFamilies] = useState<Family[] | null>(null);
   const [results, setResults] = useState<Record<string, Run[]>>({});
   const [running, setRunning] = useState<Record<string, boolean>>({});
@@ -169,7 +169,15 @@ export default function SessionRunner({ demo }: { demo: DemoConfig }) {
   const [repeat, setRepeat] = useState(0);
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
+  // An application that ships no scenario catalogue has no orchestrator, and
+  // the registry says so with an empty URL. Naming that state is the point:
+  // without it, selecting such an application produced a bare fetch failure
+  // that reads as "the server is down" rather than "this application has
+  // nothing to run".
+  const runnable = Boolean(app.orchestratorUrl);
+
   async function loadCatalog() {
+    if (!runnable) return;
     setError(""); setLoading(true); setResults({});
     try {
       const res = await fetch(`${server}/api/scenarios`);
@@ -208,7 +216,7 @@ export default function SessionRunner({ demo }: { demo: DemoConfig }) {
 
   useEffect(() => { loadCatalog(); }, []); // eslint-disable-line
 
-  const sensitive = useMemo(() => new Set<string>(demo.sensitiveFields), [demo.sensitiveFields]);
+  const sensitive = useMemo(() => new Set<string>(app.sensitiveFields), [app.sensitiveFields]);
   const all = useMemo(() => (families ?? []).flatMap((f) => f.scenarios), [families]);
   const done = Object.values(results).filter((r) => r.length && !(r[0] as any).error).length;
   const checks = useMemo(() => new Set(all.flatMap((s) => s.checks)).size, [all]);
@@ -219,13 +227,13 @@ export default function SessionRunner({ demo }: { demo: DemoConfig }) {
       <div className="pf-panel">
         <h2><span className="pf-step-badge">1</span>Run the sessions</h2>
         <p className="pf-hint">
-          <strong>{demo.label}</strong> is an ungoverned deployment: one LLM agent calling the shop's own
-          API over MCP, no policy layer. Each row below is a <strong>session</strong> — a signed-in
-          caller on a channel, one or more user turns — designed so that its trace exhibits one of the
-          failure modes Prefront's out-of-band checks detect. <em>LLM</em> sessions let the model pick
-          the tools; <em>scripted</em> sessions replay an exact tool sequence through the same MCP path
-          so the finding is guaranteed. Nothing here is enforced or judged: the verdicts belong to the
-          evaluator — click <strong>Inspect session ▸</strong> on any run to see the ingested trace.
+          <strong>{app.label}</strong> — {app.tagline} Each row below is a <strong>session</strong> — a
+          signed-in caller on a channel, one or more user turns — designed so that its trace exhibits
+          one of the failure modes Prefront's out-of-band checks detect. <em>LLM</em> sessions let the
+          model pick the tools; <em>scripted</em> sessions replay an exact tool sequence through the
+          same MCP path so the finding is guaranteed. Nothing here is enforced or judged: the verdicts
+          belong to the evaluator — click <strong>Inspect session ▸</strong> on any run to see the
+          ingested trace.
         </p>
         <div className="pf-fields">
           <label style={{ gridColumn: "1 / -1" }}>Demo server URL
@@ -246,8 +254,8 @@ export default function SessionRunner({ demo }: { demo: DemoConfig }) {
           </label>
         </div>
         <div className="pf-publish-row">
-          <button className="pf-btn" onClick={loadCatalog} disabled={loading}>{loading ? "Loading…" : "Reload catalogue"}</button>
-          <button className="pf-btn primary" onClick={() => runAll()} disabled={!families}>Run all</button>
+          <button className="pf-btn" onClick={loadCatalog} disabled={loading || !runnable}>{loading ? "Loading…" : "Reload catalogue"}</button>
+          <button className="pf-btn primary" onClick={() => runAll()} disabled={!families || !runnable}>Run all</button>
           {families && (
             <span className="pf-summary" style={{ margin: 0 }}>
               <span className="pf-pill">{all.length} sessions</span>
@@ -256,6 +264,13 @@ export default function SessionRunner({ demo }: { demo: DemoConfig }) {
             </span>
           )}
         </div>
+        {!runnable && (
+          <p className="pf-hint" style={{ marginTop: 10 }}>
+            <strong>{app.label}</strong> ships no scenario catalogue — it has no orchestrator to run
+            one. Its evidence is in-band (governed decisions), not out-of-band sessions. Pick an
+            application that has one, or point the field above at a compatible orchestrator.
+          </p>
+        )}
         {error && <p className="pf-error">{error}<span style={{ color: "var(--muted)", marginLeft: 8 }}>— is the demo server running?</span></p>}
       </div>
 

@@ -12,23 +12,22 @@
  * `id` is what the api-server uses to scope persisted decision traces per demo.
  */
 
-export type DemoId = "securebank" | "loanpro";
+import { APPLICATIONS, DEFAULT_APP, type AppId, type AppIdentity } from "@apps";
 
-export interface DemoConfig {
-  id: DemoId;
-  label: string;        // display name, e.g. "SecureBank"
-  tagline: string;      // one-liner for the chooser card + pill
+// The IDENTITY half of a demo — id, label, tagline, Phoenix project,
+// orchestrator URL, sensitive fields — now comes from the shared application
+// registry (lib/apps/registry.ts), because Verdict needs exactly those and a
+// second copy of them cannot be allowed to drift: an id or project mismatch
+// scopes a read to an application that does not exist and renders a confident
+// empty page. Everything below is the PRESENTATION half, which only this app
+// has surfaces for.
+export type DemoId = AppId;
+
+export interface DemoConfig extends AppIdentity {
   blurb: string;        // a sentence of context for the chooser
   accent: string;       // card/pill accent color
   glyph: string;        // short badge glyph (emoji)
   scenarioCount: number;
-
-  // The Phoenix project this application's services report to — the partition
-  // that isolates its traces from every other app's, and the value every /oob/
-  // read is scoped by (application_isolation_design.md §5). Must match the
-  // demo compose's PHOENIX_PROJECT_NAME. An application HAS MANY datasources,
-  // so this is keyed to the APP, never to `datasourceId`.
-  phoenixProject: string;
 
   // Data Connector defaults (prefills for connecting this demo's datasource).
   // One app may have several datasources; this is the one the Data Connector
@@ -47,10 +46,6 @@ export interface DemoConfig {
   defaultMetrics: string;
   defaultCallerScope: string;
 
-  // Fields the runtime treats as sensitive — flagged in the diff even when the
-  // ungoverned side leaks them; the governed side masks them.
-  sensitiveFields: string[];
-
   // Each role fronts a different agent surface in the demo's story.
   roleAgents: Record<string, string>;
 
@@ -65,17 +60,20 @@ export interface DemoConfig {
   populateScenarios?: string[];
 }
 
+// Each entry MERGES its shared identity (id/label/tagline/phoenixProject/
+// orchestratorUrl/sensitiveFields) with this app's presentation fields, so
+// there is exactly one definition of the identity half.
+const identity = (id: DemoId): AppIdentity =>
+  APPLICATIONS.find((a) => a.id === id)!;
+
 export const DEMOS: DemoConfig[] = [
   {
-    id: "securebank",
-    label: "SecureBank",
-    tagline: "Retail banking — accounts, transfers, loans",
+    ...identity("securebank"),
     blurb:
       "A bank assistant over customer accounts. Watch ownership, SSN masking, transfer approvals, and role limits enforced deterministically.",
     accent: "#2563eb",
     glyph: "🏦",
     scenarioCount: 8,
-    phoenixProject: "securebank",
     datasourceId: "securebank",
     ddlPlaceholder:
       "CREATE TABLE users (\n  user_id INT PRIMARY KEY,\n  name TEXT,\n  role TEXT,\n  ssn TEXT\n);\n\nCREATE TABLE accounts (\n  account_id INT PRIMARY KEY,\n  user_id INT REFERENCES users(user_id),\n  balance NUMERIC,\n  status TEXT\n);",
@@ -83,7 +81,6 @@ export const DEMOS: DemoConfig[] = [
       "available_credit = credit_limit - current_balance\n" +
       "credit_utilization_pct = current_balance / credit_limit * 100",
     defaultCallerScope: "region = region_id\nrep_id = rep_id",
-    sensitiveFields: ["ssn"],
     roleAgents: {
       "Account Holder": "Customer Assistant",
       "Bank Teller": "Teller Copilot",
@@ -92,15 +89,12 @@ export const DEMOS: DemoConfig[] = [
     defaultApprover: "Bank Manager",
   },
   {
-    id: "loanpro",
-    label: "LoanPro",
-    tagline: "Loan origination — applicants, credit, decisions",
+    ...identity("loanpro"),
     blurb:
       "An ungoverned loan-origination agent with tools over MCP. Its sessions are built to exhibit every failure mode Prefront's out-of-band checks detect — provenance, policy, and intent conformance.",
     accent: "#7c3aed",
     glyph: "💳",
     scenarioCount: 34,
-    phoenixProject: "loanpro",
     datasourceId: "loanpro",
     ddlPlaceholder:
       "CREATE TABLE users (\n  user_id INT PRIMARY KEY,\n  name TEXT,\n  role TEXT,\n  ssn TEXT\n);\n\nCREATE TABLE loan_applications (\n  loan_id INT PRIMARY KEY,\n  applicant_id INT,\n  requested_amount NUMERIC,\n  status TEXT\n);",
@@ -112,7 +106,6 @@ export const DEMOS: DemoConfig[] = [
       "dti_ratio = requested_amount / annual_income\n" +
       "loan_to_income_pct = requested_amount / annual_income * 100",
     defaultCallerScope: "officer_id = assigned_officer",
-    sensitiveFields: ["ssn", "tax_id", "bank_account_hint", "credit_score", "internal_risk_score"],
     // One scenario per governed OUTCOME, measured rather than assumed, so the
     // populated store shows a range instead of one verdict repeated:
     //   F1-04  mask    — ungoverned leaks ssn/tax_id/bank hint/credit score to
@@ -136,8 +129,8 @@ export const DEMOS: DemoConfig[] = [
   },
 ];
 
-// LoanPro is the active demo — SecureBank is profile-disabled in docker-compose.
-export const DEFAULT_DEMO: DemoId = "loanpro";
+// Derived, never restated: the two front-ends must open on the same app.
+export const DEFAULT_DEMO: DemoId = DEFAULT_APP;
 
 // Falls back to DEFAULT_DEMO, not DEMOS[0] — an unrecognised id (a stale
 // localStorage value, or a bad ?demo= in a shared link) must land on the

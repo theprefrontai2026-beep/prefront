@@ -88,15 +88,22 @@ async def _wait_for_clickhouse() -> None:
     log.error("clickhouse never became ready; continuing, requests will fail until it does")
 
 
-def _configured_families() -> dict[str, bool]:
-    """Which families have the artifact they need. Family 2 is built in and
-    always runs (Hard Rule 9); Family 1 needs a rule pack and Family 3 an
-    intent catalog, so a settings UI can tell "you turned this off" apart
-    from "nothing is configured, so it is idle anyway"."""
+def _configured_families(app: str = "") -> dict[str, bool]:
+    """Which families have the artifact they need, FOR ONE APPLICATION.
+
+    Family 2 is built in and always runs (Hard Rule 9); Family 1 needs a rule
+    pack and Family 3 an intent catalog, so a settings UI can tell "you turned
+    this off" apart from "nothing is configured, so it is idle anyway".
+
+    Per application, because artifacts are per application now: an app with no
+    rule pack of its own must not be told Family 1 is configured because some
+    OTHER application has one.
+    """
+    cfg = _apps.for_app(app)
     return {
-        "family1": bool(_rule_pack.rules),
+        "family1": bool(cfg.rule_pack.rules),
         "family2": True,
-        "family3": bool(_catalog.intents),
+        "family3": bool(cfg.catalog.intents),
     }
 
 
@@ -330,10 +337,33 @@ async def session_conformance(session_id: str):
 
 
 @app.get("/eval/checks")
-async def get_checks():
-    """The full check registry grouped by family, each check flagged enabled
-    or disabled for this deployment - what the Settings panel renders."""
-    return checks_mod.describe(configured=_configured_families())
+async def get_checks(app: str = AppQ):
+    """The full check registry grouped by family, each check flagged enabled or
+    disabled - what the Settings panel renders.
+
+    With `app`, this reports the set actually IN FORCE for that application,
+    which is not always the deployment's: a registered application may declare
+    its own disabled set, and that REPLACES the deployment-wide one
+    (applications.AppConfig.settings). Without this the panel would show a
+    switch that quietly does not apply to the application the operator is
+    looking at — the "two switches, unpredictable combined effect" outcome
+    TODO entry 8 names as the worst of the three.
+
+    `source` says which is in force, so the UI can label a per-application set
+    as coming from the registry (an artifact, edited on disk) rather than
+    implying the PUT below would change it.
+    """
+    deployment = checks_mod.current()
+    cfg = _apps.for_app(app)
+    effective = cfg.settings(deployment)
+    out = checks_mod.describe(effective, _configured_families(app))
+    out["source"] = "application" if effective is not deployment else "deployment"
+    out["application"] = app or None
+    # PUT/DELETE below write the DEPLOYMENT set. When an application overrides
+    # it, saying so is the difference between an honest panel and one that
+    # appears to accept an edit with no effect.
+    out["editable"] = out["source"] == "deployment"
+    return out
 
 
 @app.put("/eval/checks")
