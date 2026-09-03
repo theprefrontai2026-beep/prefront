@@ -122,9 +122,14 @@ starts NEITHER any more. Bring LoanPro up explicitly:
 ```bash
 docker compose -f loanpro-demo/docker-compose.yml up --build -d
 # orchestrator :8098, ungoverned agent :8097, app-mcp :8102, Postgres :5435,
-# verdict :5180 (now lives here — see that file's own header). loanpro-mcp
-# (the engine MCP, unused) is behind that file's OWN `mcp` profile:
-docker compose -f loanpro-demo/docker-compose.yml --profile mcp up -d loanpro-mcp
+# verdict :5180 (now lives here — see that file's own header), and the GOVERNED
+# lane: loanpro-mcp :8101 (Prefront proxying the app's tools) + loanpro-governed
+# :8099 (the same agent image pointed at it). Nothing is profile-gated here now.
+
+# One scenario, ungoverned only (what the grading harness and Verdict drive):
+curl 'localhost:8098/api/run?only=F1-04'
+# The same scenario through BOTH lanes — adds a `governed` key beside it:
+curl 'localhost:8098/api/run?only=F1-04&mode=both'
 ```
 
 LoanPro is still the UI's default demo (`DEFAULT_DEMO` in `demos.ts`, and the
@@ -204,10 +209,38 @@ tab any more).
   policy index in `check-coverage.md`. `gen_coverage.py` exits non-zero when a
   cited § has no heading — run it after editing the doc, the catalogue or INTENTS.
   Tool spans/results never carry policy ids (the app is policy-blind).
-- `loanpro-mcp` (Prefront's governed MCP, now declared in
-  `loanpro-demo/docker-compose.yml`) is still behind that file's own `mcp`
-  profile and unused; `policy.yaml`/`query_templates.yaml` are its legacy
-  artifacts and are NOT derived from the current `loan_underwriting_policy.md`.
+- **LoanPro now runs BOTH modes over one tool surface.** `loanpro-mcp`
+  (Prefront's governed MCP) is no longer profile-gated or vestigial — it is a
+  governing PROXY in front of `loanpro-app-mcp`, and `loanpro-governed` (:8099)
+  is the same agent image with one line different (`LOANPRO_APP_MCP_URL`), so
+  app, tools, database, model and prompt are held constant and any difference
+  is attributable to Prefront. `GET /api/run?only=…&mode=both` returns the
+  ungoverned run with a `governed` key beside it; the default is still
+  ungoverned-only, because that is what the grading harness and Verdict drive.
+  `policy.yaml`/`query_templates.yaml` are **regenerated** — 17 `kind="mcp"`
+  templates from the deterministic MCP connector, keyed by APPROVED INTENT name
+  (the app stamps `app.intent` with it and Family 3's catalog is keyed by it, so
+  a template published under the raw tool name fails `catalog_membership` on
+  every call), with `mcp_destructive` taken from the catalog's declared
+  `side_effect` because the app declares no annotations. The 2 off-catalog tools
+  are rejected at review, so Prefront never exposes them at all.
+  **The governed lane is deliberately invisible to OOB**: no OTLP tap AND
+  `PREFRONT_TRACING=0`, because oob-ingest POLLS Phoenix so spans alone would
+  reach ClickHouse — otherwise eval-engine would grade sessions that were never
+  part of the 39-scenario baseline. `scenarios.py` is untouched; both lanes run
+  the identical catalogue.
+  **Only 5 of `rule_pack.yaml`'s 9 rules are lowered into `policy.yaml`, and
+  that gap is the point.** The 2 temporal rules need session ordering the native
+  engine has no concept of; 3 of the 4 predicate rules need `credit_score` /
+  `annual_income`, which no tool takes as an argument and which a `kind="mcp"`
+  template has no precheck row to fetch — their symbols would go indeterminate
+  and fail-safe to `approval_required`, gating the intent forever on a fact the
+  gateway structurally cannot obtain. They stay out-of-band. Inline stops what
+  it can see before it happens; out-of-band catches what only the finished
+  session reveals. `policy.yaml`'s own header carries this list.
+  Identity reaches the app through `MCP_UPSTREAM_HEADERS` (config, never engine
+  code) — without it `view_my_pipeline` returns 0 rows instead of the caller's
+  11 of 21, because Prefront opens its own upstream connection.
   `policy/intent_catalog.yaml` is a THIRD, unrelated file in the same
   directory — eval-engine's Family 3 artifact (`EVAL_INTENT_CATALOG_PATH`,
   read from the shared `artifacts` volume now, not a bind mount — see the
@@ -606,6 +639,7 @@ docker compose -f loanpro-demo/docker-compose.yml up --build -d
                               # LoanPro (the active demo): orchestrator:8098
                               #   agent:8097  app-mcp:8102  postgres:5435  verdict:5180
 curl 'localhost:8098/api/run?only=F2-05'          # one LoanPro session (see loanpro-demo/README.md)
+curl 'localhost:8098/api/run?only=F2-05&mode=both'  # ...and its governed counterpart
 curl 'localhost:8110/oob/sessions?since=3600'     # what OOB ingested, per session
 docker compose -f loanpro-demo/docker-compose.yml down   # tear the demo down
 docker compose down           # then the engine — add -v on either to wipe that project's volumes
