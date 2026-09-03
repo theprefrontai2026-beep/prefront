@@ -229,6 +229,47 @@ def main() -> int:
 
     only = [s.strip().upper() for s in args.only.split(",")] if args.only else None
 
+    # Refuse to grade against checks the deployment has switched off.
+    #
+    # eval-engine's per-check enablement hides a disabled check's verdicts on
+    # every READ as well as stopping it evaluating, so a scenario expecting one
+    # grades as a plain FAIL with `missing: [<check>]` — indistinguishable from
+    # the engine genuinely failing to detect it. That is the ambiguity TODO
+    # entry 8 flags ("does 'off' mean don't run, or run and mark?"), and it is
+    # not theoretical: a run of this harness reported F3-05 FAIL for exactly
+    # this reason, and cost a full live-LLM pass to attribute.
+    #
+    # The disabled set is deployment state, not fixture state, so the harness
+    # reads it rather than assuming it — and stops BEFORE spending an LLM run.
+    scenarios_to_run = [s for s in get_scenarios(include_hidden=True)
+                        if not only or s["id"] in only]
+    needed = {f["check"] for s in scenarios_to_run for f in s.get("expected_findings", [])}
+    try:
+        disabled = set(_get(f"{EVAL_URL}/eval/checks").get("disabled") or [])
+    except Exception as e:  # noqa: BLE001 — a dead eval-engine fails later, more clearly
+        print(f"-> WARNING: could not read {EVAL_URL}/eval/checks ({type(e).__name__}: {e})",
+              file=sys.stderr)
+        disabled = set()
+    blocking = sorted(needed & disabled)
+    if blocking:
+        print(f"ERROR: {len(blocking)} check(s) this catalogue expects are DISABLED in "
+              f"eval-engine: {', '.join(blocking)}.\n"
+              f"       Their verdicts are hidden on every read, so the affected scenarios "
+              f"would grade as FAIL with the check simply 'missing'.\n"
+              f"       Re-enable them before grading:\n"
+              f"         curl -X PUT {EVAL_URL}/eval/checks -H 'content-type: application/json' "
+              f"-d '{{\"disabled\": []}}'\n"
+              f"       (or DELETE {EVAL_URL}/eval/checks to forget the stored set entirely).",
+              file=sys.stderr)
+        if not args.lenient:
+            return 2
+        print("       --lenient: continuing anyway.", file=sys.stderr)
+    elif disabled:
+        # Disabled, but nothing this run expects — still worth naming, since it
+        # changes what the "extra" column can contain.
+        print(f"-> note: {len(disabled)} check(s) disabled in eval-engine and not expected "
+              f"by this run: {', '.join(sorted(disabled))}", file=sys.stderr)
+
     runs = run_catalogue(only)
     print(f"-> {len(runs)} session(s) generated", file=sys.stderr)
 
