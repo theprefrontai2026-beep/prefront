@@ -2,7 +2,7 @@
 # (uv venvs, per-package tests) are documented in CLAUDE.md; this file only
 # wires the ones worth a one-word invocation.
 
-.PHONY: grade-loanpro test
+.PHONY: grade-loanpro regress-securebank regress test
 
 # autonomous_build.md step 15: the acceptance gate for eval-engine Phases A-B.
 # Needs the engine's compose up (docker compose up --build) AND LoanPro's own
@@ -15,6 +15,20 @@
 # plain CI runner has; wire it in once one does.
 grade-loanpro:
 	cd loanpro-demo && python3 grading_harness.py --out docs/eval-coverage.md --json-out docs/eval-coverage.json
+
+# The INLINE counterpart to grade-loanpro. The two demos exercise opposite
+# halves of Prefront and had very different coverage: LoanPro's out-of-band
+# path has had a graded harness since step 15, while SecureBank's in-band path
+# — where Prefront actually blocks, masks and routes for approval — had no
+# regression at all, so a governed decision could change and nothing would
+# notice. Needs the engine compose up AND securebank-demo's, with an LLM key.
+# Out of CI for the same reason grade-loanpro is: live stack + metered key.
+regress-securebank:
+	cd securebank-demo && python3 inline_regression.py --json-out docs/inline-regression.json
+
+# Both live regressions: LoanPro out-of-band, SecureBank inline. Neither is in
+# `test` below, which is the offline suite.
+regress: grade-loanpro regress-securebank
 
 # autonomous_build.md step 15/20: every OFFLINE (no Docker, no LLM key)
 # Python test suite in this repo, run from each service's own venv - the

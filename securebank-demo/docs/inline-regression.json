@@ -1,0 +1,157 @@
+[
+  {
+    "id": "B1",
+    "caller": "Maria Lopez",
+    "capability": "Policy: ownership",
+    "intent": "view_accounts",
+    "expected": [
+      "allow"
+    ],
+    "got": "allow",
+    "masked": [],
+    "reasons": [],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "B2",
+    "caller": "Maria Lopez",
+    "capability": "Policy: ownership",
+    "intent": "view_account",
+    "expected": [
+      "block"
+    ],
+    "got": "block",
+    "masked": [],
+    "reasons": [
+      "view_account_owner_only: OWN_DATA_ONLY: account holders may only view their own accounts."
+    ],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "B3",
+    "caller": "Tom Reed",
+    "capability": "Policy: sensitive field",
+    "intent": "view_user",
+    "expected": [
+      "block",
+      "mask"
+    ],
+    "got": "mask",
+    "masked": [
+      "ssn"
+    ],
+    "reasons": [],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "B4",
+    "caller": "Maria Lopez",
+    "capability": "Policy: role",
+    "intent": "view_users",
+    "expected": [
+      "block"
+    ],
+    "got": "block",
+    "masked": [],
+    "reasons": [
+      "role_not_permitted: role 'Account Holder' is not allowed to call 'view_users' (allowed: ['Bank Teller', 'Bank Manager'])"
+    ],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "B5",
+    "caller": "Tom Reed",
+    "capability": "Validator",
+    "intent": "view_users",
+    "expected": [
+      "mask"
+    ],
+    "got": "mask",
+    "masked": [
+      "ssn"
+    ],
+    "reasons": [],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "B6",
+    "caller": "Tom Reed",
+    "capability": "Approval Workflow",
+    "intent": "initiate_transfer",
+    "expected": [
+      "approval"
+    ],
+    "got": "approval",
+    "masked": [],
+    "reasons": [
+      "transfer_requires_approval: Transfers above $10,000 require Bank Manager approval."
+    ],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "B7",
+    "caller": "Tom Reed",
+    "capability": "Approval Workflow",
+    "intent": "initiate_transfer",
+    "expected": [
+      "block"
+    ],
+    "got": "block",
+    "masked": [],
+    "reasons": [
+      "transfer_ceiling: Transfer exceeds the $250,000 hard ceiling."
+    ],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "B8",
+    "caller": "Tom Reed",
+    "capability": "Policy: role",
+    "intent": "decide_loan",
+    "expected": [
+      "block"
+    ],
+    "got": "block",
+    "masked": [],
+    "reasons": [
+      "role_not_permitted: role 'Bank Teller' is not allowed to call 'decide_loan' (allowed: ['Bank Manager'])"
+    ],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "C1",
+    "caller": "Tom Reed",
+    "capability": "Decision Support: grounded context",
+    "intent": "view_account_activity",
+    "expected": [
+      "allow"
+    ],
+    "got": "allow",
+    "masked": [],
+    "reasons": [],
+    "error": null,
+    "grade": "PASS"
+  },
+  {
+    "id": "C2",
+    "caller": "Priya Shah",
+    "capability": "Decision Support: grounded context",
+    "intent": "view_loan_context",
+    "expected": [
+      "allow"
+    ],
+    "got": "allow",
+    "masked": [],
+    "reasons": [],
+    "error": null,
+    "grade": "PASS"
+  }
+]
