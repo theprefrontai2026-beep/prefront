@@ -801,6 +801,20 @@ def totals(since: int = 0, app: str = "") -> dict[str, Any]:
     changed. Latent before (only an ENGINE_VERSION bump or a republished rule
     pack moved the key); routine now that toggling a check does.
 
+    `sessions_with_findings` is restricted to sessions that were actually
+    EVALUATED, which is what makes the three numbers a partition:
+    clean + with_findings == evaluated, exactly. Without that restriction it
+    counted every distinct session_id in the verdicts table — including the
+    synthetic `population:<id>` ids the population checks write, which are not
+    sessions and are deliberately never marked evaluated (they are about a
+    SCENARIO across many sessions, so there is nothing to mark). The headline
+    then read "403 sessions evaluated. 61 clean, 346 with findings" — four more
+    than the total it was splitting.
+
+    Population findings are not lost by this: they still count in `findings`
+    and still appear in every findings read. They are excluded only from a
+    per-SESSION partition, which they were never members of.
+
     `sessions_clean` / `sessions_with_findings` split that denominator, so a
     surface can report how many sessions came back with nothing wrong instead
     of only ever reporting problems - the read-side counterpart of Hard Rule
@@ -828,7 +842,9 @@ def totals(since: int = 0, app: str = "") -> dict[str, Any]:
           (SELECT count() FROM {TAGS_T} WHERE 1=1{t}{a}{d}) AS conformance_tags,
           (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}{a}) AS sessions_evaluated,
           (SELECT uniqExact(session_id) FROM {VERDICTS_T}
-             WHERE status = 'violated'{t}{a}{d}) AS sessions_with_findings,
+             WHERE status = 'violated'{t}{a}{d}
+             AND session_id IN (SELECT session_id FROM {sess_t} WHERE 1=1{t}{a})
+          ) AS sessions_with_findings,
           (SELECT uniqExact(session_id) FROM {sess_t} WHERE 1=1{t}{a}
              AND session_id NOT IN (
                SELECT session_id FROM {VERDICTS_T} WHERE status = 'violated'{t}{a}{d}
