@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Overview from "./components/Overview";
-import DecisionTraces, { type TracesSection } from "./components/DecisionTraces";
+import DecisionTraces from "./components/DecisionTraces";
 import IntentFlows from "./components/IntentFlows";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
@@ -14,7 +14,7 @@ import DemoChooser from "./components/DemoChooser";
 import CopyLink from "./components/CopyLink";
 import { useDemo } from "./DemoContext";
 import { useLoc } from "./lib/router";
-import { TAB_PATH, tabFromPath, navTo, findingsHref } from "./routes";
+import { TAB_PATH, tabFromPath, navTo, decisionsHref, findingsHref } from "./routes";
 import { parseKV } from "./util";
 import { useReviewSync, type ReviewEvent } from "./hooks/useReviewSync";
 
@@ -200,7 +200,6 @@ export default function App() {
   useEffect(() => { lastPath.current[tab] = loc.key; }, [tab, loc.key]);
   // Lifted so the Overview can deep-link into Decision Traces > Findings,
   // optionally prefiltered by effect (block / approval_required / flag).
-  const [tracesSection, setTracesSection] = useState<TracesSection>("decisions");
   const [findingsEffect, setFindingsEffect] = useState("");
   const [findingsSeverity, setFindingsSeverity] = useState("");
   // Both graphs are mounted lazily (they are the two expensive subtrees) and
@@ -392,14 +391,14 @@ export default function App() {
         <div className="pf-body" key={demoId}>
           <div className={tab === "dashboard" ? "" : "tab-hidden"}>
             <Overview demo={demo} active={tab === "dashboard"}
-                      onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setFindingsSeverity(""); setTracesSection("findings"); navTo(findingsHref()); }}
-                      onOpenFindingsSeverity={(sev) => { setFindingsSeverity(sev ?? ""); setFindingsEffect(""); setTracesSection("findings"); navTo(findingsHref()); }}
-                      onOpenDecisions={() => { setTracesSection("decisions"); navTo(TAB_PATH.traces); }}
+                      onOpenFindings={(effect) => { setFindingsEffect(effect ?? ""); setFindingsSeverity(""); navTo(findingsHref()); }}
+                      onOpenFindingsSeverity={(sev) => { setFindingsSeverity(sev ?? ""); setFindingsEffect(""); navTo(findingsHref()); }}
+                      onOpenDecisions={() => navTo(decisionsHref())}
                       onOpenObservability={() => navTo(TAB_PATH.oob)}
                       onOpenSettings={() => navTo(TAB_PATH.settings)} />
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
-            <DecisionTraces active={tab === "traces"} demo={demo} section={tracesSection} onSection={setTracesSection} findingsEffect={findingsEffect} findingsSeverity={findingsSeverity} />
+            <DecisionTraces active={tab === "traces"} demo={demo} findingsEffect={findingsEffect} findingsSeverity={findingsSeverity} />
           </div>
           <div className={tab === "compliance" ? "" : "tab-hidden"}>
             <Compliance demo={demo} active={tab === "compliance"} schema={schema} />

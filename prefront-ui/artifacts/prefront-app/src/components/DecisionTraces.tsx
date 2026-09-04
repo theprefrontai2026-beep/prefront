@@ -12,7 +12,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyLink from "./CopyLink";
 import { currentLoc, useLoc } from "../lib/router";
-import { findingHref, findingsHref, navTo, onTab } from "../routes";
+import { decisionsHref, findingHref, findingsHref, navTo, onTab,
+         tracesSectionFromPath, type TracesSection } from "../routes";
 import type { FeedDecision, Trace } from "../hooks/useDecisionFeed";
 import { DEMOS, type DemoConfig } from "../demos";
 import { SessionFlyout, parseSource, type EvalVerdict } from "./Observability";
@@ -855,24 +856,36 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   );
 }
 
-export type TracesSection = "decisions" | "findings";
+export type { TracesSection } from "../routes";
 
-// `section`/`onSection` make the Decisions|Findings sub-nav controllable
-// (App.tsx lifts it so the Overview can deep-link straight into Findings);
-// uncontrolled fallback keeps the component usable standalone.
-export default function DecisionTraces({ active = true, demo, section: controlled, onSection, findingsEffect, findingsSeverity }: {
-  active?: boolean; demo: DemoConfig; section?: TracesSection; onSection?: (s: TracesSection) => void; findingsEffect?: string; findingsSeverity?: string;
+export default function DecisionTraces({ active = true, demo, findingsEffect, findingsSeverity }: {
+  active?: boolean; demo: DemoConfig; findingsEffect?: string; findingsSeverity?: string;
 }) {
-  const [internal, setInternal] = useState<TracesSection>("findings");
-  const rawSection = controlled ?? internal;
-  const setSection = (s: TracesSection) => { setInternal(s); onSection?.(s); };
-  // Canonicalise a bare /traces to /traces/findings (replace — it is an app
-  // correction, not a place the user navigated to, so Back skips it). The URL
-  // grammar already has /traces/decisions for when that view comes back.
   const tracesLoc = useLoc();
+  const onTraces = onTab(tracesLoc.segs, "traces");
+
+  // Canonicalise a bare /traces to /traces/findings (replace — it is an app
+  // correction, not a place the user navigated to, so Back skips it).
   useEffect(() => {
     if (active && tracesLoc.segs[0] === "traces" && !tracesLoc.segs[1]) navTo(findingsHref(), { replace: true });
   }, [active, tracesLoc.segs]);
+
+  // The sub-view is DERIVED FROM THE PATH, never held in state. It was state,
+  // initialised to "decisions" in App.tsx, and the two then disagreed: the
+  // canonicalising redirect above wrote /traces/findings while the state still
+  // said "decisions", so the documented shareable link — /traces/findings/
+  // <session_id>, what every CopyLink on this page emits — opened the Decisions
+  // log and its flyout never resolved. Same bug App.tsx fixed at the TAB level
+  // when routing went in ("derives the active tab from the URL, not a
+  // useState"); this is the sub-view level of it.
+  //
+  // Off-tab, the last on-tab value is retained rather than recomputed: every
+  // tab body stays MOUNTED, so deriving from another page's segs would unmount
+  // whichever sub-view you had open and lose its filters while you were
+  // somewhere else entirely.
+  const lastSection = useRef<TracesSection>(tracesSectionFromPath(currentLoc().segs));
+  if (onTraces) lastSection.current = tracesSectionFromPath(tracesLoc.segs);
+  const section: TracesSection = lastSection.current;
   const roleAgents = demo.roleAgents;
   const { rules: severityRules } = useSeverityRules(demo.id, active);
   const [traces, setTraces] = useState<Trace[]>([]);
@@ -982,7 +995,6 @@ export default function DecisionTraces({ active = true, demo, section: controlle
   // disabled with a reason when there are not. Findings stays the landing view
   // either way.
   const decisionsAvailable = traces.length > 0;
-  const section: TracesSection = rawSection;
 
   const activeFilters = picked.size + (role ? 1 : 0) + (caller ? 1 : 0) + (intent ? 1 : 0) + (policy ? 1 : 0) + (q.trim() ? 1 : 0);
   const clearAll = () => { setPicked(new Set()); setRole(""); setCaller(""); setIntent(""); setPolicy(""); setQ(""); };
@@ -993,14 +1005,14 @@ export default function DecisionTraces({ active = true, demo, section: controlle
         <button
           className={`pf-oob-view ${section === "decisions" ? "active" : ""}`}
           type="button"
-          onClick={() => setSection("decisions")}
+          onClick={() => navTo(decisionsHref())}
         >
           Decisions{decisionsAvailable ? ` (${traces.length})` : ""}
         </button>
         <button
           className={`pf-oob-view ${section === "findings" ? "active" : ""}`}
           type="button"
-          onClick={() => setSection("findings")}
+          onClick={() => navTo(findingsHref())}
         >
           Findings
         </button>

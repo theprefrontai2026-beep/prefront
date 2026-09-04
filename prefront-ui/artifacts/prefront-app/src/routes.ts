@@ -53,7 +53,23 @@ export function onTab(segs: string[], tabId: string): boolean {
 
 const enc = encodeURIComponent;
 
-export const findingsHref = () => "/traces/findings";
+/** Decision Traces' two sub-views. They are separate PAGES, not a filter, so
+ *  they live in the path and a link opens the one it names. */
+export type TracesSection = "decisions" | "findings";
+
+export const findingsHref  = () => "/traces/findings";
+export const decisionsHref = () => "/traces/decisions";
+
+/** Which sub-view a path names. Findings is the landing view, so a bare
+ *  /traces — and anything unrecognised — resolves to it; that is also what the
+ *  canonicalising redirect in DecisionTraces.tsx writes into the URL.
+ *
+ *  Callers MUST gate on `onTab(segs, "traces")` first: every tab body stays
+ *  mounted, so reading `segs[1]` from another page answers with that page's
+ *  artifact id. */
+export function tracesSectionFromPath(segs: string[]): TracesSection {
+  return segs[1] === "decisions" ? "decisions" : "findings";
+}
 
 export function findingHref(sessionId: string, eventId?: string | null, spanId?: string | null) {
   return buildHref(`/traces/findings/${enc(sessionId)}`, { event: eventId, span: spanId });
