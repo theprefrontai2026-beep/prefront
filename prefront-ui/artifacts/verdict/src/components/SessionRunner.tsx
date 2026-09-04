@@ -57,6 +57,17 @@ function verdictTone(outcome: string): string {
   return "v-allow";
 }
 
+/** The key a run's expand/collapse state is stored under.
+ *
+ *  It used to be `run.session_id`, falling back to the scenario id. That
+ *  breaks for an application with no out-of-band session: `session_id` is the
+ *  EMPTY STRING there, so every row on the page shared the single key "" and
+ *  expanding one expanded all of them. Falling back per-run keeps each row
+ *  independent, and a repeated scenario still separates by session id. */
+function runKey(run: { session_id: string }, s: { id: string }): string {
+  return run.session_id || s.id;
+}
+
 const FAMILY_TONE: Record<string, string> = { F1: "f1", F2: "f2", F3: "f3", POP: "pop", BASE: "base" };
 
 function fmtArgs(args: Record<string, unknown>) {
@@ -205,20 +216,56 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
 
   async function loadCatalog() {
     if (!runnable) return;
-    setError(""); setLoading(true); setResults({}); setLoadedAt("");
+    // Deliberately does NOT clear results here. It used to: `setResults({})`
+    // ran BEFORE the fetch, so every run you had was destroyed the moment you
+    // clicked — including when the reload then FAILED and the catalogue was
+    // never replaced at all. Reloading a catalogue is a read; a read should
+    // not be able to lose work, least of all work it turns out it did not
+    // need to touch. Results are reconciled against the NEW catalogue below,
+    // once there is one.
+    setError(""); setLoading(true); setLoadedAt("");
     try {
       const res = await fetch(`${server}/api/scenarios`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       if (!Array.isArray(json.families)) throw new Error("not a scenario catalogue");
-      setFamilies(json.families);
-      // Say it worked. Reloading an unchanged catalogue leaves the page
-      // looking identical, so a successful reload was indistinguishable from a
-      // dead button — which is how it gets reported.
-      const n = (json.families as Family[]).reduce((a, f) => a + f.scenarios.length, 0);
-      setLoadedAt(`${n} scenarios loaded at ${new Date().toLocaleTimeString()}`);
+      const fams = json.families as Family[];
+      setFamilies(fams);
+
+      // Keep the runs whose scenario still exists, drop the rest. Re-running
+      // the whole catalogue because one scenario was renamed is exactly the
+      // cost this avoids; a result for a scenario that is GONE is genuinely
+      // stale and would render against nothing.
+      const ids = new Set(fams.flatMap((f) => f.scenarios.map((sc) => sc.id)));
+      let dropped = 0;
+      setResults((prev) => {
+        const kept: typeof prev = {};
+        for (const [id, runs] of Object.entries(prev)) {
+          if (ids.has(id)) kept[id] = runs; else dropped++;
+        }
+        return kept;
+      });
+
+      // Collapse every expanded row. This is the VISIBLE effect a reload has
+      // always had, and it is worth keeping deliberately rather than as a side
+      // effect of wiping results: the page returns to the catalogue you just
+      // loaded, at the top level, which is what "reload" should look like.
+      // Collapsing is not the same as DISCARDING — the runs above survive, so
+      // re-expanding a row still shows its transcript.
+      setOpen({});
+
+      const n = fams.reduce((a, f) => a + f.scenarios.length, 0);
+      // Say it worked, and say what it cost. Reloading an unchanged catalogue
+      // leaves the page looking identical, so a successful reload was
+      // indistinguishable from a dead button — which is how it gets reported.
+      setLoadedAt(`${n} scenarios loaded at ${new Date().toLocaleTimeString()}`
+                  + (dropped ? ` — ${dropped} stale run${dropped === 1 ? "" : "s"} dropped` : ""));
     } catch (e: any) {
-      setError(String(e.message || e)); setFamilies(null);
+      // Keep the catalogue and the results. A failed reload should leave the
+      // page as it was, not blank it: `setFamilies(null)` used to wipe every
+      // scenario off the screen because a fetch failed, which looks like the
+      // catalogue itself disappeared.
+      setError(String(e.message || e));
     } finally { setLoading(false); }
   }
 
@@ -232,7 +279,7 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setResults((m) => ({ ...m, [s.id]: json }));
-      setOpen((o) => ({ ...o, [s.id]: true }));
+      setOpen((o) => ({ ...o, [s.id]: true }));   // keyed like runKey's fallback
     } catch (e: any) {
       setResults((m) => ({ ...m, [s.id]: [{ error: String(e.message || e) } as Run] }));
     } finally { setRunning((r) => ({ ...r, [s.id]: false })); }
@@ -367,8 +414,8 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
                           <div className="pf-diff-side-head">
                             What the agent did · session <code>{run.session_id}</code>
                             {runs.length > 1 && <span className="pf-oob-chip" style={{ marginLeft: 6 }}>run {run.repeat_index + 1}/{runs.length} · {run.variant}</span>}
-                            <button className="pf-link" style={{ marginLeft: 8 }} onClick={() => setOpen((o) => ({ ...o, [run.session_id]: !(o[run.session_id] ?? o[s.id]) }))}>
-                              {(open[run.session_id] ?? open[s.id]) ? "collapse" : "expand"}
+                            <button className="pf-link" style={{ marginLeft: 8 }} onClick={() => setOpen((o) => ({ ...o, [runKey(run, s)]: !o[runKey(run, s)] }))}>
+                              {open[runKey(run, s)] ? "collapse" : "expand"}
                             </button>
                           </div>
                           <div className="pf-diff-side-body">
@@ -383,7 +430,7 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
                               <div className="pf-diff-reason"><span className="lbl">masked</span>{run.governed.masked_fields.join(", ")}</div>
                             ) : null}
                             {run.error && <div className="pf-diff-err">{run.error}</div>}
-                            {(open[run.session_id] ?? open[s.id]) && <Transcript run={run} sensitive={sensitive} />}
+                            {open[runKey(run, s)] && <Transcript run={run} sensitive={sensitive} />}
                             {/* Only when there IS an out-of-band session. An
                                 in-band application has no trace to pull back,
                                 and the flyout would sit on "not ingested yet"
