@@ -229,10 +229,17 @@ function useLinkedFinding(
  * there looking complete. These few pieces make it follow the feed instead.
  */
 
-/** Milliseconds between live polls, matched to what the engine can actually
- *  produce: EVAL_POLL_SECONDS (10s) plus a quiet window before a session is
- *  considered finished. Polling faster would re-read identical rows. */
-const LIVE_INTERVAL_MS = 10_000;
+/** Milliseconds between live polls.
+ *
+ *  This is FASTER than the feed can actually change: eval-engine's own worker
+ *  runs on EVAL_POLL_SECONDS (10s) plus a quiet window, so most ticks re-read
+ *  a set that has not moved. That is deliberate — it buys latency at the one
+ *  moment the page is being watched, and an unchanged read is nearly free
+ *  because `apply` drops it before it touches state (no re-render, no memo
+ *  recompute). What it costs is the request itself, which is why the two
+ *  on-screen gates in useLivePoll matter more at this cadence than they would
+ *  at the engine's own. */
+const LIVE_INTERVAL_MS = 3_000;
 
 /** How long a newly-arrived row stays highlighted. Long enough to catch the
  *  eye on a page you are already reading, short enough that a busy feed does
@@ -272,7 +279,7 @@ const sameList = (a: string[], b: string[]) => a.length === b.length && a.every(
  *     without this the feed would poll forever from behind whatever page you
  *     are actually on.
  *   - `document.visibilityState` is the browser tab being foregrounded. A
- *     backgrounded tab polling every 10s is a ClickHouse read per tick that
+ *     backgrounded tab polling every few seconds is a ClickHouse read per tick
  *     nobody can see.
  *
  * Two smaller guarantees: a tick never overlaps its predecessor (`busy` holds
@@ -413,7 +420,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   /** Fold a read into the table, whoever asked for it.
    *
    *  Two things happen here that a bare `setRows` would not, both because this
-   *  now runs every 10s rather than once per visit:
+   *  now runs every few seconds rather than once per visit:
    *
    *  1. An IDENTICAL read is dropped before it touches state. A fresh `rows`
    *     array re-runs every filter, rollup and distribution memo over the whole
@@ -466,7 +473,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   /** The quiet read, on the live interval. It deliberately does NOT touch
    *  `status`: that drives the Refresh button's label and, more importantly,
    *  gates useLinkedFinding's per-session fallback lookup
-   *  (`listStatus !== "ready"`), so flipping it to "loading" every 10s would
+   *  (`listStatus !== "ready"`), so flipping it to "loading" every tick would
    *  flicker the button and repeatedly re-arm that lookup underneath an open
    *  flyout. */
   const poll = useCallback(async () => {
@@ -662,7 +669,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
               this page is actually on screen (see useLivePoll). */}
           <label className={`pf-live${polling ? " on" : ""}`}
                  title={live
-                   ? "New findings appear on their own, about every 10s, and are highlighted briefly as they arrive. Polls only while this page is open and its browser tab is in the foreground."
+                   ? "New findings appear on their own, within a few seconds, and are highlighted briefly as they arrive. Polls only while this page is open and its browser tab is in the foreground."
                    : "Live follow is off — the table changes only when you press Refresh."}>
             <input type="checkbox" checked={live}
                    onChange={(e) => { setLive(e.target.checked); storeLive(e.target.checked); }} />

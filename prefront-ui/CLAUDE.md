@@ -184,7 +184,7 @@ observability" section. What follows is the UI over it.
     double-fetch, because the section already reloads on `active`.
   - **The poll is QUIET: it must never touch `status`.** That drives the
     Refresh button's label and gates `useLinkedFinding`'s per-session fallback
-    (`listStatus !== "ready"`), so a 10s "loading" flicker would re-arm that
+    (`listStatus !== "ready"`), so a per-tick "loading" flicker would re-arm that
     lookup underneath an open flyout. A failed poll likewise reports beside the
     toggle and leaves the last good rows up, rather than replacing a working
     table with an error banner — one blip between two good reads is not a
@@ -199,9 +199,12 @@ observability" section. What follows is the UI over it.
     and switching application resets that baseline. The `+N` badge counts rows
     in `displayed`, not raw verdicts: one session emits a verdict per check that
     ran (~19 for LoanPro) of which the satisfied-rollup shows one, so counting
-    verdicts flashed "+56" beside two new lines. The interval (10s) is matched
-    to `EVAL_POLL_SECONDS` + the quiet window — polling faster only re-reads
-    identical rows.
+    verdicts flashed "+56" beside two new lines. The interval is **3s, faster
+    than the feed can change** (eval-engine's worker is on `EVAL_POLL_SECONDS`
+    + a quiet window): it buys latency while the page is watched, and an
+    unchanged read is nearly free because `apply` drops it before it touches
+    state. The cost is the request, which is why the two on-screen gates
+    matter more at this cadence than at the engine's own.
 - **Findings show family display names, not `family1/2/3`** - eval-engine
   stamps a `family_label` on every verdict/finding read (`contract.FAMILY_LABELS`,
   applied in `ch.rows()`): `family1` → **Policy**, `family2` → **Integrity**,
