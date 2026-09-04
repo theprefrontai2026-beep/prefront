@@ -45,6 +45,16 @@ type Run = Omit<Scenario, "turns"> & {
   governed?: {
     intent: string; outcome: string; status: string;
     reasons: string[]; masked_fields: string[]; approver_roles: string[];
+    rows?: Record<string, unknown>[]; row_count?: number; answer?: string | null;
+  };
+  /** The same question with NO policy layer in the path. Present only for an
+   *  application that runs both ways, and it is what makes the governed
+   *  decision mean something: a BLOCK is only interesting beside the rows the
+   *  app would otherwise have handed over. */
+  ungoverned?: {
+    tool?: string; args?: Record<string, unknown>; sql?: string;
+    columns?: string[]; rows?: Record<string, unknown>[]; row_count?: number;
+    answer?: string | null; error?: string | null;
   };
 };
 
@@ -181,6 +191,70 @@ function SessionFlyout({ sessionId, scenario, onClose }: {
         </div>
       </aside>
     </>
+  );
+}
+
+/** The before/after Prefront comparison, for an application that runs both
+ *  ways. Restored from the Runtime tab's RuntimeDiff, which was deleted when
+ *  Verdict was extracted — the standalone app kept the session runner and lost
+ *  the contrast, which for an in-band application is the entire point: the
+ *  governed decision is only legible next to what the same question did with
+ *  nothing in the way. */
+function PrefrontComparison({ run, sensitive }: { run: Run; sensitive: Set<string> }) {
+  const u = run.ungoverned!;
+  const g = run.governed;
+  return (
+    <div className="pf-diff-cols">
+      <div className="pf-diff-side bad">
+        <div className="pf-diff-side-head">App layer · typed functions, no policy</div>
+        <div className="pf-diff-side-body">
+          <span className="pf-verdict v-leak">NO POLICY</span>
+          {u.tool && (
+            <div className="pf-diff-reason"><span className="lbl">called</span>
+              <code>{u.tool}({fmtArgs(u.args || {})})</code>
+            </div>
+          )}
+          {u.error && <div className="pf-diff-err">ERROR {u.error}</div>}
+          {u.rows?.length ? (
+            <>
+              <div className="pf-diff-reason"><span className="lbl">returned</span>{u.row_count} row(s)</div>
+              <RowsTable rows={u.rows} columns={u.columns} sensitive={sensitive} />
+            </>
+          ) : null}
+          {u.answer && <div className="pf-diff-reason"><span className="lbl">model</span>{u.answer}</div>}
+        </div>
+      </div>
+      <div className="pf-diff-side good">
+        <div className="pf-diff-side-head">With Prefront · governed intents</div>
+        <div className="pf-diff-side-body">
+          <span className={`pf-verdict ${verdictTone(g?.outcome || "")}`}>{g?.outcome || g?.status || "—"}</span>
+          {g?.intent && (
+            <div className="pf-diff-reason"><span className="lbl">called</span>
+              <code>{g.intent}({fmtArgs((run.turns[0]?.tool_calls?.[0]?.args as any) || {})})</code>
+            </div>
+          )}
+          {(g?.reasons || []).map((r, i) => (
+            <div key={i} className="pf-diff-reason"><span className="lbl">reason</span>{r}</div>
+          ))}
+          {g?.approver_roles?.length ? (
+            <div className="pf-diff-reason"><span className="lbl">approver</span>{g.approver_roles.join(", ")}</div>
+          ) : null}
+          {g?.masked_fields?.length ? (
+            <div className="pf-diff-reason"><span className="lbl">masked</span>{g.masked_fields.join(", ")}</div>
+          ) : null}
+          {g?.rows?.length ? (
+            <>
+              <div className="pf-diff-reason"><span className="lbl">returned</span>{g.row_count} row(s)</div>
+              {/* The SAME sensitive set highlights both sides, so a field the
+                  app handed over in the clear and Prefront masked is visibly
+                  the same field rather than two unrelated cells. */}
+              <RowsTable rows={g.rows} columns={Object.keys(g.rows[0])} sensitive={sensitive} />
+            </>
+          ) : null}
+          {g?.answer && <div className="pf-diff-reason"><span className="lbl">model</span>{g.answer}</div>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -419,16 +493,19 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
                             </button>
                           </div>
                           <div className="pf-diff-side-body">
-                            {run.governed
-                              ? <span className={`pf-verdict ${verdictTone(run.governed.outcome)}`}>{run.governed.outcome || "GOVERNED"}</span>
-                              : <span className="pf-verdict v-leak">UNGOVERNED</span>}
-                            <div className="pf-diff-reason"><span className="lbl">tools</span>{run.tools_called.length ? run.tools_called.map((t, i) => <code key={i} style={{ marginRight: 6 }}>{t}</code>) : "none"}</div>
-                            {run.governed?.reasons?.length ? (
-                              <div className="pf-diff-reason"><span className="lbl">why</span>{run.governed.reasons[0]}</div>
-                            ) : null}
-                            {run.governed?.masked_fields?.length ? (
-                              <div className="pf-diff-reason"><span className="lbl">masked</span>{run.governed.masked_fields.join(", ")}</div>
-                            ) : null}
+                            {/* An application that runs BOTH ways gets the
+                                before/after comparison; one that only runs one
+                                way gets a single verdict line, because a
+                                two-column layout with an empty column states a
+                                contrast that was never measured. */}
+                            {run.ungoverned ? (
+                              <PrefrontComparison run={run} sensitive={sensitive} />
+                            ) : (
+                              <>
+                                <span className="pf-verdict v-leak">UNGOVERNED</span>
+                                <div className="pf-diff-reason"><span className="lbl">tools</span>{run.tools_called.length ? run.tools_called.map((t, i) => <code key={i} style={{ marginRight: 6 }}>{t}</code>) : "none"}</div>
+                              </>
+                            )}
                             {run.error && <div className="pf-diff-err">{run.error}</div>}
                             {open[runKey(run, s)] && <Transcript run={run} sensitive={sensitive} />}
                             {/* Only when there IS an out-of-band session. An

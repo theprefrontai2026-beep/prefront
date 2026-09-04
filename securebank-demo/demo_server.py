@@ -136,6 +136,11 @@ def build_run(only=None) -> list[dict]:
     for s in get_scenarios(only):
         c = CALLERS[s["caller"]]
         pub = _scenario_public(s)
+        # BOTH sides, under one span. SecureBank's whole point is the
+        # before/after contrast — the governed decision only means something
+        # next to what the same question did with no policy layer in the way —
+        # so a run that reported only the governed half threw away the
+        # comparison the demo exists to make.
         with _tracer.start_as_current_span(f"scenario {s['id']}") as span:
             tracing.set_attributes(span, {
                 tracing.SPAN_KIND: "CHAIN",
@@ -143,6 +148,7 @@ def build_run(only=None) -> list[dict]:
                 "scenario.id": s["id"], "scenario.caller": c["name"],
                 "scenario.role": c["role"], "scenario.capability": s["capability"],
             })
+            u = _ungoverned(s["question"], {"name": c["name"], "user_id": c["user_id"]})
             g = governed_agent.run_agent(s["question"], s["caller"])
         result = {"rows": g.get("rows") or [], "row_count": g.get("row_count")}
         if g.get("error"):
@@ -163,11 +169,22 @@ def build_run(only=None) -> list[dict]:
                 "llm_calls": 1,
                 "error": g.get("error"),
             }],
+            # The app layer with no policy in the path: the same question, the
+            # raw tool it reached for, and the rows it got back — including the
+            # ones the governed side masks or refuses.
+            "ungoverned": {
+                "tool": u.get("tool"), "args": u.get("args"), "sql": u.get("sql"),
+                "columns": u.get("columns"), "rows": u.get("rows"),
+                "row_count": u.get("row_count"), "answer": u.get("answer"),
+                "error": u.get("error"),
+            },
             # The decision itself, which is the whole point for an inline app.
             "governed": {
                 "intent": intent, "outcome": g.get("outcome"), "status": g.get("status"),
                 "reasons": g.get("reasons") or [], "masked_fields": g.get("masked_fields") or [],
                 "approver_roles": g.get("approver_roles") or [],
+                "rows": g.get("rows") or [], "row_count": g.get("row_count"),
+                "answer": g.get("answer"),
             },
         }))
     return out
