@@ -29,3 +29,8 @@ dist/
 *.swo
 *~
 .*.sw[a-p]
+
+# Separate rule-extraction bake-off working dir — its own branch
+# (rule-extraction-eval), not this one. 216MB of run caches; swept in here once
+# by an over-broad `git add -A` and it should not happen again.
+rule-extract-eval/
