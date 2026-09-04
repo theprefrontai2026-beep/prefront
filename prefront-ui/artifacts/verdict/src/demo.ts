@@ -14,7 +14,7 @@
  * orchestrator runs its catalogue.
  */
 
-export { APPLICATIONS, DEFAULT_APP, getApp } from "@apps";
+export { APPLICATIONS, DEFAULT_APP, getApp, orchestratorFor } from "@apps";
 export type { AppId, AppIdentity } from "@apps";
 
 /** The selected application, from `?app=` — the URL is the source of truth so

@@ -115,6 +115,32 @@ export const APPLICATIONS: AppIdentity[] = [
  *  out-of-band tap, so it is where shadow findings appear. */
 export const DEFAULT_APP: AppId = "loanpro";
 
+/** The orchestrator URL to actually fetch, for a page served from `origin`.
+ *
+ *  The registry stores `http://localhost:<port>` because that is what a
+ *  developer runs. But this URL is dereferenced by the BROWSER, so `localhost`
+ *  means the machine the browser is on — not the machine the services are on.
+ *  Open the app as `http://a-host:5180` and every orchestrator call goes to the
+ *  viewer's own laptop and fails, while the page itself loads fine, which reads
+ *  as "the button does nothing".
+ *
+ *  So the host is taken from the page and only the PORT from the registry.
+ *  Same result on localhost; correct everywhere else. The port stays in the
+ *  registry because it identifies the service, not the deployment.
+ */
+export function orchestratorFor(app: AppIdentity, origin?: string): string {
+  if (!app.orchestratorUrl) return "";
+  try {
+    const declared = new URL(app.orchestratorUrl);
+    const here = new URL(origin ?? window.location.href);
+    declared.protocol = here.protocol;
+    declared.hostname = here.hostname;
+    return declared.toString().replace(/\/$/, "");
+  } catch {
+    return app.orchestratorUrl;   // not a parseable URL: use it verbatim
+  }
+}
+
 /** Resolve an id from a URL param or storage. Falls back to DEFAULT_APP rather
  *  than APPLICATIONS[0], so a stale value lands where the rest of the app
  *  defaults to instead of silently on a different application. */

@@ -17,7 +17,7 @@
  * doesn't have. The inline session flyout below is self-sufficient.
  */
 import { useEffect, useMemo, useState } from "react";
-import type { AppIdentity } from "../demo";
+import { orchestratorFor, type AppIdentity } from "../demo";
 import { SessionDetail } from "./SessionDetail";
 
 type Finding = { check: string; evidence: string; policy?: string };
@@ -175,7 +175,11 @@ function SessionFlyout({ sessionId, scenario, onClose }: {
 
 export default function SessionRunner({ app }: { app: AppIdentity }) {
   const [flyout, setFlyout] = useState<{ sessionId: string; scenario: Scenario } | null>(null);
-  const [server, setServer] = useState(app.orchestratorUrl);
+  // Host from the page, port from the registry — see orchestratorFor(). The
+  // registry's "localhost" is the developer's machine, not necessarily the
+  // viewer's, and a wrong host makes every call fail while the page loads
+  // fine: exactly the shape of "the button does nothing".
+  const [server, setServer] = useState(() => orchestratorFor(app));
   const [families, setFamilies] = useState<Family[] | null>(null);
   const [results, setResults] = useState<Record<string, Run[]>>({});
   const [running, setRunning] = useState<Record<string, boolean>>({});
@@ -197,15 +201,22 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
   // "this server does not serve a catalogue".
   const runnable = Boolean(app.orchestratorUrl) && app.scenarioCatalogue;
 
+  const [loadedAt, setLoadedAt] = useState("");
+
   async function loadCatalog() {
     if (!runnable) return;
-    setError(""); setLoading(true); setResults({});
+    setError(""); setLoading(true); setResults({}); setLoadedAt("");
     try {
       const res = await fetch(`${server}/api/scenarios`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       if (!Array.isArray(json.families)) throw new Error("not a scenario catalogue");
       setFamilies(json.families);
+      // Say it worked. Reloading an unchanged catalogue leaves the page
+      // looking identical, so a successful reload was indistinguishable from a
+      // dead button — which is how it gets reported.
+      const n = (json.families as Family[]).reduce((a, f) => a + f.scenarios.length, 0);
+      setLoadedAt(`${n} scenarios loaded at ${new Date().toLocaleTimeString()}`);
     } catch (e: any) {
       setError(String(e.message || e)); setFamilies(null);
     } finally { setLoading(false); }
@@ -292,7 +303,17 @@ export default function SessionRunner({ app }: { app: AppIdentity }) {
             compatible orchestrator.
           </p>
         )}
-        {error && <p className="pf-error">{error}<span style={{ color: "var(--muted)", marginLeft: 8 }}>— is the demo server running?</span></p>}
+        {loadedAt && !error && (
+          <p className="pf-hint" style={{ marginTop: 8 }}>{loadedAt} from <code>{server}</code></p>
+        )}
+        {error && (
+          <p className="pf-error">
+            {error}
+            <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+              — tried <code>{server}/api/scenarios</code>; is that server reachable from this browser?
+            </span>
+          </p>
+        )}
       </div>
 
       {families?.map((fam) => (
