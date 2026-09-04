@@ -1357,6 +1357,62 @@ td.pf-tr-share { width: 34px; text-align: right; }
    needs the extra room while the tag is on screen. */
 .pf-find-table.showing-off th:nth-child(3), .pf-find-table.showing-off td:nth-child(3) { width: 152px; }
 .pf-find-table tr.pf-find-off:hover td { opacity: 1; }
+
+/* ── Live follow (Findings) ───────────────────────────────────────────────
+   The toggle sits among the panel's other actions, so it is styled as one of
+   them rather than as a form control: the native checkbox is hidden and the
+   dot carries the state. */
+.pf-live {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted); cursor: pointer;
+  user-select: none; padding: 2px 4px;
+}
+.pf-live:hover { color: var(--text); }
+/* Visually hidden, not gone: the input stays focusable and is what a screen
+   reader announces, and the label toggles it. Sized 1px rather than 0 —
+   a zero-size control is skipped by some AT and is not hit-testable. */
+.pf-live input {
+  position: absolute; width: 1px; height: 1px;
+  opacity: 0; margin: 0; pointer-events: none;
+}
+/* Off is a hollow ring, on is a filled pulsing dot. The state is carried by
+   SHAPE and motion as well as colour — grey-vs-green alone would be the only
+   difference between "following" and "not", which is the one thing about this
+   control that has to be readable at a glance. */
+.pf-live-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: transparent; box-shadow: inset 0 0 0 1.5px #94a3b8;
+}
+/* Only a poll that is actually RUNNING pulses. Live can be checked while the
+   page is off-screen (another tab, a backgrounded window), and a dot claiming
+   to be following when nothing is polling would be the one thing this control
+   must not do. */
+.pf-live.on .pf-live-dot { background: var(--green); box-shadow: none; animation: pf-live-pulse 2s ease-in-out infinite; }
+.pf-live input:focus-visible ~ .pf-live-dot { outline: 2px solid var(--blue); outline-offset: 2px; }
+.pf-live-new {
+  font-size: 10px; font-weight: 600; color: var(--green);
+  background: var(--green-light); border-radius: 8px; padding: 0 5px;
+}
+@keyframes pf-live-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* A row that arrived while you were watching. Fades back to normal on its own
+   so the table does not accumulate permanent highlighting on a busy feed; the
+   left rule is what survives longest, since colour alone is not a signal
+   everyone can read. */
+.pf-find-table tr.pf-find-new td { animation: pf-find-arrive 8s ease-out forwards; }
+.pf-find-table tr.pf-find-new td:first-child { box-shadow: inset 2px 0 0 var(--green); }
+@keyframes pf-find-arrive {
+  0%   { background: var(--green-light); }
+  70%  { background: var(--green-light); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-live.on .pf-live-dot { animation: none; }
+  .pf-find-table tr.pf-find-new td { animation: none; background: var(--green-light); }
+}
 .pf-dash-feed-status { font-size: 12px; color: var(--muted); padding: 14px 0; }
 .pf-dash-feed-status.error { color: var(--red); }
 

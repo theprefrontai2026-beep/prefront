@@ -9,7 +9,7 @@
  * has ever governed, how a single intent resolves across callers.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyLink from "./CopyLink";
 import { currentLoc, useLoc } from "../lib/router";
 import { findingHref, findingsHref, navTo, onTab } from "../routes";
@@ -221,6 +221,104 @@ function useLinkedFinding(
     : { sessionId, spanId, eventId, detail: "", source: "", status: "", verdict: null };
 }
 
+/* ── Live follow ──────────────────────────────────────────────────────────
+ *
+ * The findings feed is a LOG of an ongoing process: eval-engine evaluates a
+ * session ~10-20s after it ends, so a page opened while scenarios are running
+ * is stale seconds later and there was no way to tell — the table simply sat
+ * there looking complete. These few pieces make it follow the feed instead.
+ */
+
+/** Milliseconds between live polls, matched to what the engine can actually
+ *  produce: EVAL_POLL_SECONDS (10s) plus a quiet window before a session is
+ *  considered finished. Polling faster would re-read identical rows. */
+const LIVE_INTERVAL_MS = 10_000;
+
+/** How long a newly-arrived row stays highlighted. Long enough to catch the
+ *  eye on a page you are already reading, short enough that a busy feed does
+ *  not end up entirely highlighted. */
+const LIVE_HIGHLIGHT_MS = 8_000;
+
+const LIVE_KEY = "pf.findings.live";
+
+/** Live follow is ON unless this reader has turned it off before. Persisted
+ *  rather than reset per visit: a preference you have to set again every time
+ *  is not a preference. Storage can throw outright (private mode, site data
+ *  blocked), so every access falls back to the default rather than taking the
+ *  page down with it. */
+function liveDefault(): boolean {
+  try { return window.localStorage.getItem(LIVE_KEY) !== "off"; } catch { return true; }
+}
+function storeLive(on: boolean): void {
+  try { window.localStorage.setItem(LIVE_KEY, on ? "on" : "off"); } catch { /* preference only */ }
+}
+
+/** Identity of a row for arrival tracking. `event_id` is a monotonic serial and
+ *  is what the table already keys on; the composite is the fallback for a row
+ *  served without one. Deliberately NOT the table's `key`, which mixes in the
+ *  array index and so changes for a row that merely moved. */
+function rowKey(r: EvalVerdict): string {
+  return r.event_id || `${r.session_id}|${r.check_id}|${r.evidence_excerpt}`;
+}
+
+const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
+
+/** Run `tick` on an interval, but ONLY while this page is actually being
+ *  looked at. Both halves are load-bearing and neither implies the other:
+ *
+ *   - `enabled` carries the section's own `active` flag. App.tsx keeps every
+ *     tab MOUNTED and toggles `tab-hidden` so tab state survives navigation,
+ *     which means a component on another tab keeps running its effects —
+ *     without this the feed would poll forever from behind whatever page you
+ *     are actually on.
+ *   - `document.visibilityState` is the browser tab being foregrounded. A
+ *     backgrounded tab polling every 10s is a ClickHouse read per tick that
+ *     nobody can see.
+ *
+ * Two smaller guarantees: a tick never overlaps its predecessor (`busy` holds
+ * the slot, since each one is a full re-read of the feed), and coming back
+ * from a backgrounded tab ticks IMMEDIATELY rather than waiting out an
+ * interval — that moment is precisely when the page is most stale. Returning
+ * to this tab from another one does NOT double-tick, because the section
+ * already reloads on `active`.
+ */
+function useLivePoll(enabled: boolean, intervalMs: number, tick: () => Promise<void>): boolean {
+  const busy = useRef(false);
+  const wasHidden = useRef(false);
+  const latest = useRef(tick);
+  latest.current = tick;
+
+  const [visible, setVisible] = useState(
+    () => typeof document === "undefined" || document.visibilityState !== "hidden");
+
+  useEffect(() => {
+    const onChange = () => {
+      const now = document.visibilityState !== "hidden";
+      if (!now) wasHidden.current = true;
+      setVisible(now);
+    };
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+
+  const on = enabled && visible;
+
+  useEffect(() => {
+    if (!on) return;
+    let alive = true;
+    const run = async () => {
+      if (busy.current || !alive) return;
+      busy.current = true;
+      try { await latest.current(); } finally { busy.current = false; }
+    };
+    const id = window.setInterval(run, intervalMs);
+    if (wasHidden.current) { wasHidden.current = false; void run(); }
+    return () => { alive = false; window.clearInterval(id); };
+  }, [on, intervalMs]);
+
+  return on;
+}
+
 function FindingsSection({ initialEffect = "", initialSeverity = "", rules, active = true, app, project, appLabel }: {
   initialEffect?: string; initialSeverity?: string; rules: SeverityRule[]; active?: boolean;
   app: string; project: string; appLabel: string;
@@ -258,39 +356,131 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   // disabled check is holding back is to turn it back on.
   const [disabledChecks, setDisabledChecks] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState(false);
+
+  // ── Live follow (see the block above this component) ──
+  const [live, setLive] = useState(liveDefault);
+  // A poll that fails must not replace a working table with an error banner —
+  // one blip between two good reads is not a broken page — so its error lands
+  // here, beside the toggle, and the rows stay put.
+  const [liveError, setLiveError] = useState("");
+  // Rows that arrived while you were looking, briefly highlighted so a new
+  // finding announces itself instead of silently shifting the table down.
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const seen = useRef<Set<string>>(new Set());
+  const primed = useRef(false);
+
+  // Switching application replaces the whole feed, and none of it is an
+  // "arrival" — without this every row of the newly selected application
+  // would light up as new. Declared ABOVE the load effect so it resets the
+  // baseline before the reload that follows an `app` change fills it.
+  useEffect(() => {
+    primed.current = false;
+    seen.current = new Set();
+    setFresh(new Set());
+    setLiveError("");
+  }, [app]);
+
+  useEffect(() => {
+    if (fresh.size === 0) return;
+    const id = window.setTimeout(() => setFresh(new Set()), LIVE_HIGHLIGHT_MS);
+    return () => window.clearTimeout(id);
+  }, [fresh]);
   useEffect(() => { setEffect(initialEffect); if (initialEffect) setRange(null); }, [initialEffect]);
   useEffect(() => { setSeverity(initialSeverity); if (initialSeverity) setRange(null); }, [initialSeverity]);
 
   const sevOf = useCallback((r: EvalVerdict): SeverityLevel => severityOf({ family: r.family, effect: r.effect }, rules), [rules]);
 
+  const fetchVerdicts = useCallback(async (): Promise<{ verdicts: EvalVerdict[]; disabled: string[] }> => {
+    // The most recent 1000 (server-sorted by evaluated_at DESC), filtered
+    // further client-side below - same fetch-a-slice-then-slice-and-dice
+    // pattern as the Decisions log above. /eval/verdicts is the UNIFIED feed
+    // (every status), so a clean session shows up too, associated with the
+    // policy/rule it satisfied - not /eval/findings, which is violations
+    // only. The cap is higher than the old findings-only 500 because a clean
+    // deployment emits far more satisfied rows than violations, and we don't
+    // want those to push older violations past the window (violations still
+    // sort to the top regardless).
+    // Scoped to this application (application_isolation_design.md Phase 2).
+    // Unscoped, this feed showed every application's verdicts under whichever
+    // app's label the page happened to be wearing.
+    const res = await fetch(
+      `/eval/verdicts?limit=1000&include_disabled=true&app=${encodeURIComponent(app)}`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
+    return { verdicts: json.verdicts || [], disabled: json.disabled_checks || [] };
+  }, [app]);
+
+  /** Fold a read into the table, whoever asked for it.
+   *
+   *  Two things happen here that a bare `setRows` would not, both because this
+   *  now runs every 10s rather than once per visit:
+   *
+   *  1. An IDENTICAL read is dropped before it touches state. A fresh `rows`
+   *     array re-runs every filter, rollup and distribution memo over the whole
+   *     feed, so handing one over for a result that cannot have changed is a
+   *     full recompute per tick for nothing. Same count and nothing new means
+   *     the same set, since a row never leaves without the count changing.
+   *  2. Rows absent from the previous read are marked as ARRIVALS. The first
+   *     read is the BASELINE — everything already there when you arrived is not
+   *     an arrival — which is what `primed` distinguishes. Without it, opening
+   *     the page would flash the entire table as new.
+   */
+  const apply = useCallback((verdicts: EvalVerdict[], disabled: string[]) => {
+    const ids = verdicts.map(rowKey);
+    const first = !primed.current;
+    primed.current = true;
+    const added = first ? [] : ids.filter((k) => !seen.current.has(k));
+    const same = !first && added.length === 0 && ids.length === seen.current.size;
+    if (!same) {
+      seen.current = new Set(ids);
+      setRows(verdicts);
+    }
+    // Returning `prev` unchanged makes React bail out of the re-render — same
+    // reasoning as `same` above, for the far smaller disabled-check list.
+    setDisabledChecks((prev) => (sameList(prev, disabled) ? prev : disabled));
+    if (added.length) {
+      setFresh((prev) => {
+        const next = new Set(prev);
+        added.forEach((k) => next.add(k));
+        return next;
+      });
+    }
+  }, []);
+
+  /** The loud read: mount, becoming active, the Refresh button, after a clear.
+   *  Shows its progress and reports failure as a page-level error. */
   const load = useCallback(async () => {
     setStatus("loading");
     setError("");
     try {
-      // The most recent 1000 (server-sorted by evaluated_at DESC), filtered
-      // further client-side below - same fetch-a-slice-then-slice-and-dice
-      // pattern as the Decisions log above. /eval/verdicts is the UNIFIED feed
-      // (every status), so a clean session shows up too, associated with the
-      // policy/rule it satisfied - not /eval/findings, which is violations
-      // only. The cap is higher than the old findings-only 500 because a clean
-      // deployment emits far more satisfied rows than violations, and we don't
-      // want those to push older violations past the window (violations still
-      // sort to the top regardless).
-      // Scoped to this application (application_isolation_design.md Phase 2).
-      // Unscoped, this feed showed every application's verdicts under whichever
-      // app's label the page happened to be wearing.
-      const res = await fetch(
-        `/eval/verdicts?limit=1000&include_disabled=true&app=${encodeURIComponent(app)}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
-      setRows(json.verdicts || []);
-      setDisabledChecks(json.disabled_checks || []);
+      const { verdicts, disabled } = await fetchVerdicts();
+      apply(verdicts, disabled);
+      setLiveError("");
       setStatus("ready");
     } catch (e: any) {
       setError(String(e?.message || e));
       setStatus("error");
     }
-  }, [app]);
+  }, [fetchVerdicts, apply]);
+
+  /** The quiet read, on the live interval. It deliberately does NOT touch
+   *  `status`: that drives the Refresh button's label and, more importantly,
+   *  gates useLinkedFinding's per-session fallback lookup
+   *  (`listStatus !== "ready"`), so flipping it to "loading" every 10s would
+   *  flicker the button and repeatedly re-arm that lookup underneath an open
+   *  flyout. */
+  const poll = useCallback(async () => {
+    try {
+      const { verdicts, disabled } = await fetchVerdicts();
+      apply(verdicts, disabled);
+      setLiveError("");
+    } catch (e: any) {
+      setLiveError(String(e?.message || e));
+    }
+  }, [fetchVerdicts, apply]);
+
+  // Polls only while this page is genuinely on screen — see useLivePoll.
+  const polling = useLivePoll(active && live, LIVE_INTERVAL_MS, poll);
 
   // Scoped to THIS application, matching Observability's button. This page is
   // labelled with one application; a clear on it that took out every other
@@ -412,6 +602,18 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
     return { displayed: out, collapsed: filtered.length - out.length };
   }, [filtered, collapsing, isHidden]);
 
+  /** Arrivals the reader can actually SEE — the badge sits beside this table,
+   *  so it has to count this table's rows. Counting every arriving VERDICT
+   *  instead reads as a bug: one session emits a verdict per check that ran
+   *  (~19 for LoanPro), of which the satisfied-rollup below shows one and the
+   *  time filter may drop the rest, so a real run flashed "+56" next to two new
+   *  lines. Same set the highlight is drawn from, so the number and the
+   *  highlighted rows always agree. */
+  const freshVisible = useMemo(
+    () => (fresh.size === 0 ? 0 : displayed.filter((r) => fresh.has(rowKey(r))).length),
+    [displayed, fresh],
+  );
+
   // The open finding, resolved from the URL (see useLinkedFinding above).
   const flyout = useLinkedFinding(openSession, openEvent, loc.query.get("span"), rows, status);
 
@@ -452,6 +654,22 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
         <div className="pf-dash-panel-head">
           <h2>Decision evidence</h2>
           <div className="pf-dash-panel-actions">
+          {/* Live follow. On by default because this is a feed of an ongoing
+              process — eval-engine evaluates a session ~10-20s after it ends,
+              so a static page is stale seconds after it loads and says nothing
+              about it. Off is a stored preference, for reading a fixed set of
+              rows without the table moving underneath you. It polls only while
+              this page is actually on screen (see useLivePoll). */}
+          <label className={`pf-live${polling ? " on" : ""}`}
+                 title={live
+                   ? "New findings appear on their own, about every 10s, and are highlighted briefly as they arrive. Polls only while this page is open and its browser tab is in the foreground."
+                   : "Live follow is off — the table changes only when you press Refresh."}>
+            <input type="checkbox" checked={live}
+                   onChange={(e) => { setLive(e.target.checked); storeLive(e.target.checked); }} />
+            <span className="pf-live-dot" aria-hidden="true" />
+            Live
+            {freshVisible > 0 && <span className="pf-live-new">+{freshVisible}</span>}
+          </label>
           <button className="pf-dash-link" type="button" onClick={load} disabled={status === "loading"}>
             {status === "loading" ? "Loading…" : "Refresh ↻"}
           </button>
@@ -470,6 +688,14 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
           </div>
         </div>
         {clearError && <div className="pf-dash-feed-status error">{clearError}</div>}
+        {/* A failed POLL, not a failed page: the rows on screen are still the
+            last good read, so this says the follow stalled rather than
+            claiming the feed could not be loaded. */}
+        {liveError && !clearError && (
+          <div className="pf-dash-feed-status">
+            Live follow paused — couldn’t reach eval-engine ({liveError}). Showing the last good read; it will retry.
+          </div>
+        )}
         <p className="pf-hint" style={{ marginTop: 0 }}>
           eval-engine's shadow evaluation of every ingested session — <strong>every outcome</strong>, not
           only violations (see eval-engine/CLAUDE.md). A clean session isn't absent: it shows as
@@ -579,7 +805,8 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
                 const satisfied = r.status === "satisfied";
                 const hidden = isHidden(r);
                 return (
-                <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i} className={`clickable ${hidden ? "pf-find-off" : ""}`}
+                <tr key={r.event_id || r.session_id + r.check_id + r.evidence_excerpt + i}
+                    className={`clickable ${hidden ? "pf-find-off" : ""} ${fresh.has(rowKey(r)) ? "pf-find-new" : ""}`}
                     onClick={() => navTo(findingHref(r.session_id, r.event_id, r.evidence_span_ids?.[0] ?? null))}>
                   <td className="mono pf-tr-truncate narrow" title={r.event_id || undefined}>{r.event_id || "—"}</td>
                   <td className="pf-tr-when"

@@ -168,6 +168,40 @@ observability" section. What follows is the UI over it.
   findings once (server-sorted, the endpoint's own cap) and filters/
   paginates entirely client-side, same pattern the Decisions log above it
   already used, rather than a filter query param per column.
+- **Findings FOLLOWS the feed by default** (`useLivePoll` + `apply` in
+  `DecisionTraces.tsx`). It is a log of an ongoing process — eval-engine
+  evaluates a session ~10-20s after it ends — so a static snapshot was stale
+  seconds after it loaded and said nothing about it. A "Live" toggle sits with
+  the panel's other actions, **on unless this reader turned it off**
+  (`localStorage` `pf.findings.live`; a preference you must re-set every visit
+  is not one). Four things about it are load-bearing:
+  - **It polls only while the page is genuinely on screen**, which needs BOTH
+    the section's `active` prop (App.tsx keeps every tab MOUNTED and toggles
+    `tab-hidden`, so a component on another tab keeps running its effects) and
+    `document.visibilityState` (a backgrounded browser tab). Neither implies
+    the other. Returning from a backgrounded tab polls IMMEDIATELY rather than
+    waiting out an interval; returning from another app tab does not
+    double-fetch, because the section already reloads on `active`.
+  - **The poll is QUIET: it must never touch `status`.** That drives the
+    Refresh button's label and gates `useLinkedFinding`'s per-session fallback
+    (`listStatus !== "ready"`), so a 10s "loading" flicker would re-arm that
+    lookup underneath an open flyout. A failed poll likewise reports beside the
+    toggle and leaves the last good rows up, rather than replacing a working
+    table with an error banner — one blip between two good reads is not a
+    broken page. `load()` (mount / becoming active / Refresh / after a clear)
+    stays loud; both fold their result through `apply`.
+  - **An identical read is dropped before it touches state.** A fresh `rows`
+    array re-runs every filter, rollup and distribution memo over the whole
+    feed; same count plus nothing new means the same set, since a row never
+    leaves without the count changing.
+  - **Arrivals are highlighted for 8s, and the badge counts VISIBLE ones.** The
+    first read of a feed is the baseline, not a batch of arrivals (`primed`),
+    and switching application resets that baseline. The `+N` badge counts rows
+    in `displayed`, not raw verdicts: one session emits a verdict per check that
+    ran (~19 for LoanPro) of which the satisfied-rollup shows one, so counting
+    verdicts flashed "+56" beside two new lines. The interval (10s) is matched
+    to `EVAL_POLL_SECONDS` + the quiet window — polling faster only re-reads
+    identical rows.
 - **Findings show family display names, not `family1/2/3`** - eval-engine
   stamps a `family_label` on every verdict/finding read (`contract.FAMILY_LABELS`,
   applied in `ch.rows()`): `family1` → **Policy**, `family2` → **Integrity**,
