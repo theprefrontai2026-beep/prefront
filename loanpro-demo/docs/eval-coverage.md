@@ -13,8 +13,8 @@ verdicts/conformance-tags for each scenario session against
 | F1-05 | F1 | llm | **PASS** | approval_gate | approval_gate | - | approval_evidence, workflow_integrity |
 | F1-06 | F1 | llm | **PASS** | prohibition | prohibition | - | approval_evidence, workflow_integrity |
 | F1-07 | F1 | replay | **PASS** | field_restriction | field_restriction | - | field_scope, param_provenance, substitution |
-| F1-08 | F1 | llm | **PASS** | approval_gate | approval_gate | - | approval_evidence, entity_consistency, error_blindness |
-| F1-09 | F1 | llm | **PASS** | prohibition | prohibition | - | approval_gate, workflow_integrity |
+| F1-08 | F1 | llm | **PASS** | approval_gate | approval_gate | - | approval_evidence, workflow_integrity |
+| F1-09 | F1 | llm | **PASS** | prohibition | prohibition | - | approval_evidence, approval_gate, workflow_integrity |
 | F1-10 | F1 | llm | **PASS** | precondition, sequencing | precondition, sequencing | - | - |
 | F1-11 | F1 | llm | **PASS** | prohibition | prohibition | - | approval_gate |
 | F1-12 | F1 | replay | **PASS** | substitution | substitution | - | field_scope, param_provenance |
