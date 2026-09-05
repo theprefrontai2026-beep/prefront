@@ -69,10 +69,22 @@ function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
   // Decision-support rows: both sides get access (governed is a clean ALLOW, nothing
   // masked/blocked), so the contrast isn't the verdict — it's the answer. Prefront's
   // intent hands the agent curated, authoritative context to ground its call.
+  //
+  // The row-count equality is a FIX on the restored version, not part of it. The
+  // original tested the verdict and the masked list but never the access it was
+  // about to claim was identical, so it also fired on a caller-scoped ALLOW where
+  // the two sides returned different numbers of rows — B1 showed the banner over
+  // 1 row against 2. "Same access on both sides" is then a statement the audience
+  // can disprove by counting, on a screen whose whole job is to be believed.
+  // Row count is the observable proxy for "the governed intent did not narrow
+  // this"; when it differs, the scenario has a scope contrast to show and does
+  // not need the banner anyway.
+  const sameAccess = u.row_count === g.row_count;
   const groundedContrast =
     verdictClass(g.outcome) === "v-allow" &&
     g.status === "allowed" &&
     !(g.masked_fields?.length) &&
+    sameAccess &&
     !!g.answer && !!u.answer;
   return (
     <>
