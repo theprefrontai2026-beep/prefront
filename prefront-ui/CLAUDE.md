@@ -13,7 +13,7 @@ Package/workspace shape (pnpm workspace, the `verdict` second app, the shared
 
 ## Tab architecture (`artifacts/prefront-app/src/`)
 
-`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Decision Traces → Intent Flows → Observability → Compliance**. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Runtime → Decision Traces → Intent Flows → Observability → Compliance**. **Runtime is conditional** — `TABS` is filtered by `demo.runtimeDiff`, so it appears only for a demo whose orchestrator serves the two-sided `{ungoverned, governed}` diff (SecureBank does; LoanPro's `/api/diff` is an alias of `/api/run` and returns a session). A tab for a capability the demo lacks renders an empty half of a comparison, which reads as a broken page rather than an absent feature; a deep link to `/runtime` on the other demo explains and points at Verdict instead. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
 
 ## Routing & shareable links (`lib/router.ts`, `routes.ts`, `components/CopyLink.tsx`)
@@ -380,6 +380,42 @@ observability" section. What follows is the UI over it.
   it), so `spans` repopulates on the next poll — that's a re-pull, not
   retention, and is what the confirm dialog now says explicitly.
 
+
+## Runtime tab (`components/RuntimeDiff.tsx` + `DecisionTrace.tsx`, route `/runtime`)
+
+The in-band before/after: one request answered twice — a realistic app-layer
+agent with typed business functions and no authorization policy, versus the
+identical request through the Prefront runtime with identity injected and
+policy enforced. Both components were deleted in `d40aab1` when the Runtime
+tab moved to Verdict, and restored from `origin/main` because that move was
+wrong for SecureBank: Verdict drives a scenario CATALOGUE and reports
+out-of-band findings, which is LoanPro's story, not this one.
+
+- **The contrast is three things, not just the verdict**: the rows (SSNs in the
+  clear on the left, `***` on the right — `RowsTable` styles a masked cell
+  differently from a merely sensitive one), the raw SQL the ungoverned agent
+  ran, and the two `model` answer lines. For the both-ALLOW decision-support
+  scenarios (C1/C2) the verdicts are identical by design, so a
+  `pf-grounded-note` banner says so and points at the answers instead — without
+  it those rows look like nothing happened.
+- **`DecisionTrace` renders the five numbered stages** the runtime actually
+  went through: Identity → Request → Policy evaluation → Decision → Execution.
+  Every rule EVALUATED is listed, `FIRED` or `NOT-FIRED`, with its condition,
+  its reason, and the clause it was compiled from (`RuleProvenance`, document +
+  section + verbatim excerpt). A rule that was checked and did not fire is
+  evidence the control ran, so it is shown rather than filtered out.
+- **`persistDecision` is the interactive writer into the `decision_*` store**
+  (`POST /api/decisions`, best-effort — a logging failure must never break the
+  view). One "Run all" shares a session id so Intent Flows sees it as one
+  session. While this tab was gone the endpoint had NO caller.
+- Restored verbatim apart from three marked adaptations: the orchestrator URL
+  goes through `orchestratorFor()` (host from the page, port from the registry
+  — `localhost` in a registry entry means the VIEWER's machine); `/api/scenarios`
+  now returns `{families, scenarios}` rather than a bare list, and both are
+  accepted; and the public scenario shape renamed `capability`→`title`,
+  `question`→`turns[0]`, `expected`→`expected_findings[0].evidence`.
+- Its ~230 lines of CSS came back with it, checked first for missing custom
+  properties and selector collisions (none of either).
 
 ## Clearing data: one sequence, two buttons
 

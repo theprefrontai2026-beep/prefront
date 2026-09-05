@@ -64,6 +64,20 @@ export interface AppIdentity {
    *  address is in fact known and correct. */
   scenarioCatalogue: boolean;
 
+  /** Whether that orchestrator serves the two-sided BEFORE/AFTER diff the main
+   *  app's Runtime tab renders: `GET /api/diff?only=<id>` returning rows shaped
+   *  `{ungoverned:{…}, governed:{…}}` — the same request answered with and
+   *  without Prefront in the path.
+   *
+   *  Separate from `scenarioCatalogue` because the two are independent and this
+   *  application has both while the other has neither in the same combination:
+   *  LoanPro's /api/diff is an ALIAS of /api/run and returns a session, not a
+   *  pair, so the Runtime tab would render an empty "with Prefront" column
+   *  against a populated one and read as a broken page rather than an absent
+   *  capability. LoanPro's before/after is `?mode=both` on a session, which is
+   *  a different shape and a different story — its surface is Verdict. */
+  runtimeDiff: boolean;
+
   /** Whether this application's agent is TAPPED for out-of-band evaluation —
    *  its traces reach oob-ingest and eval-engine raises findings about them.
    *
@@ -88,6 +102,9 @@ export const APPLICATIONS: AppIdentity[] = [
     phoenixProject: "loanpro",
     orchestratorUrl: "http://localhost:8098",
     scenarioCatalogue: true,
+    // /api/diff here is an alias of /api/run — a session, not a two-sided
+    // pair. See the field's own comment.
+    runtimeDiff: false,
     outOfBand: true,
     sensitiveFields: ["ssn", "tax_id", "bank_account_hint", "credit_score", "internal_risk_score"],
   },
@@ -104,6 +121,9 @@ export const APPLICATIONS: AppIdentity[] = [
     // branch per subject app. Runs return the GOVERNED decision, which is what
     // there is to evaluate for an in-band application.
     scenarioCatalogue: true,
+    // Its orchestrator fans each scenario out to BOTH lanes and merges them,
+    // which is exactly what the Runtime tab renders.
+    runtimeDiff: true,
     // No OTLP tap: governed in-band, so there is nothing for the evaluator to
     // observe after the fact. See securebank-demo/docker-compose.yml.
     outOfBand: false,

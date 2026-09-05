@@ -2294,3 +2294,150 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-cmp .bad { color: var(--red); }
 .pf-cmp .pf-muted { color: var(--muted); }
 @media (max-width: 1100px) { .pf-cmp-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pf-cmp-facts { grid-template-columns: 1fr; } }
+
+/* ── Runtime comparison (RuntimeDiff / DecisionTrace) ─────────────────────
+   Restored with the components in this commit; d40aab1 removed both when
+   the Runtime tab moved to Verdict, and took ~230 lines of their CSS with
+   them. Recovered verbatim from origin/main — every custom property it
+   uses still exists here, and no selector collides with the current
+   sheet (both checked before restoring). */
+.pf-diff-scn { padding: 20px 0; border-top: 1px solid var(--line); }
+.pf-diff-scn:first-child { border-top: none; padding-top: 4px; }
+.pf-diff-scn-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pf-diff-id { font-weight: 700; color: var(--red); font-family: var(--app-font-mono); font-size: 13px; }
+.pf-diff-cap {
+  font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px;
+}
+.pf-diff-caller { font-size: 12px; color: var(--muted); }
+.pf-diff-q { margin: 5px 0 12px; font-size: 15px; color: var(--ink); font-weight: 500; }
+.pf-diff-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.pf-grounded-note {
+  margin: 10px 0 0; padding: 8px 12px; font-size: 12px; line-height: 1.5;
+  color: var(--ink-soft); background: var(--blue-light, var(--surface-alt));
+  border: 1px solid var(--line); border-left: 3px solid var(--blue);
+  border-radius: var(--radius);
+}
+.pf-diff-side {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden; background: var(--surface);
+}
+.pf-diff-side-head { padding: 8px 12px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+.pf-diff-side.bad  .pf-diff-side-head { background: var(--red-light);   color: var(--red); }
+.pf-diff-side.good .pf-diff-side-head { background: var(--blue);        color: #fff; }
+.pf-diff-side-body { padding: 12px 14px; }
+.pf-verdict {
+  display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 3px 9px; border-radius: 6px; margin-bottom: 7px;
+  font-family: var(--app-font-mono);
+}
+.pf-diff-reason { font-size: 12px; color: var(--ink-soft); margin: 3px 0; }
+.pf-diff-reason .lbl {
+  font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted); margin-right: 5px; font-family: var(--app-font-mono);
+}
+.pf-diff-err { color: var(--red); font-family: var(--app-font-mono); font-size: 12px; }
+.pf-diff-expected { margin-top: 10px; font-size: 10px; color: var(--muted); font-family: var(--app-font-mono); }
+.pf-diff-rows {
+  width: 100%; border-collapse: collapse;
+  margin-top: 8px; font-family: var(--app-font-mono); font-size: 11px;
+}
+.pf-diff-rows th {
+  text-align: left; color: var(--muted); font-weight: 500;
+  border-bottom: 1px solid var(--line); padding: 3px 8px 3px 0;
+}
+.pf-diff-rows td {
+  padding: 3px 8px 3px 0; border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-soft); white-space: nowrap;
+}
+.pf-diff-rows td.sensitive { color: var(--red);   font-weight: 700; }
+.pf-diff-rows td.masked    { color: var(--green); font-weight: 700; }
+.pf-trace-toggle {
+  margin-top: 10px; background: none; border: none; cursor: pointer; padding: 0;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--blue);
+  font-family: var(--app-font-mono);
+}
+.pf-trace {
+  margin-top: 10px; padding: 12px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--bg, #fafbfc);
+}
+.pf-trace-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.pf-trace-kicker {
+  font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; font-family: var(--app-font-mono);
+}
+.pf-trace-id { font-size: 10px; color: var(--muted); font-family: var(--app-font-mono); }
+.pf-trace-stages { list-style: none; margin: 0; padding: 0; }
+.pf-trace-stage { position: relative; display: flex; gap: 10px; padding: 0 0 14px 0; }
+.pf-trace-stage:last-child { padding-bottom: 0; }
+.pf-trace-stage::before {
+  content: ""; position: absolute; left: 9px; top: 20px; bottom: 0;
+  width: 1px; background: var(--line);
+}
+.pf-trace-stage:last-child::before { display: none; }
+.pf-trace-marker {
+  display: inline-grid; place-items: center; flex-shrink: 0;
+  width: 19px; height: 19px; border-radius: 50%; z-index: 1;
+  background: var(--blue-light); color: var(--blue);
+  font-size: 10px; font-weight: 700; font-family: var(--app-font-mono);
+}
+.pf-trace-body { flex: 1; min-width: 0; }
+.pf-trace-title {
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; margin-bottom: 3px;
+}
+.pf-trace-detail { font-size: 12px; color: var(--ink-soft); }
+.pf-trace-muted { font-size: 12px; color: var(--muted); font-style: italic; }
+.pf-trace-sub { font-size: 10px; color: var(--muted); font-family: var(--app-font-mono); margin-top: 2px; }
+.pf-trace-call, .pf-trace-rulekey {
+  font-family: var(--app-font-mono); font-size: 11.5px; color: var(--ink);
+}
+.pf-trace-kv { display: flex; flex-wrap: wrap; gap: 5px; }
+.pf-trace-kvpair {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px;
+  font-size: 11px; font-family: var(--app-font-mono);
+}
+.pf-trace-kvpair .k { color: var(--muted); }
+.pf-trace-kvpair .v { color: var(--ink); font-weight: 600; }
+.pf-trace-rule {
+  padding: 7px 9px; margin: 5px 0; opacity: 0.62;
+  border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface);
+}
+.pf-trace-rule.is-fired { opacity: 1; border-color: var(--blue-light); box-shadow: inset 2px 0 0 var(--blue); }
+.pf-trace-rule-head { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.pf-trace-type {
+  font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--blue); background: var(--blue-light); border-radius: 999px; padding: 1px 7px;
+  font-family: var(--app-font-mono);
+}
+.pf-trace-effect {
+  font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px;
+}
+.pf-trace-chip {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  border-radius: 999px; padding: 2px 8px; font-family: var(--app-font-mono); margin-left: auto;
+}
+.pf-trace-chip.fired { color: var(--green); background: var(--green-light); }
+.pf-trace-chip.skip  { color: var(--muted); background: var(--line-soft); }
+.pf-trace-chip.ind   { color: var(--amber); background: var(--amber-light); }
+.pf-trace-clauses { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.pf-trace-when {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  font-family: var(--app-font-mono);
+}
+.pf-trace-clause {
+  font-family: var(--app-font-mono); font-size: 11px; color: var(--ink);
+  background: var(--bg, #f0f2f5); border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px;
+}
+.pf-trace-rule-detail { font-size: 11.5px; color: var(--ink-soft); margin-top: 5px; }
+.pf-trace-dlabel {
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  margin-right: 5px; font-family: var(--app-font-mono);
+}
+.pf-trace-missing { font-size: 10px; color: var(--amber); font-family: var(--app-font-mono); }
+.pf-trace-exec { font-size: 12px; font-weight: 600; font-family: var(--app-font-mono); }
+.pf-trace-exec.ok  { color: var(--green); }
+.pf-trace-exec.dry { color: var(--teal); }
+.pf-trace-exec.off { color: var(--muted); }

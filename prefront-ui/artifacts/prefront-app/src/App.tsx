@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Overview from "./components/Overview";
 import DecisionTraces from "./components/DecisionTraces";
+import RuntimeDiff from "./components/RuntimeDiff";
 import IntentFlows from "./components/IntentFlows";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
@@ -49,6 +50,12 @@ const TABS = [
   // Semantic Layer hidden for now — its tab body stays mounted below (never
   // shown, since `tab` can no longer become "semantic") so re-enabling it is a
   // one-line restore here.
+  // Restored (see components/RuntimeDiff.tsx). Sits before Decision Traces
+  // because it is where a governed decision is MADE and watched; the log is
+  // what you read afterwards. Offered only for a demo whose orchestrator
+  // actually serves the two-sided diff (`runtimeDiff` in the app registry) —
+  // see the nav filter below.
+  { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconSplit },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
   { id: "oob",      label: "Observability",   sub: "Traces, LLM, cost (OOB)",   icon: IconPulse },
@@ -64,6 +71,15 @@ function IconCheckShield() {
     </svg>
   );
 }
+function IconSplit() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="7" height="16" rx="1.5"/>
+      <rect x="14" y="4" width="7" height="16" rx="1.5"/>
+    </svg>
+  );
+}
+
 function IconPulse() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -160,6 +176,7 @@ function IconSettings() {
 
 const PAGE_META: Record<string, { title: string; desc: string }> = {
   dashboard:{ title: "Overview",          desc: "Moving agents from demo to production — every action follows business rules, uses approved context, and produces decision evidence." },
+  runtime:  { title: "Runtime",           desc: "The same request answered twice — a realistic app-layer agent with typed business functions and no authorization policy, versus the identical request through the Prefront runtime with identity injected and policy enforced. The verdict, the rows and the model's own answer, side by side." },
   traces:   { title: "Decision Traces",  desc: "The full governance decision log — filter every recorded decision by outcome, caller, role, intent, or policy." },
   flows:    { title: "Intent Flows",     desc: "Profile which intents each user invokes, in what order, within a session." },
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
@@ -321,7 +338,10 @@ export default function App() {
         </button>
 
         {/* Nav icons */}
-        {TABS.map((t) => {
+        {/* A tab for a capability this demo does not have is worse than no
+            tab: it renders an empty half of a comparison, which reads as a
+            broken page rather than an absent feature. */}
+        {TABS.filter((t) => t.id !== "runtime" || demo.runtimeDiff).map((t) => {
           const Icon = t.icon;
           const isActive = tab === t.id;
           const isDone = completedTabs.has(t.id) && !isActive;
@@ -396,6 +416,15 @@ export default function App() {
                       onOpenDecisions={() => navTo(decisionsHref())}
                       onOpenObservability={() => navTo(TAB_PATH.oob)}
                       onOpenSettings={() => navTo(TAB_PATH.settings)} />
+          </div>
+          <div className={tab === "runtime" ? "" : "tab-hidden"}>
+            {demo.runtimeDiff ? <RuntimeDiff demo={demo} /> : (
+              <main><div className="pf-panel"><p className="pf-hint">
+                {demo.label}'s orchestrator does not serve a two-sided diff — its
+                before/after is a whole governed session, which the Verdict app
+                runs. Switch demos to see the runtime comparison.
+              </p></div></main>
+            )}
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
             <DecisionTraces active={tab === "traces"} demo={demo} findingsEffect={findingsEffect} findingsSeverity={findingsSeverity} />

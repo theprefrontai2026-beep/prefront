@@ -17,6 +17,7 @@ export const TAB_PATH: Record<string, string> = {
   policy:     "/policy",
   bizgraph:   "/business-graph",
   graph:      "/data-graph",
+  runtime:    "/runtime",
   traces:     "/traces",
   flows:      "/flows",
   // `/oob` would be swallowed by the Vite dev proxy (it matches BARE prefixes

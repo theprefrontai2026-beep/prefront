@@ -1,0 +1,320 @@
+/*
+ * Runtime comparison — the same request answered twice: once by a realistic
+ * app-layer agent with typed business functions and no authorization policy,
+ * once through the Prefront runtime with identity injected and policy
+ * enforced. The verdict, the rows and the model's own answer sit side by side.
+ *
+ * Removed in d40aab1 when the Runtime tab moved to the Verdict app, and
+ * restored here because Verdict is LoanPro's surface: it drives a scenario
+ * CATALOGUE and reports out-of-band findings, whereas SecureBank's whole point
+ * is the in-band before/after, which is this. Recovered from origin/main and
+ * adapted in three places, each marked below.
+ */
+import { useEffect, useMemo, useState } from "react";
+import DecisionTrace from "./DecisionTrace";
+import { orchestratorFor } from "@apps";
+import type { DemoConfig } from "../demos";
+
+const newSessionId = () => "sess_" + Math.random().toString(36).slice(2, 10);
+
+/** Persist one governed decision so it shows on the Dashboard's trace feed.
+ *  `sessionId` ties one "Run all" (or a single run) into one session for the
+ *  Intent Flows page; `demo` scopes it to the active demo. Best-effort: a
+ *  logging failure must never break the view. */
+function persistDecision(diff: any, sessionId: string, demo: string) {
+  if (!diff?.governed) return;
+  fetch("/api/decisions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...diff, sessionId, demo }),
+  }).catch(() => {});
+}
+
+function verdictClass(outcome = "") {
+  const o = outcome.toUpperCase();
+  if (o.startsWith("BLOCK")) return "v-block";
+  if (o.startsWith("APPROVAL")) return "v-appr";
+  if (o.includes("MASK")) return "v-mask";
+  return "v-allow";
+}
+
+function RowsTable({ rows, columns, sensitive, maskedFields = [] }: any) {
+  if (!rows || !rows.length) return null;
+  const cols = columns && columns.length ? columns : Object.keys(rows[0]);
+  const masked = new Set(maskedFields);
+  return (
+    <table className="pf-diff-rows">
+      <thead><tr>{cols.map((c: string) => <th key={c}>{c}</th>)}</tr></thead>
+      <tbody>
+        {rows.slice(0, 5).map((r: any, i: number) => (
+          <tr key={i}>
+            {cols.map((c: string) => {
+              const v = r[c] === null || r[c] === undefined ? "" : String(r[c]);
+              const cls = masked.has(c) && v === "***" ? "masked"
+                : sensitive.has(c) ? "sensitive" : "";
+              return <td key={c} className={cls}>{v}</td>;
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function Diff({ d, sensitive }: { d: any; sensitive: Set<string> }) {
+  const u = d.ungoverned || {};
+  const g = d.governed || {};
+  const hasRows = u.rows && u.rows.length;
+  const [showTrace, setShowTrace] = useState(false);
+  // Decision-support rows: both sides get access (governed is a clean ALLOW, nothing
+  // masked/blocked), so the contrast isn't the verdict — it's the answer. Prefront's
+  // intent hands the agent curated, authoritative context to ground its call.
+  const groundedContrast =
+    verdictClass(g.outcome) === "v-allow" &&
+    g.status === "allowed" &&
+    !(g.masked_fields?.length) &&
+    !!g.answer && !!u.answer;
+  return (
+    <>
+    {groundedContrast && (
+      <div className="pf-grounded-note">
+        Same access on both sides — the difference is the <strong>answer</strong>.
+        Prefront handed the agent curated, authoritative context to ground its call;
+        compare the two <em>model</em> lines below.
+      </div>
+    )}
+    <div className="pf-diff-cols" style={{ marginTop: 10 }}>
+      <div className="pf-diff-side bad">
+        <div className="pf-diff-side-head">App layer · typed functions, no policy</div>
+        <div className="pf-diff-side-body">
+          <span className="pf-verdict v-leak">NO POLICY</span>
+          {u.tool && (
+            <div className="pf-diff-reason"><span className="lbl">called</span>
+              <code>{u.tool}({Object.entries(u.args || {}).map(([k, v]) => `${k}=${v}`).join(", ")})</code>
+            </div>
+          )}
+          {u.sql && <pre className="pf-sql" style={{ fontSize: 11 }}>{u.sql}</pre>}
+          {u.error && <div className="pf-diff-err">ERROR {u.error}</div>}
+          {hasRows && (
+            <>
+              <div className="pf-diff-reason"><span className="lbl">returned</span>{u.row_count} row(s)</div>
+              <RowsTable rows={u.rows} columns={u.columns} sensitive={sensitive} />
+            </>
+          )}
+          {u.answer && <div className="pf-diff-reason"><span className="lbl">model</span>{u.answer}</div>}
+        </div>
+      </div>
+      <div className="pf-diff-side good">
+        <div className="pf-diff-side-head">With Prefront · governed intents</div>
+        <div className="pf-diff-side-body">
+          <span className={`pf-verdict ${verdictClass(g.outcome)}`}>{g.outcome || g.status || "—"}</span>
+          {g.intent && (
+            <div className="pf-diff-reason"><span className="lbl">called</span>
+              <code>{g.intent}({Object.entries(g.args || {}).map(([k, v]) => `${k}=${v}`).join(", ")})</code>
+            </div>
+          )}
+          {(g.reasons || []).map((r: string, i: number) => (
+            <div key={i} className="pf-diff-reason"><span className="lbl">reason</span>{r}</div>
+          ))}
+          {g.approver_roles?.length > 0 && (
+            <div className="pf-diff-reason"><span className="lbl">approver</span>{g.approver_roles.join(", ")}</div>
+          )}
+          {g.masked_fields?.length > 0 && (
+            <div className="pf-diff-reason"><span className="lbl">masked</span>{g.masked_fields.join(", ")}</div>
+          )}
+          {g.status === "allowed" && g.rows?.length > 0 && (
+            <RowsTable rows={g.rows} columns={Object.keys(g.rows[0])} sensitive={sensitive}
+              maskedFields={g.masked_fields || []} />
+          )}
+          {g.status === "allowed" && g.row_count === 0 && (
+            <div className="pf-diff-reason">0 rows — nothing in the caller's scope</div>
+          )}
+          {g.answer && <div className="pf-diff-reason"><span className="lbl">model</span>{g.answer}</div>}
+          {g.governance && (
+            <>
+              <button className="pf-trace-toggle" onClick={() => setShowTrace((s) => !s)}>
+                {showTrace ? "Hide decision trace ▴" : "Show decision trace ▾"}
+              </button>
+              {showTrace && <DecisionTrace trace={g.governance} />}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+    </>
+  );
+}
+
+export default function RuntimeDiff({ demo }: { demo: DemoConfig }) {
+  // ADAPTED (1/3): the registry stores http://localhost:<port> because that is
+  // what a developer runs, but this URL is dereferenced by the BROWSER, so
+  // `localhost` means the viewer's machine. orchestratorFor takes the host from
+  // the page and only the port from the registry — same result locally,
+  // correct when the stack is served from anywhere else.
+  const [server, setServer] = useState(() => orchestratorFor(demo));
+  const [scenarios, setScenarios] = useState<any[] | null>(null);
+  const [results, setResults] = useState<Record<string, any>>({});
+  const [running, setRunning] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function loadCatalog() {
+    setError(""); setLoading(true); setResults({});
+    try {
+      const res = await fetch(`${server}/api/scenarios`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      // ADAPTED (2/3): the orchestrator now serves `{families, scenarios}` —
+      // the grouped shape Verdict renders — where it used to return a bare
+      // list. Accept both rather than forking the endpoint: one catalogue,
+      // two consumers.
+      const list = Array.isArray(json) ? json : json.scenarios;
+      if (!Array.isArray(list)) throw new Error("not a scenario list");
+      setScenarios(list);
+    } catch (e: any) {
+      setError(String(e.message || e)); setScenarios(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // A single "Run" click is its own session; "Run all" passes one shared id.
+  async function runOne(id: string, sessionId: string = newSessionId()) {
+    setRunning((r) => ({ ...r, [id]: true }));
+    try {
+      const res = await fetch(`${server}/api/diff?only=${encodeURIComponent(id)}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      if (json[0]) {
+        setResults((m) => ({ ...m, [id]: json[0] }));
+        persistDecision(json[0], sessionId, demo.id); // best-effort: log to the trace DB
+      }
+    } catch (e: any) {
+      setResults((m) => ({ ...m, [id]: { _error: String(e.message || e) } }));
+    } finally {
+      setRunning((r) => ({ ...r, [id]: false }));
+    }
+  }
+
+  // Bounded concurrency: each run opens an MCP SSE connection, and firing all
+  // scenarios at once can flake the transport. Run a few at a time instead.
+  async function runAll() {
+    if (!scenarios) return;
+    const sessionId = newSessionId(); // the whole Run-all is one session
+    const LIMIT = 3;
+    const queue = [...scenarios];
+    const worker = async () => {
+      while (queue.length) {
+        const s = queue.shift();
+        if (s) await runOne(s.id, sessionId);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(LIMIT, queue.length) }, worker));
+  }
+
+  useEffect(() => { loadCatalog(); }, []); // eslint-disable-line
+
+  const sensitive = useMemo(() => {
+    const s = new Set<string>(demo.sensitiveFields);
+    for (const d of Object.values(results)) for (const f of (d as any).governed?.masked_fields || []) s.add(f as string);
+    return s;
+  }, [results, demo.sensitiveFields]);
+
+  const tally = useMemo(() => {
+    const t = { run: 0, block: 0, appr: 0, mask: 0, allow: 0 };
+    for (const d of Object.values(results) as any[]) {
+      if (!d.governed) continue;
+      t.run++;
+      const o = (d.governed.outcome || "").toUpperCase();
+      if (o.startsWith("BLOCK")) t.block++;
+      else if (o.startsWith("APPROVAL")) t.appr++;
+      else if (o.includes("MASK")) t.mask++;
+      else t.allow++;
+    }
+    return t;
+  }, [results]);
+
+  return (
+    <main>
+      <div className="pf-panel">
+        <h2>
+          <span className="pf-step-badge">1</span>
+          Run the test cases
+        </h2>
+        <p className="pf-hint">
+          Each row is one request. Click <strong>Run</strong> to evaluate it two ways — a realistic
+          app-layer agent with typed business functions but no authorization policy, versus the same
+          request through the Prefront runtime (identity injected, policy enforced).
+        </p>
+
+        <div className="pf-fields">
+          <label style={{ gridColumn: "1 / -1" }}>
+            Demo server URL
+            <input value={server} onChange={(e) => setServer(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="pf-publish-row">
+          <button className="pf-btn" onClick={loadCatalog} disabled={loading}>
+            {loading ? "Loading…" : "Reload test cases"}
+          </button>
+          <button className="pf-btn primary" onClick={runAll} disabled={!scenarios}>
+            Run all
+          </button>
+          {tally.run > 0 && (
+            <span className="pf-summary" style={{ margin: 0 }}>
+              <span className="pf-pill">{tally.run} run</span>
+              <span className="pf-pill rejected">{tally.block} blocked</span>
+              <span className="pf-pill pending">{tally.appr} approval</span>
+              <span className="pf-pill">{tally.mask} masked</span>
+              <span className="pf-pill approved">{tally.allow} allowed</span>
+            </span>
+          )}
+        </div>
+
+        {error && (
+          <p className="pf-error">
+            {error}
+            <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+              — is the demo server running?
+            </span>
+          </p>
+        )}
+      </div>
+
+      {scenarios && (
+        <div className="pf-panel">
+          {scenarios.map((s) => {
+            const r = results[s.id];
+            const busy = running[s.id];
+            const outcome = r?.governed?.outcome;
+            return (
+              <div key={s.id} className="pf-diff-scn">
+                <div className="pf-diff-scn-head">
+                  <span className="pf-diff-id">{s.id}</span>
+                  {/* ADAPTED (3/3): the public scenario shape renamed these.
+                      `capability` is now `title`, the question is the first
+                      turn, and SecureBank's prose expectation rides in
+                      `expected_findings[0].evidence` (it has no structured
+                      findings — see _scenario_public in demo_server.py). */}
+                  <span className="pf-diff-cap">{s.title ?? s.capability}</span>
+                  <span className="pf-diff-caller">{s.caller} · {s.role}</span>
+                  <span style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+                    {outcome && <span className={`pf-verdict ${verdictClass(outcome)}`} style={{ margin: 0 }}>{outcome}</span>}
+                    <button className="pf-btn sm" onClick={() => runOne(s.id)} disabled={busy}>
+                      {busy ? "Running…" : r ? "Re-run" : "Run ▶"}
+                    </button>
+                  </span>
+                </div>
+                <div className="pf-diff-q">{s.question ?? s.turns?.[0]}</div>
+                {r?._error && <p className="pf-error">{r._error}</p>}
+                {r && !r._error && <Diff d={r} sensitive={sensitive} />}
+                {r && !r._error && <div className="pf-diff-expected">expected: {s.expected ?? s.expected_findings?.[0]?.evidence}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </main>
+  );
+}
