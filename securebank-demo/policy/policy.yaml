@@ -56,9 +56,16 @@ policy_bundle:
         message: "ROLE_NOT_PERMITTED: account holders cannot list other customers."
       source:
         document: "SecureBank BRD"
-        section: "FR-USER-1"
-        text: "Bank Managers and Tellers shall be able to list, view, create, and update user records."
-        evidence: "Bank Managers and Tellers shall be able to list, view"
+        section: "7 — Authorization & Permission Matrix"
+        text: "| View all accounts | ❌ | ✅ | ✅ |"
+        evidence: "View all accounts — Account Holder ❌"
+        # Columns are Account Holder | Bank Teller | Bank Manager. Previously
+        # cited FR-USER-1, a positive GRANT to Managers and Tellers, from which a
+        # block on an Account Holder followed only by implied exclusion — and
+        # whose excerpt was truncated mid-list. This row prohibits it directly,
+        # and section 7 says it is "the definitive reference for what each role
+        # may do. Any system behavior that contradicts this table is a defect."
+        note: "Cites the permission matrix, which prohibits this directly, rather than FR-USER-1's grant to other roles."
       bindings:
         caller.role: {source: caller, attribute: role}
 
@@ -74,9 +81,21 @@ policy_bundle:
         message: "MANAGER_ONLY_FIELD: ssn is visible to Bank Managers only."
       source:
         document: "SecureBank BRD"
-        section: "FR-ACCT-3"
-        text: "Sensitive field edits (interest rate, credit limit, SSN, credit score, annual income) shall follow a maker-checker workflow requiring Bank Manager approval before changes take effect."
-        evidence: "requiring Bank Manager approval"
+        section: "7 — Authorization & Permission Matrix"
+        text: "| View sensitive account fields | ❌ | ✅ | ✅ |"
+        evidence: "View sensitive account fields — Account Holder ❌"
+        # Columns are Account Holder | Bank Teller | Bank Manager.
+        #
+        # This rule masks ssn for a Bank Teller too, which is STRICTER than the
+        # row grants. That divergence is recorded rather than papered over.
+        #
+        # It previously cited FR-ACCT-3, a maker-checker rule about sensitive
+        # field EDITS, excerpted as "requiring Bank Manager approval" — which
+        # reads as though it authorises read-masking. It does not: it governs
+        # writes, "before changes take effect", and says nothing about who may
+        # SEE the field. Section 7 is what governs read visibility, and it
+        # grants a Teller exactly that.
+        note: "Demo enforces stricter than this row: ssn is masked for Bank Tellers as well as Account Holders."
       bindings:
         caller.role: {source: caller, attribute: role}
         ssn: {source: column, column: users.ssn}

@@ -42,12 +42,26 @@ rule_pack:
           scopes: [result, final_answer]
       source:
         document: "SecureBank BRD"
-        section: "FR-ACCT-3"
+        section: "7 — Authorization & Permission Matrix"
         page: null
-        text: >
-          Sensitive field edits (interest rate, credit limit, SSN, credit
-          score, annual income) shall follow a maker-checker workflow
-          requiring Bank Manager approval before changes take effect. The
-          SSN field is visible to Bank Managers only; it is masked for all
-          other roles in system outputs, API responses and agent responses.
+        # Columns are Account Holder | Bank Teller | Bank Manager.
+        #
+        # This block used to cite FR-ACCT-3 and quote it followed by a second
+        # sentence — "The SSN field is visible to Bank Managers only; it is
+        # masked for all other roles in system outputs, API responses and agent
+        # responses." That sentence IS NOT IN THE BRD. It was the only text
+        # supporting this rule, and a finding quoting it to an auditor would be
+        # quoting something nobody wrote. Hard Rule 17 exists precisely so a
+        # source block is quotable; invented text defeats it.
+        #
+        # FR-ACCT-3 itself governs sensitive field EDITS ("before changes take
+        # effect") and says nothing about who may SEE the field. Section 7 is
+        # what governs read visibility. Note it GRANTS a Bank Teller this
+        # access, while `restricted_from_roles` above withholds it — the demo
+        # is deliberately stricter, and that is recorded below rather than
+        # justified with a clause that does not exist.
+        text: "| View sensitive account fields | ❌ | ✅ | ✅ |"
+        note: >
+          Demo enforces stricter than this row: ssn is withheld from Bank
+          Tellers as well as Account Holders.
   rejected: []
