@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Overview from "./components/Overview";
+import { DEMOS } from "./demos";
 import DecisionTraces from "./components/DecisionTraces";
 import RuntimeDiff from "./components/RuntimeDiff";
 import IntentFlows from "./components/IntentFlows";
@@ -52,9 +53,11 @@ const TABS = [
   // one-line restore here.
   // Restored (see components/RuntimeDiff.tsx). Sits before Decision Traces
   // because it is where a governed decision is MADE and watched; the log is
-  // what you read afterwards. Offered only for a demo whose orchestrator
-  // actually serves the two-sided diff (`runtimeDiff` in the app registry) —
-  // see the nav filter below.
+  // what you read afterwards. ALWAYS in the nav, including for a demo whose
+  // orchestrator serves no two-sided diff: hiding it there was a mistake —
+  // the app opens on LoanPro, so the tab was simply absent and there was
+  // nothing to click or discover. The body says why instead (see below),
+  // which is what the nav entry is for.
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconSplit },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
@@ -338,10 +341,7 @@ export default function App() {
         </button>
 
         {/* Nav icons */}
-        {/* A tab for a capability this demo does not have is worse than no
-            tab: it renders an empty half of a comparison, which reads as a
-            broken page rather than an absent feature. */}
-        {TABS.filter((t) => t.id !== "runtime" || demo.runtimeDiff).map((t) => {
+        {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = tab === t.id;
           const isDone = completedTabs.has(t.id) && !isActive;
@@ -419,11 +419,26 @@ export default function App() {
           </div>
           <div className={tab === "runtime" ? "" : "tab-hidden"}>
             {demo.runtimeDiff ? <RuntimeDiff demo={demo} /> : (
-              <main><div className="pf-panel"><p className="pf-hint">
-                {demo.label}'s orchestrator does not serve a two-sided diff — its
-                before/after is a whole governed session, which the Verdict app
-                runs. Switch demos to see the runtime comparison.
-              </p></div></main>
+              // Not an error state: this demo genuinely has no two-sided diff
+              // to show. Say which demo does, and offer the switch, rather
+              // than leaving the reader to work out that the tab is fine and
+              // the demo is the problem.
+              <main><div className="pf-panel">
+                <h2>Not available for {demo.label}</h2>
+                <p className="pf-hint">
+                  This view runs one request twice — through the app layer with no
+                  policy, and through the Prefront runtime — and shows the two
+                  side by side. {demo.label}'s orchestrator does not serve that
+                  pair: its before/after is a whole governed <em>session</em>,
+                  which the Verdict app runs instead.
+                </p>
+                {DEMOS.filter((d) => d.runtimeDiff).map((d) => (
+                  <button key={d.id} className="pf-btn" style={{ marginTop: 10 }}
+                          onClick={() => openChooser()}>
+                    Switch to {d.label} to see it
+                  </button>
+                ))}
+              </div></main>
             )}
           </div>
           <div className={tab === "traces" ? "" : "tab-hidden"}>
