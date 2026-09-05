@@ -395,8 +395,15 @@ async def _call_governed(
             intent, tool["name"], args or {}, result_obj,
             caller.role or "", caller.attrs.get("channel", "") or "",
         )
-        inline_checks_trace.extend(_dc.asdict(v) for v in verdicts)
-        return inline_checks.restricted_field_names(result_obj, caller.role or "")
+        names = inline_checks.restricted_field_names(result_obj, caller.role or "")
+        # EVERY branch below unions `names` into its mask set before returning,
+        # so a field this check reports as having "surfaced" is one the caller
+        # never sees. Reconcile the verdict with that before it reaches the
+        # trace — see inline_checks.reconcile_masked for why recording it as a
+        # violation is wrong here and right out of band.
+        inline_checks_trace.extend(
+            _dc.asdict(v) for v in inline_checks.reconcile_masked(verdicts, set(names)))
+        return names
 
     if kind == "precheck":
         wa = tool.get("write_action") or {}

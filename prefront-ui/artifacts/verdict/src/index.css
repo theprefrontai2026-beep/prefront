@@ -746,3 +746,63 @@ code { font-family: var(--app-font-mono); font-size: 0.875em; }
 .pf-flyout .pf-oob-detail > .pf-oob-panel-head .pf-oob-actions > button:last-child { display: none; }
  /* the fly-out has its own Close */
 .pf-sess-policy { flex: none; margin-top: 2px; font-family: var(--app-font-mono); font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: var(--surface-alt); color: var(--ink-soft); white-space: nowrap; }
+/* ── Policy trace (SecureBank / any in-band application) ──────────────────
+   Why the decision came out as it did: every rule the engine EVALUATED, the
+   clause each was compiled from, and the inline check results. Full width
+   under the two diff columns — a policy clause is a sentence, and a sentence
+   in a half-width column wraps into an unreadable ribbon. */
+.pf-ptrace {
+  margin-top: 10px; border: 1px solid #e2e8f0; border-radius: 8px;
+  background: #fbfcfe; overflow: hidden;
+}
+.pf-ptrace-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid #e2e8f0; background: #f1f5f9;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #475569;
+}
+.pf-ptrace-count { font-weight: 500; text-transform: none; letter-spacing: 0; color: #64748b; }
+
+.pf-ptrace-rule { padding: 10px 12px; border-bottom: 1px solid #eef2f7; }
+.pf-ptrace-rule:last-of-type { border-bottom: none; }
+/* A rule that fired produced the outcome, so it carries a left rule and full
+   contrast; one that was merely checked stays legible but recedes. Both are
+   shown — "checked and did not apply" is a different claim from "never
+   checked", and only showing hits would collapse the two. */
+.pf-ptrace-rule.fired { background: #fff; box-shadow: inset 3px 0 0 #0f766e; }
+.pf-ptrace-rule:not(.fired) { opacity: 0.72; }
+.pf-ptrace-rule.indet { box-shadow: inset 3px 0 0 #b45309; opacity: 1; }
+
+.pf-ptrace-rule-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pf-ptrace-flag {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 4px; background: #e2e8f0; color: #64748b;
+}
+.pf-ptrace-flag.on { background: #0f766e; color: #fff; }
+.pf-ptrace-key { font-size: 12px; color: #0f172a; }
+.pf-ptrace-fields {
+  font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #f1f5f9; border-radius: 4px; padding: 1px 5px; color: #475569;
+}
+.pf-ptrace-reason { font-size: 12px; color: #334155; margin-top: 5px; }
+.pf-ptrace-cond {
+  font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #64748b; margin-top: 3px;
+}
+.pf-ptrace-quote {
+  margin: 7px 0 0; padding: 6px 0 6px 10px; border-left: 2px solid #cbd5e1;
+  font-size: 12px; font-style: italic; color: #475569; line-height: 1.45;
+}
+.pf-ptrace-quote cite {
+  display: block; margin-top: 4px; font-style: normal; font-size: 11px;
+  color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.pf-ptrace-nosrc { margin-top: 6px; font-size: 11px; color: #94a3b8; font-style: italic; }
+.pf-ptrace-missing { margin-top: 6px; font-size: 11px; color: #b45309; }
+
+.pf-ptrace-checks { padding: 8px 12px; border-top: 1px solid #e2e8f0; background: #f8fafc; }
+.pf-ptrace-check { font-size: 11px; color: #475569; padding: 2px 0; }
+.pf-ptrace-check.bad { color: #991b1b; font-weight: 600; }
+.pf-ptrace-checks summary {
+  font-size: 11px; color: #64748b; cursor: pointer; padding: 2px 0;
+}

@@ -123,6 +123,44 @@ def test_post_execution_restricted_field_reports_block(rule_pack_path):
     assert any(v.check_id == "field_restriction" and v.status == "violated" for v in verdicts)
 
 
+def test_reconcile_masked_restates_a_prevented_restriction(rule_pack_path):
+    """The field was in the raw result, and masking stopped it reaching the
+    caller — so inline the control HELD, and recording a violation would have
+    the call report a leak it just prevented."""
+    _effect, verdicts = inline_checks.evaluate_post_execution(
+        "view_account", "get_account", {"account_id": 1}, {"account_id": 1, "ssn": "123-45-6789"},
+        "Teller", "branch",
+    )
+    assert any(v.check_id == "field_restriction" and v.status == "violated" for v in verdicts)
+
+    out = inline_checks.reconcile_masked(verdicts, {"ssn"})
+    fr = [v for v in out if v.check_id == "field_restriction"]
+    assert fr and all(v.status == "satisfied" for v in fr)
+    assert all(v.effect == "allow" for v in fr)
+    # The evidence that the field was PRESENT must survive the restatement,
+    # or the trace would read as though nothing sensitive was ever returned.
+    assert all("ssn" in v.detail and "masked before return" in v.detail for v in fr)
+
+
+def test_reconcile_masked_leaves_an_unmasked_violation_alone(rule_pack_path):
+    """Nothing was masked, so nothing was prevented. This is the guard that
+    keeps the restatement from laundering a real finding."""
+    _effect, verdicts = inline_checks.evaluate_post_execution(
+        "view_account", "get_account", {"account_id": 1}, {"account_id": 1, "ssn": "123-45-6789"},
+        "Teller", "branch",
+    )
+    assert inline_checks.reconcile_masked(verdicts, set()) == verdicts
+
+
+def test_reconcile_masked_touches_only_field_restriction(rule_pack_path):
+    """A masked field says nothing about any OTHER check's verdict."""
+    from semanticmcp.evalengine.contract import Evidence, Verdict
+    other = Verdict(check_id="entitlement", family="family3", status="violated",
+                    effect="block", session_id="inline",
+                    evidence=Evidence(span_ids=("inline-0",), excerpt="x"))
+    assert inline_checks.reconcile_masked([other], {"ssn"}) == [other]
+
+
 def test_restricted_field_names_extracts_hits(rule_pack_path):
     hits = inline_checks.restricted_field_names({"account_id": 1, "ssn": "123-45-6789"})
     assert hits == {"ssn"}

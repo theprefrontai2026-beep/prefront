@@ -36,6 +36,32 @@ type Turn = {
   turn: number; mode: string; user: string | null; answer: string | null; tool_calls: ToolCall[];
   llm_calls: number; error?: string | null; trace_id?: string | null;
 };
+/** One rule as the engine evaluated it. `fired` is the load-bearing field:
+ *  a rule that was checked and did NOT fire is evidence the control ran, which
+ *  is exactly what an auditor asks for and what a "here is why" screen has to
+ *  show alongside the ones that did. `source` is the clause it was compiled
+ *  from — document, section, and the verbatim sentence. */
+type RuleOutcome = {
+  rule_key: string; rule_type?: string; decision: string;
+  fired: boolean; indeterminate?: boolean;
+  reason?: string; restricted_fields?: string[]; approver_role?: string;
+  missing?: string[];
+  conditions?: { field: string; operator: string; value: unknown }[];
+  source?: { document?: string; section?: string; text?: string; evidence?: string } | null;
+};
+
+/** eval-engine's single-call-safe checks, run IN-BAND by the runtime rather
+ *  than out of band over a finished session. */
+type InlineCheck = {
+  check_id: string; family?: string; status: string; effect?: string; detail?: string;
+};
+
+type Governance = {
+  trace_id?: string; matched_intent?: string; decision?: string;
+  rules_evaluated?: RuleOutcome[];
+  inline_checks?: InlineCheck[];
+};
+
 type Run = Omit<Scenario, "turns"> & {
   session_id: string; trace_id: string | null; variant: string; repeat_index: number;
   turns: Turn[]; tools_called: string[]; error: string | null;
@@ -46,6 +72,9 @@ type Run = Omit<Scenario, "turns"> & {
     intent: string; outcome: string; status: string;
     reasons: string[]; masked_fields: string[]; approver_roles: string[];
     rows?: Record<string, unknown>[]; row_count?: number; answer?: string | null;
+    /** The deterministic decision trace the runtime wrote for this call.
+     *  Absent for an application whose orchestrator does not return one. */
+    governance?: Governance | null;
   };
   /** The same question with NO policy layer in the path. Present only for an
    *  application that runs both ways, and it is what makes the governed
@@ -200,10 +229,107 @@ function SessionFlyout({ sessionId, scenario, onClose }: {
  *  the contrast, which for an in-band application is the entire point: the
  *  governed decision is only legible next to what the same question did with
  *  nothing in the way. */
+const condText = (c: { field: string; operator: string; value: unknown }) =>
+  `${c.field} ${c.operator} ${typeof c.value === "string" ? JSON.stringify(c.value) : String(c.value)}`;
+
+/** Why the decision came out the way it did.
+ *
+ *  Rendered full-width BELOW the two columns rather than inside the governed
+ *  one: a policy clause is a sentence, and a sentence in a half-width column
+ *  wraps into an unreadable ribbon. The order is fired-first — those produced
+ *  the outcome — with the evaluated-but-not-fired rules kept visible after
+ *  them rather than filtered out, because "this control ran and did not apply"
+ *  is a different and weaker claim than "this control was never checked", and
+ *  a demo that showed only the hits could not tell them apart.
+ */
+function PolicyTrace({ gov }: { gov: Governance }) {
+  const rules = gov.rules_evaluated || [];
+  const checks = gov.inline_checks || [];
+  if (!rules.length && !checks.length) return null;
+
+  const fired = rules.filter((r) => r.fired);
+  const ordered = [...fired, ...rules.filter((r) => !r.fired)];
+  const violated = checks.filter((c) => c.status !== "satisfied");
+  const satisfied = checks.filter((c) => c.status === "satisfied");
+
+  return (
+    <div className="pf-ptrace">
+      <div className="pf-ptrace-head">
+        Policy trace
+        <span className="pf-ptrace-count">
+          {rules.length} rule{rules.length === 1 ? "" : "s"} evaluated · {fired.length} fired
+        </span>
+      </div>
+
+      {ordered.map((r) => (
+        <div key={r.rule_key} className={`pf-ptrace-rule${r.fired ? " fired" : ""}${r.indeterminate ? " indet" : ""}`}>
+          <div className="pf-ptrace-rule-head">
+            <span className={`pf-ptrace-flag${r.fired ? " on" : ""}`}>
+              {r.indeterminate ? "INDETERMINATE" : r.fired ? "FIRED" : "checked"}
+            </span>
+            <code className="pf-ptrace-key">{r.rule_key}</code>
+            <span className={`pf-verdict ${verdictTone(r.decision)}`}>{r.decision.toUpperCase()}</span>
+            {r.restricted_fields?.length ? (
+              <span className="pf-ptrace-fields">{r.restricted_fields.join(", ")}</span>
+            ) : null}
+            {r.approver_role && <span className="pf-ptrace-fields">→ {r.approver_role}</span>}
+          </div>
+          {r.reason && <div className="pf-ptrace-reason">{r.reason}</div>}
+          {r.conditions?.length ? (
+            <div className="pf-ptrace-cond">{r.conditions.map(condText).join(" AND ")}</div>
+          ) : null}
+          {/* A rule with no clause behind it is not the same as one whose
+              clause we simply did not print, so the absence is stated. */}
+          {r.source?.text ? (
+            <blockquote className="pf-ptrace-quote">
+              {r.source.text}
+              <cite>
+                {[r.source.document, r.source.section && `§${r.source.section}`]
+                  .filter(Boolean).join(" · ")}
+              </cite>
+            </blockquote>
+          ) : (
+            <div className="pf-ptrace-nosrc">no policy clause recorded for this rule</div>
+          )}
+          {r.missing?.length ? (
+            <div className="pf-ptrace-missing">
+              could not be decided — missing {r.missing.join(", ")}; fail-safe to approval
+            </div>
+          ) : null}
+        </div>
+      ))}
+
+      {/* eval-engine's checks, running in-band here rather than over a
+          finished session. Violations stay visible; the satisfied ones are
+          many and uniform, so they collapse. */}
+      {checks.length > 0 && (
+        <div className="pf-ptrace-checks">
+          {violated.map((c, i) => (
+            <div key={i} className="pf-ptrace-check bad">
+              <code>{c.check_id}</code> · {c.status}{c.detail ? ` — ${c.detail}` : ""}
+            </div>
+          ))}
+          {satisfied.length > 0 && (
+            <details>
+              <summary>{satisfied.length} inline check{satisfied.length === 1 ? "" : "s"} satisfied</summary>
+              {satisfied.map((c, i) => (
+                <div key={i} className="pf-ptrace-check" title={c.detail || ""}>
+                  <code>{c.check_id}</code>{c.detail ? ` — ${c.detail}` : ""}
+                </div>
+              ))}
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PrefrontComparison({ run, sensitive }: { run: Run; sensitive: Set<string> }) {
   const u = run.ungoverned!;
   const g = run.governed;
   return (
+    <>
     <div className="pf-diff-cols">
       <div className="pf-diff-side bad">
         <div className="pf-diff-side-head">App layer · typed functions, no policy</div>
@@ -255,6 +381,8 @@ function PrefrontComparison({ run, sensitive }: { run: Run; sensitive: Set<strin
         </div>
       </div>
     </div>
+    {g?.governance && <PolicyTrace gov={g.governance} />}
+    </>
   );
 }
 

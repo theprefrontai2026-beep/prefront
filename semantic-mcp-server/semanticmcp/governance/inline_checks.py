@@ -55,6 +55,7 @@ Hard Rule 9).
 
 from __future__ import annotations
 
+import dataclasses as _dc
 import os
 from typing import Any, Optional
 
@@ -192,6 +193,53 @@ def evaluate_post_execution(
     verdicts = content_checks.evaluate(session, pack, _CTX)
     effect, _ = combine_inline(verdicts)
     return ("allow" if effect == "flag" else effect), verdicts
+
+
+def reconcile_masked(verdicts: list[Verdict], masked: set[str]) -> list[Verdict]:
+    """Re-state a post-execution `field_restriction` verdict as SATISFIED when
+    the fields it named were masked before the caller saw them.
+
+    Out of band, "a restricted field appeared in a tool result" is a violation
+    by construction: the agent already held the value and nothing can be
+    undone. Inline it is the opposite — evaluate_post_execution runs on the RAW
+    result precisely SO the field can be masked, and every caller unions
+    restricted_field_names() into its mask set before returning (all three
+    branches in server.py:call_template do). The field never reaches the
+    caller, so the control demonstrably held.
+
+    Recording that as `violated` made a governed call report a leak it had just
+    prevented. It is false on its own terms, it would have made SecureBank look
+    permanently non-compliant on a control that works, and on Verdict's policy
+    trace it renders directly beneath the MASK verdict produced by the very
+    same call — two statements about one field that contradict each other.
+
+    `satisfied` is the honest status (Hard Rule 15: satisfied is first-class,
+    never dropped) and the contract has exactly three, so there is no fourth
+    "prevented" state to reach for without changing it everywhere.
+
+    Deliberately narrow, so this can never launder a real finding:
+      * only `field_restriction`, only `violated`, and only when something was
+        actually masked;
+      * inline, a violated content verdict can only be RESULT-scoped — the Step
+        is built with an empty answer, so a final-answer detector never hits —
+        and every result-scoped hit is in the masked set by the invariant above;
+      * the detail is rewritten to say what happened rather than dropped, so
+        the evidence that the field was present is preserved, not hidden.
+    """
+    if not masked:
+        return verdicts
+    out: list[Verdict] = []
+    for v in verdicts:
+        if v.check_id == "field_restriction" and v.status == "violated":
+            names = ", ".join(sorted(masked))
+            out.append(_dc.replace(
+                v, status="satisfied", effect="allow",
+                detail=(f"{v.detail} — masked before return, so it never reached "
+                        f"the caller (masked: {names})"),
+            ))
+        else:
+            out.append(v)
+    return out
 
 
 def evaluate_family2_parameter_side(

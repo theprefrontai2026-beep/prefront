@@ -185,6 +185,14 @@ def build_run(only=None) -> list[dict]:
                 "approver_roles": g.get("approver_roles") or [],
                 "rows": g.get("rows") or [], "row_count": g.get("row_count"),
                 "answer": g.get("answer"),
+                # The deterministic decision trace: every rule EVALUATED (not
+                # only the ones that fired), each with the policy section and
+                # verbatim clause it came from, plus the inline check results.
+                # /api/diff has always carried this; build_run dropped it, so
+                # Verdict — the surface the demo is actually shown on — could
+                # display an outcome but never say which rule produced it or
+                # what it cites. That provenance IS the product.
+                "governance": g.get("governance"),
             },
         }))
     return out
