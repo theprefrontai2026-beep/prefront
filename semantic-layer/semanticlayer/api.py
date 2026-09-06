@@ -862,6 +862,57 @@ def reset(body: Optional[ResetBody] = None):
     return {"cleared": cleared, "removed_artifact_dirs": removed_dirs, "kept": sorted(keep_segs)}
 
 
+class MineIntentsBody(BaseModel):
+    """Mine candidate intents from observed behaviour.
+
+    `profiles` are eval-engine's aggregates (GET /eval/behavior/tools). They are
+    passed IN rather than fetched here so this service keeps no second
+    ClickHouse client and no knowledge of the trace store — aggregates cross the
+    service boundary, raw spans never do (intent_learning_design.md §4)."""
+    profiles: list[dict]
+    min_sessions: int = 3
+    # The LLM names the operation and states the rule the behaviour implies.
+    # Off by default: the counted half is useful on its own, is reproducible,
+    # and costs nothing, so spending a model call per tool should be asked for.
+    infer_policy: bool = False
+    model: Optional[str] = None
+
+
+@app.post("/design/semantic/intents/mine")
+def mine_intents_endpoint(body: MineIntentsBody):
+    """Reverse-engineer candidate intents from traces — the policy-less
+    onboarding path (intent_learning_design.md L2).
+
+    Mirrors /preflight/generate exactly: candidates are pydantic-validated,
+    always `review_status="pending"`, and a malformed one is dropped with a
+    reason rather than coerced into something the model did not say. NOTHING
+    published: a human approves, and the approved set goes out through the
+    existing build_intent_catalog path, so Family 3 consumes a learned catalog
+    identically to an authored one."""
+    from .intent_mining import DEFAULT_MINING_MODEL, mine_intents
+
+    llm = None
+    if body.infer_policy:
+        try:
+            llm = LLMClient(model=body.model or DEFAULT_MINING_MODEL)
+        except Exception as e:  # noqa: BLE001 - unconfigured provider is a 400, not a 500
+            raise HTTPException(400, f"LLM unavailable for policy inference: {e}")
+    candidates, rejected = mine_intents(body.profiles, llm=llm, min_sessions=body.min_sessions)
+    return {
+        "candidates": [c.model_dump() for c in candidates],
+        "rejected": rejected,
+        "policy_inferred": bool(llm),
+        # Said in the payload, not just the docs: a learned catalog cites
+        # OBSERVED PRACTICE, never a clause, and cannot express prohibition —
+        # absence of evidence is not evidence of prohibition. It complements a
+        # policy document; it does not replace one.
+        "caveat": ("Mined from observed behaviour. Frequency is not legitimacy: "
+                   "observed callers are not permitted callers, and contested "
+                   "candidates carry integrity violations on their supporting "
+                   "sessions. Review and narrow before approving."),
+    }
+
+
 @app.post("/design/semantic/preflight/generate")
 def preflight_generate(body: PreflightBody):
     """autonomous_build.md step 19: an LLM proposes candidate adversarial

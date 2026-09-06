@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import behavior
 from . import binding as binding_mod
 from . import checks as checks_mod
 from . import compliance as compliance_mod
@@ -140,6 +141,26 @@ async def health():
     return {"ok": ok, "clickhouse": ok}
 
 
+def _profile_json(p) -> dict:
+    """A ToolProfile as JSON, counts intact.
+
+    Every distinct value keeps its support rather than being flattened to a
+    list: "which roles called this" is not the reviewer's question, "which
+    roles, how often, and is the tail an accident" is."""
+    c = lambda xs: [{"value": x.value, "sessions": x.sessions, "calls": x.calls} for x in xs]
+    return {
+        "tool_name": p.tool_name, "calls": p.calls, "sessions": p.sessions,
+        "first_seen": p.first_seen, "last_seen": p.last_seen, "error_calls": p.error_calls,
+        "side_effects": c(p.side_effects), "roles": c(p.roles), "channels": c(p.channels),
+        "params": c(p.params), "fields": c(p.fields),
+        "row_count_p50": p.row_count_p50, "row_count_p99": p.row_count_p99,
+        "row_count_max": p.row_count_max,
+        "caller_invariants": list(p.caller_invariants), "followed_by": list(p.followed_by),
+        "contested": list(p.contested), "is_contested": p.is_contested,
+        "example_sessions": list(p.example_sessions),
+    }
+
+
 @app.get("/eval/status")
 async def status(since: int = 0, app: str = AppQ):
     ok = await asyncio.to_thread(store.ch.ping)
@@ -174,6 +195,67 @@ async def status(since: int = 0, app: str = AppQ):
         "mode": config.EVAL_MODE,
         "started_at": _started_at.isoformat(),
     }
+
+
+# ── Behavioural mining (intent_learning_design.md L1) ─────────────────────
+# Read-only aggregates over observed traces, for a deployment with no policy
+# document. Counting only: nothing here names or infers an intent — that is
+# semantic-layer's design-time, LLM-assisted step, which consumes these.
+
+
+@app.get("/eval/behavior/tools")
+async def behavior_tools(since: int = 7 * 86400, app: str = AppQ, min_sessions: int = 1):
+    """Per-tool profile: callers, channels, params, returned fields, side
+    effect, row-count distribution, caller invariants, what followed — each
+    with support counts, plus the Family 2 `contested` overlay.
+
+    `contested` is the load-bearing field. Frequency is not legitimacy: an
+    agent that has been leaking for months makes leaking look normal, so a
+    profile is only credible alongside the integrity violations on the very
+    sessions that support it. Family 2 needs no policy, which is what makes it
+    usable as ground truth on a deployment that has none."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "tools": [], "error": "clickhouse unreachable"}
+    profiles = await asyncio.to_thread(behavior.tool_profiles, since, app, min_sessions)
+    return {"configured": True, "since": since, "app": app,
+            "tools": [_profile_json(p) for p in profiles]}
+
+
+@app.get("/eval/behavior/sequences")
+async def behavior_sequences(since: int = 7 * 86400, app: str = AppQ, min_support: int = 3):
+    """Ordered tool pairs adjacent within a session — the closing-obligation
+    hypothesis, as rates over sessions rather than calls."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "sequences": {}}
+    return {"configured": True,
+            "sequences": await asyncio.to_thread(behavior.following_tools, since, app, min_support)}
+
+
+@app.get("/eval/behavior/invariants")
+async def behavior_invariants(since: int = 7 * 86400, app: str = AppQ, min_calls: int = 3):
+    """Arguments that always equalled a caller attribute — the mandatory-filter
+    hypothesis, in the exact `<field> = caller` shape Family 3 enforces."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "invariants": {}}
+    return {"configured": True,
+            "invariants": await asyncio.to_thread(behavior.caller_invariants, since, app, min_calls)}
+
+
+@app.get("/eval/behavior/labels")
+async def behavior_labels(since: int = 7 * 86400, app: str = AppQ):
+    """The `app.intent` a deployment already stamps, per tool.
+
+    Exposed for SCORING a mined catalog against a hand-authored one, never as
+    a mining input — see behavior/__init__.py. A deployment that stamps this
+    already has the catalog mining is meant to produce."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "labels": {}}
+    return {"configured": True,
+            "labels": await asyncio.to_thread(behavior.observed_intent_labels, since, app)}
 
 
 @app.get("/eval/coverage")

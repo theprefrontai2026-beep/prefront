@@ -693,19 +693,22 @@ small enough that `docker compose up -d --build <service>` is usually simpler.
 
 ### Tests
 
-Four Python test suites exist: `skill-builder/tests/`, `eval-engine/tests/`
+Five Python test suites exist: `skill-builder/tests/`, `eval-engine/tests/`
 (includes a domain-independence guard and, for `family1/temporal.py`'s
 precondition automaton, a Hypothesis property-based suite against generated
 step streams — `test_family1_temporal_properties.py`), `semantic-mcp-server/
 tests/` (governance/inline_checks.py, both pure and wired against a real
-`_call_governed`), and two pure (no-network) files in `loanpro-demo/`
-(`test_grading_harness.py`, `test_preflight_import.py`). `semantic-layer`
-and `oob-ingest` still have none — verify changes to those by running the
-service (see the per-service verification recipes below and in the OOB
-section). (`semantic-layer/tests` was deleted in 9cf773a; pytest is not even
-in its requirements.) `make test` runs all four suites plus
+`_call_governed`), `semantic-layer/tests/` (intent mining's deterministic half and its safety
+guards — that package had no suite until mining landed),
+and two pure (no-network) files in `loanpro-demo/`
+(`test_grading_harness.py`, `test_preflight_import.py`). `oob-ingest` still
+has none — verify changes to it by running the service (see the per-service
+verification recipes below and in the OOB section). `semantic-layer`'s suite
+had been deleted in 9cf773a and came back with intent mining, so its
+coverage is that module only, not the service.
+`make test` runs all five suites plus
 `eval-engine/sync.sh --check`, using each service's already-created venv;
-`.github/workflows/tests.yml` runs the same four suites in CI (fresh venvs
+`.github/workflows/tests.yml` runs four of the five in CI (semantic-layer's is new and not yet added there) (fresh venvs
 via `actions/setup-python`, plus a `compose-config` job) on every push/PR —
 deliberately NOT `make grade-loanpro` (below), which needs the live stack +
 a metered LLM key that a plain CI runner doesn't have.
@@ -804,7 +807,7 @@ Top-level design docs, each answering a different question:
 | `autonomous_build.md` | the phased build order for the eval engine — the HOW |
 | `application_isolation_design.md` | **PROPOSED, not built**: making "application" a real boundary object so two subject apps' configs, policies, modes and DATA are isolated. Measures where isolation exists today (api-server `demo` column, semantic-layer `datasource_id`) and where it does not (eval-engine and oob-ingest have no app concept at all), and proposes the Phoenix project as the ingestion partition. Answers `TODO.md` entry 8's blocking question |
 | `enforced_isolation_design.md` | **PROPOSED, not built**: the successor to the above — why per-app isolation is currently a CONVENTION (an optional scope on every read, three unreconciled keys) and what would make it hold: one canonical `app_id`, a store handle with no unscoped form, and a static guard modelled on `test_domain_independence.py`. States what it still does not give you (one shared database, no auth, global retention) and when a database-per-application is the honest answer instead |
-| `intent_learning_design.md` | **PLANNED, not built** (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog from observed traces, for customers with no policy document to compile |
+| `intent_learning_design.md` | **L1+L2 BUILT** on `feature/intent-mining`, L3-L5 planned (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog — and the policy behind it — from observed traces, for a customer with no policy document. `evalengine/behavior/` counts (`/eval/behavior/*`); `semanticlayer/intent_mining.py` synthesises candidates and asks an LLM what rule the behaviour implies (`POST /design/semantic/intents/mine`). §6.1 carries the measured holdout results |
 | `compliance_design.md` | how the engine's checks map onto GDPR / SOC 2 / PCI-DSS / HIPAA and a deployment's own regime — the two-layer model (shipped framework packs × per-deployment overlay) behind `/eval/compliance` and the Compliance tab, plus the ranked list of gaps no mapping covers; per-section status markers say what is built |
 | `loanpro-demo/docs/check-coverage.md` | generated contract: check → session → the span attributes that detect it |
 | `loanpro-demo/docs/use-cases.md` | the policy-failure use cases in narrative form, each with its real `loan_underwriting_policy.md` citation (and a correction table for numbers from an older version of that document) |

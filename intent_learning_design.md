@@ -1,7 +1,15 @@
 # Learned intents: mining an intent catalog from observed behaviour
 
-> **Status: PLANNED, not built.** Tracked as Phase E (steps 21-25) in
-> `autonomous_build.md` §6. Nothing described here exists in the codebase yet.
+> **Status: L1 and L2 BUILT** (branch `feature/intent-mining`); L3-L5 still
+> planned. Tracked as Phase E (steps 21-25) in `autonomous_build.md` §6.
+>
+> | phase | what | where |
+> |---|---|---|
+> | L1 | behavioural aggregates, no LLM | `eval-engine/evalengine/behavior/`, `GET /eval/behavior/{tools,sequences,invariants,labels}` |
+> | L2 | candidate synthesis + inferred policy | `semantic-layer/semanticlayer/intent_mining.py`, `POST /design/semantic/intents/mine` |
+> | L3-L5 | review UI, impact preview, drift watch | not built |
+>
+> §6's holdout experiment has been RUN; its results are in §6.1 below.
 
 Companion to `autonomous_build.md` (phased build order) and
 `prefront-check-families.md` (what the checks are). This document plans the
@@ -191,6 +199,39 @@ intents) *and* 37 graded scenarios currently at 37/37 PASS. So:
    those candidates as contested. That makes the corpus a direct test of
    defence #1 — arguably the most important test in the whole plan, since it
    tests the assumption the design rests on rather than the code.
+
+## 6.1 What the holdout experiment actually measured
+
+Run against the bundled loan-origination demo: 18 tools mined from ~30 days of
+traces, scored against its 17-intent hand-authored catalog with
+`semantic-layer/score_mined_catalog.py`. Alignment is via the `app.intent`
+label — the answer key, used for scoring only, never as a mining input.
+
+| field | precision | recall | reading |
+|---|--:|--:|---|
+| `side_effect` | **17/17 exact** | — | deterministic, as §3 claimed |
+| `fields` | 0.92 | **1.00** | every authored field was observed; the 8 extra are fields the tool really returns that the catalog omits |
+| `params` | 0.92 | 0.83 | good; misses are args never exercised in the window |
+| `allowed_roles` | **0.76** | **0.66** | the weakest by a distance — exactly where §3 predicted |
+
+Three things worth keeping:
+
+1. **The `allowed_roles` gap is the design's central claim, measured.** Nine
+   observed roles are absent from the authored permitted set. That is not miner
+   error — it is *observed ≠ allowed*, the normalization-of-deviance hotspot,
+   showing up as precision loss. A miner that reported observed roles as
+   permitted would have blessed all nine.
+2. **The miner found an operation the catalog deliberately omits.**
+   `get_internal_metrics` aligned to nothing, because it is one of the demo's
+   two off-catalog tools. Unaligned candidates are therefore a *signal* —
+   operations running with nobody's approval — not scoring noise.
+3. **The contested overlay was non-empty on every high-traffic tool.** This
+   corpus is deliberately full of violations, so that is the correct answer, and
+   it confirms defence #1 fires on exactly the corpus designed to fool it.
+
+Not yet measured: §6 step 3, running the graded harness against the MINED
+catalog to see how much governance survives. That needs L3's approve-and-publish
+path, which does not exist yet.
 
 ## 7. Open questions for a human
 
