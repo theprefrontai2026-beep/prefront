@@ -14,11 +14,14 @@ docker compose -f loanpro-demo/docker-compose.yml up --build -d   # the ACTIVE D
 make test                                                   # every offline suite + vendoring drift check
 ```
 
-**`oob` is the live branch, not `main`.** It is far ahead of it — all of
-eval-engine (Phases A-D), the OOB pipeline, Verdict, and the current UI live
-there and have never been merged down. `main` is an older SecureBank-era tree,
-so branching from it silently drops nearly everything this file documents.
-Check with `git rev-list --count origin/main..origin/oob` before starting.
+**`main` and `oob` are now the same tree.** They diverged for a long time —
+all of eval-engine (Phases A-D), the OOB pipeline, Verdict and the current UI
+were built on `oob` and never merged down, so `main` was an older
+SecureBank-era tree and branching from it silently dropped nearly everything
+this file documents. That is resolved: `main` was fast-forwarded to `oob`, so
+either is a correct place to branch from. Confirm with
+`git rev-list --count main..oob` (expect 0) before starting, and treat a
+non-zero answer as the divergence having reopened rather than as normal.
 
 Five facts that catch people out, each expanded below:
 
