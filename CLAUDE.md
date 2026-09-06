@@ -369,6 +369,27 @@ A second connector alongside Postgres: point the Data Connector tab's **MCP Serv
 
 - **A rule fires by the template *supplying its fact*, not by listing it.** A template's `required_policies` is documentation only; `evaluate()` keys off the rule's `intents` + whether its condition symbols are present in facts. A precheck that doesn't SELECT the column a rule needs ⇒ that rule goes indeterminate ⇒ fail-safe approval (or never blocks).
 - **A symbol must resolve at publish AND match a fact at runtime.** `publish-policy` binds rule symbols against columns / declared request params / metrics / `caller.*` (unresolved ⇒ rejected). At runtime the fact is keyed by the literal column name or the *request-arg name* — so a request param must be named for its column, or it binds but never fires. Over-limit-style conditions need a **simple symbol on the left** (`x > metric`), since the evaluator looks up the left side rather than evaluating an arithmetic expression there.
+- **A datasource "reset" can take the whole stack down, and the guard against
+  it is one line of `.env`.** The Data Connector's "Disconnect and forget
+  everything" calls `POST /design/semantic/reset`, which deletes every
+  per-datasource directory under `/artifacts` EXCEPT those named in
+  `SEMANTICLAYER_KEEP_DATASOURCES`. With that unset the bundled demos go too,
+  and the damage is not confined to the datasource you meant to forget: both
+  governed MCPs drop to `tools: [], governed: false` so every scenario returns
+  `no_approved_intent`; **eval-engine exits** (its `EVAL_APPLICATIONS_PATH` and
+  rule pack live in that volume, and a set-but-unreadable artifact is a
+  deliberate hard failure, never a silent degrade); and **the UI then will not
+  start either**, because nginx resolves upstreams at boot and dies with
+  `host not found in upstream "eval-engine"`. Recovery is four steps: re-run
+  both seed jobs, `up -d eval-engine`, `up -d ui` + `docker restart
+  prefront-ui-1`, restart both MCPs. `.env.example` now sets
+  `SEMANTICLAYER_KEEP_DATASOURCES=loanpro-demo,securebank-demo`; an `.env`
+  created before that does NOT inherit it (`.env` is gitignored), so add the
+  line by hand and recreate `semantic-layer-api`. The engine still ships no
+  default — which datasource is a baseline is a property of a deployment, not
+  of the engine (Hard Rule 1). Verified live: with the list set, a real reset
+  returns `kept: [loanpro-demo, securebank-demo]`, removes nothing, and every
+  service stays up.
 - **The artifacts volume is read-only in the MCP containers.** `docker exec <mcp-server> cp …` into `/artifacts` fails silently. Edit via a RW helper: `docker run --rm -v <artifacts-vol>:/artifacts -v $PWD/file:/in:ro alpine cp /in /artifacts/<path>` (volume is `prefront_artifacts`).
 - **The demo seed jobs only copy when the file is ABSENT** (`[ -f … ] || cp`), so a
   volume created before a demo's artifacts changed keeps serving the OLD ones —

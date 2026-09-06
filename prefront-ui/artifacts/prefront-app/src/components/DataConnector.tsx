@@ -105,21 +105,35 @@ export default function DataConnector({ demo, onSchema, onDisconnect, restored }
     if (!window.confirm(
       "Disconnect and forget everything?\n\n" +
       "This clears the connected datasource and its generated query templates " +
-      "on the server, and REMOVES EVERY PUBLISHED ARTIFACT DIRECTORY — including " +
-      "the bundled demos' — unless this deployment set SEMANTICLAYER_KEEP_DATASOURCES. " +
-      "Re-run each demo's seed job to restore them.\n\n" +
+      "on the server, and REMOVES EVERY PUBLISHED ARTIFACT DIRECTORY except any " +
+      "listed in SEMANTICLAYER_KEEP_DATASOURCES.\n\n" +
+      "If the bundled demos are not on that list, this also takes down both " +
+      "governed MCP servers, eval-engine and the UI itself — recovering means " +
+      "re-running each demo's seed job and restarting them.\n\n" +
       "It also clears the schema cached in this browser. This cannot be undone."
     )) return;
     setError(""); setStatus(""); setBusy(true);
     try {
       const r = await resetDatasources();
       const n = (r?.cleared?.datasources ?? 0) + (r?.cleared?.query_templates ?? 0);
+      // Report what the server ACTUALLY did, from its own response, rather
+      // than a count that implies the rest survived. `kept` and
+      // `removed_artifact_dirs` were always returned and always discarded, so
+      // a reset that wiped both demos' artifacts looked identical to one that
+      // spared them — which is how it happened three times before anyone
+      // connected the button to the stack falling over.
+      const kept: string[] = r?.kept ?? [];
+      const removed: string[] = r?.removed_artifact_dirs ?? [];
+      const what = [
+        removed.length ? `removed artifacts for ${removed.join(", ")}` : "removed no artifact directories",
+        kept.length ? `kept ${kept.join(", ")}` : null,
+      ].filter(Boolean).join("; ");
       setCatalog(null);
       setResultId("");
       setPii(null);
       setProgress(null);
       onDisconnect();
-      setStatus(`Disconnected — forgot ${n} server record${n !== 1 ? "s" : ""}; browser cache cleared`);
+      setStatus(`Disconnected — forgot ${n} server record${n !== 1 ? "s" : ""}; ${what}; browser cache cleared`);
     } catch (e: any) {
       // Server wipe failed — still clear the browser so the UI reflects "disconnected".
       setCatalog(null);
