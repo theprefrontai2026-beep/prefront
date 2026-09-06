@@ -10,7 +10,7 @@
     "got": "allow",
     "masked": [],
     "reasons": [],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -26,7 +26,7 @@
     "reasons": [
       "view_account_owner_only: OWN_DATA_ONLY: account holders may only view their own accounts."
     ],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -43,7 +43,7 @@
       "ssn"
     ],
     "reasons": [],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -59,7 +59,7 @@
     "reasons": [
       "role_not_permitted: role 'Account Holder' is not allowed to call 'view_users' (allowed: ['Bank Teller', 'Bank Manager'])"
     ],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -75,7 +75,7 @@
       "ssn"
     ],
     "reasons": [],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -91,7 +91,7 @@
     "reasons": [
       "transfer_requires_approval: Transfers above $10,000 require Bank Manager approval."
     ],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -107,7 +107,7 @@
     "reasons": [
       "transfer_ceiling: Transfer exceeds the $250,000 hard ceiling."
     ],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -123,7 +123,7 @@
     "reasons": [
       "role_not_permitted: role 'Bank Teller' is not allowed to call 'decide_loan' (allowed: ['Bank Manager'])"
     ],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -137,7 +137,7 @@
     "got": "allow",
     "masked": [],
     "reasons": [],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   },
   {
@@ -151,7 +151,7 @@
     "got": "allow",
     "masked": [],
     "reasons": [],
-    "error": null,
+    "error": "",
     "grade": "PASS"
   }
 ]

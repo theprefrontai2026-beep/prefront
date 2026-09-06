@@ -18,7 +18,30 @@ fixture says Prefront should do.
     python3 inline_regression.py --only B2,B4    # a subset
     python3 inline_regression.py --lenient       # exit 0 regardless
 
-Env: ORCHESTRATOR_URL (default http://localhost:8095).
+    python3 inline_regression.py --no-precheck   # skip the runtime health check
+
+Env: ORCHESTRATOR_URL (default http://localhost:8095),
+     MCP_URL (default http://localhost:8100) for the pre-flight check below.
+
+WHY THERE IS A PRE-FLIGHT CHECK AND A REASON GUARD, because both exist for one
+real incident: a datasource reset emptied the artifacts volume, `securebank-mcp`
+came up with zero tools, and EVERY scenario came back
+"BLOCK (no approved intent)". This harness reported 5/10 PASS — because five
+scenarios expect a block, and a server with no tools blocks everything. A
+completely dead runtime scored as a partial failure, which reads as "some
+policy drifted" rather than "nothing is being governed at all".
+
+Two guards, because either alone leaves a hole:
+  * `preflight()` asks the governed MCP whether it has any tools BEFORE
+    spending ten live LLM sessions. It aborts on a definite "no", and only
+    warns when it cannot reach the server at all — absence of evidence is not
+    evidence, and a harness that refuses to run because a port is not published
+    would be its own problem.
+  * `_infra_failure()` is the one that actually closes the hole: a block whose
+    reason is INFRASTRUCTURE (no approved intent, no caller identity, a failed
+    query or upstream call) is never graded PASS, whatever the fixture expects.
+    No SecureBank scenario expects any of those — every `prefront` expectation
+    names a real policy reason — so this cannot mask a legitimate outcome.
 
 ON THE EXPECTATION SOURCE, because it is weaker than LoanPro's and that should
 not be discovered later: `scenarios.py` states the expected outcome as PROSE in
@@ -43,6 +66,17 @@ import urllib.error
 import urllib.request
 
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8095").rstrip("/")
+MCP_URL = os.environ.get("MCP_URL", "http://localhost:8100").rstrip("/")
+
+# Reason prefixes that mean the RUNTIME failed, not that policy decided
+# something. Matched against the governed result's `reasons`; see the module
+# docstring for why a block carrying one of these can never be a pass.
+_INFRA_REASONS = (
+    "no_approved_intent",    # the server exposed no tool the request maps to
+    "no_caller_identity",    # identity not configured; everything blocks
+    "query_failed",          # the SQL itself failed
+    "upstream_call_failed",  # a governed MCP proxy call failed
+)
 
 # The four decisions the runtime can produce, and the words either side uses
 # for them. `decide.py`'s precedence is block > approval_required > allow, with
@@ -69,6 +103,47 @@ def _verdicts(text: str) -> set[str]:
     if "ALLOW" in head or "PERMIT" in head:
         out.add(ALLOW)
     return out
+
+
+def _infra_failure(governed: dict) -> str:
+    """The infrastructure reason this result carries, or "" if it is a real
+    decision. A block for one of these is a broken deployment wearing a
+    policy outcome's clothes."""
+    for r in governed.get("reasons") or []:
+        for marker in _INFRA_REASONS:
+            if str(r).startswith(marker):
+                return str(r)
+    return ""
+
+
+def preflight(mcp_url: str) -> str | None:
+    """Ask the governed MCP whether it is actually serving anything.
+
+    Returns an error string when the runtime is definitively dead, None when it
+    is healthy OR when we simply could not tell. Unreachable is NOT fatal: the
+    server may not publish a port in every deployment, and `_infra_failure`
+    catches the real condition regardless — this only exists to fail in two
+    seconds instead of ten LLM sessions.
+    """
+    try:
+        with urllib.request.urlopen(f"{mcp_url}/healthz", timeout=10) as resp:
+            h = json.load(resp)
+    except Exception as e:  # noqa: BLE001
+        print(f"-> WARNING: could not reach the governed MCP at {mcp_url} "
+              f"({type(e).__name__}); skipping the pre-flight check. Set MCP_URL "
+              f"if it lives elsewhere.", file=sys.stderr)
+        return None
+    tools, governed = h.get("tools") or [], h.get("governed")
+    if not tools or governed is False:
+        return (f"the governed MCP at {mcp_url} is serving {len(tools)} tool(s) "
+                f"(governed={governed}). Every scenario would block with "
+                f"'no_approved_intent' and the five that EXPECT a block would "
+                f"score as passes.\n   Its artifacts are probably missing — a "
+                f"datasource reset removes them unless SEMANTICLAYER_KEEP_DATASOURCES "
+                f"lists the demo. Re-run the seed job and restart the server:\n"
+                f"     docker compose -f securebank-demo/docker-compose.yml up -d securebank-seed\n"
+                f"     docker compose -f securebank-demo/docker-compose.yml restart securebank-mcp")
+    return None
 
 
 def actual_verdict(governed: dict) -> str:
@@ -112,8 +187,15 @@ def grade(row: dict) -> dict:
     got = actual_verdict(governed)
     err = governed.get("error")
 
+    infra = _infra_failure(governed)
+
     if err:
         verdict = "ERROR"
+    elif infra:
+        # Never PASS, however well the outcome happens to match: this is the
+        # runtime failing, not a decision. Distinct from ERROR so the report
+        # names the condition rather than burying it in a generic failure.
+        verdict = "NOT GOVERNED"
     elif not expected:
         # The fixture states no expectation for this scenario. Reported, never
         # silently counted as a pass — an unasserted scenario is not a passing
@@ -131,7 +213,7 @@ def grade(row: dict) -> dict:
         "got": got,
         "masked": governed.get("masked_fields") or [],
         "reasons": governed.get("reasons") or [],
-        "error": err,
+        "error": err or infra,
         "grade": verdict,
     }
 
@@ -142,28 +224,43 @@ def main() -> int:
     ap.add_argument("--only", help="comma-separated scenario ids (default: the whole catalogue)")
     ap.add_argument("--json-out", help="also write the raw per-scenario results as JSON")
     ap.add_argument("--lenient", action="store_true", help="always exit 0 (for iterating)")
+    ap.add_argument("--no-precheck", action="store_true",
+                    help="skip the governed-runtime health check (see the module docstring)")
     args = ap.parse_args()
 
     only = [s.strip().upper() for s in args.only.split(",")] if args.only else None
+
+    if not args.no_precheck:
+        dead = preflight(MCP_URL)
+        if dead:
+            print(f"\n!! REFUSING TO GRADE: {dead}\n", file=sys.stderr)
+            return 2
+
     rows = fetch(only)
     results = [grade(r) for r in rows]
 
     width = max((len(str(r["id"] or "")) for r in results), default=2)
     for r in results:
-        mark = {"PASS": "   ", "FAIL": ">> ", "ERROR": "!! ", "NO EXPECTATION": " ? "}[r["grade"]]
+        mark = {"PASS": "   ", "FAIL": ">> ", "ERROR": "!! ",
+                "NOT GOVERNED": "!! ", "NO EXPECTATION": " ? "}[r["grade"]]
         print(f"{mark}{str(r['id']):<{width}}  {r['grade']:<14} "
               f"expected={'/'.join(r['expected'])} got={r['got']}", file=sys.stderr)
-        if r["grade"] in ("FAIL", "ERROR"):
+        if r["grade"] in ("FAIL", "ERROR", "NOT GOVERNED"):
             for line in (r["reasons"] or [r["error"] or ""]):
                 if line:
                     print(f"        {line}", file=sys.stderr)
 
     passed = sum(1 for r in results if r["grade"] == "PASS")
-    failed = [r for r in results if r["grade"] in ("FAIL", "ERROR")]
+    failed = [r for r in results if r["grade"] in ("FAIL", "ERROR", "NOT GOVERNED")]
+    ungoverned = [r for r in results if r["grade"] == "NOT GOVERNED"]
     unasserted = [r for r in results if r["grade"] == "NO EXPECTATION"]
 
     print(f"\n{passed}/{len(results)} PASS, {len(failed)} FAIL/ERROR, "
           f"{len(unasserted)} with no stated expectation", file=sys.stderr)
+    if ungoverned:
+        print(f"\n!! {len(ungoverned)} of {len(results)} scenarios were NOT GOVERNED — the "
+              f"runtime failed rather than deciding.\n   This is a broken deployment, not "
+              f"policy drift; the grades above say nothing about policy.", file=sys.stderr)
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
