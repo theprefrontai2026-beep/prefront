@@ -2441,3 +2441,92 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-trace-exec.ok  { color: var(--green); }
 .pf-trace-exec.dry { color: var(--teal); }
 .pf-trace-exec.off { color: var(--muted); }
+
+/* ── Scenario runner (components/ScenarioRunner.tsx) ──────────────────────
+   Ported from the Verdict app with the component. Every custom property it
+   uses is already defined above, and none of these selectors collided with
+   the existing sheet (both checked before appending). The two apps share no
+   stylesheet by design, so a visual change here has to be made in
+   artifacts/verdict/src/index.css too, by hand. */
+.pf-sess-run { display: flex; flex-direction: column; gap: 14px; }
+.pf-sess-family-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.pf-sess-family-head h3 { margin: 0; font-size: 15px; }
+.pf-sess-turns { margin: 4px 0 6px; }
+.pf-sess-turn-preview + .pf-sess-turn-preview { border-top: 1px dashed var(--line-soft); }
+.pf-sess-steps { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 6px; }
+.pf-sess-steps code { font-size: 11px; background: var(--surface-alt); padding: 1px 6px; border-radius: 4px; color: var(--ink-soft); }
+.pf-sess-transcript { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.pf-sess-turn { border-left: 2px solid var(--line); padding-left: 10px; }
+.pf-sess-turn-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.pf-sess-turn-n { font-family: var(--app-font-mono); font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.pf-sess-msg { font-size: 13px; color: var(--ink); margin: 4px 0; line-height: 1.45; }
+.pf-sess-msg.agent { color: var(--ink-soft); }
+.pf-sess-msg .lbl, .pf-sess-call-head .lbl {
+  font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+  margin-right: 6px; font-family: var(--app-font-mono);
+}
+.pf-sess-call-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.pf-sess-call-head code { font-size: 12px; }
+.pf-sess-findings-head { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.pf-sess-finding { display: flex; gap: 8px; align-items: flex-start; margin: 5px 0; font-size: 12px; color: var(--ink-soft); line-height: 1.45; }
+.pf-sess-finding .pf-sess-check { flex: none; margin-top: 2px; }
+.pf-sess-findings-inline { margin-top: 8px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius); }
+.pf-sess-block {
+  margin: 8px 0; padding: 8px 12px; border-radius: var(--radius);
+  border: 1px solid var(--line); border-left: 3px solid var(--line);
+}
+.pf-sess-block-head {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+  color: var(--ink-soft); margin-bottom: 6px;
+}
+.pf-sess-block-head.muted { color: var(--muted); }
+.pf-sess-block-query { border-left-color: var(--blue); background: var(--blue-light, var(--surface-alt)); }
+.pf-sess-block-response { border-left-color: var(--line); background: var(--surface); }
+.pf-sess-block-response.pending { border-style: dashed; }
+.pf-sess-placeholder { font-size: 12px; color: var(--muted); font-style: italic; }
+.pf-sess-steps-lbl {
+  flex-basis: 100%; font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted); font-family: var(--app-font-mono); margin-bottom: 2px;
+}
+.pf-link { border: 0; background: none; color: var(--blue); cursor: pointer; font-size: 12px; padding: 0; }
+.pf-link:hover { text-decoration: underline; }
+.pf-flyout-findings { border-top: 1px dashed var(--line); padding-top: 10px; }
+.pf-sess-policy { flex: none; margin-top: 2px; font-family: var(--app-font-mono); font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: var(--surface-alt); color: var(--ink-soft); white-space: nowrap; }
+.pf-ptrace {
+  margin-top: 10px; border: 1px solid #e2e8f0; border-radius: 8px;
+  background: #fbfcfe; overflow: hidden;
+}
+.pf-ptrace-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid #e2e8f0; background: #f1f5f9;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #475569;
+}
+.pf-ptrace-count { font-weight: 500; text-transform: none; letter-spacing: 0; color: #64748b; }
+.pf-ptrace-rule-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pf-ptrace-key { font-size: 12px; color: #0f172a; }
+.pf-ptrace-fields {
+  font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #f1f5f9; border-radius: 4px; padding: 1px 5px; color: #475569;
+}
+.pf-ptrace-reason { font-size: 12px; color: #334155; margin-top: 5px; }
+.pf-ptrace-cond {
+  font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #64748b; margin-top: 3px;
+}
+.pf-ptrace-quote {
+  margin: 7px 0 0; padding: 6px 0 6px 10px; border-left: 2px solid #cbd5e1;
+  font-size: 12px; font-style: italic; color: #475569; line-height: 1.45;
+}
+.pf-ptrace-quote cite {
+  display: block; margin-top: 4px; font-style: normal; font-size: 11px;
+  color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.pf-ptrace-nosrc { margin-top: 6px; font-size: 11px; color: #94a3b8; font-style: italic; }
+.pf-ptrace-missing { margin-top: 6px; font-size: 11px; color: #b45309; }
+.pf-ptrace-checks { padding: 8px 12px; border-top: 1px solid #e2e8f0; background: #f8fafc; }
+.pf-ptrace-check { font-size: 11px; color: #475569; padding: 2px 0; }
+.pf-ptrace-check.bad { color: #991b1b; font-weight: 600; }
+.pf-ptrace-checks summary {
+  font-size: 11px; color: #64748b; cursor: pointer; padding: 2px 0;
+}

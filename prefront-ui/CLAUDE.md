@@ -417,6 +417,30 @@ out-of-band findings, which is LoanPro's story, not this one.
 - Its ~230 lines of CSS came back with it, checked first for missing custom
   properties and selector collisions (none of either).
 
+**The Runtime tab holds one question — "what does this application do at
+runtime?" — answered in the form the application supports**, which is why its
+body branches on the demo rather than showing one thing:
+
+- `demo.runtimeDiff` (SecureBank, governed IN-BAND) → `RuntimeDiff`: the same
+  request with and without Prefront in the path, side by side.
+- `demo.scenarioCatalogue` (LoanPro, observed OUT OF BAND) → `ScenarioRunner`:
+  the scenario catalogue, run interactively, with the findings the evaluator
+  raised about each session afterwards. There is no before/after pair to show
+  for an application Prefront only observes.
+- neither → a panel naming the demo and offering a switch.
+
+`ScenarioRunner.tsx` is a hand-port of Verdict's `SessionRunner.tsx` — a second
+COPY, not a move: the standalone Verdict app still exists and still runs the
+same catalogue, so a behavioural change must be made in both files, the same
+rule that already applies to the stylesheet. Three adaptations are marked in
+the file: the registry comes through the `@apps` alias rather than Verdict's
+`../demo` re-export; `SessionDetail` comes from this app's `Observability`
+(a superset of Verdict's copy — the extra props are optional); and the
+component is keyed on `demo.id` by its caller, because this app keeps tab
+bodies MOUNTED across a demo switch where Verdict remounts on `?app=`. Its
+~48 CSS rules were ported with it, after checking every custom property
+resolves here and no selector collides.
+
 ## Clearing data: one sequence, two buttons
 
 `api.ts`'s **`clearAllTraceData(demoIds)`** + **`CLEAR_ALL_CONFIRM`** are the

@@ -3,6 +3,7 @@ import Overview from "./components/Overview";
 import { DEMOS } from "./demos";
 import DecisionTraces from "./components/DecisionTraces";
 import RuntimeDiff from "./components/RuntimeDiff";
+import ScenarioRunner from "./components/ScenarioRunner";
 import IntentFlows from "./components/IntentFlows";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
@@ -418,7 +419,17 @@ export default function App() {
                       onOpenSettings={() => navTo(TAB_PATH.settings)} />
           </div>
           <div className={tab === "runtime" ? "" : "tab-hidden"}>
-            {demo.runtimeDiff ? <RuntimeDiff demo={demo} /> : (
+            {/* One tab, one question — "what does this application do at
+                runtime?" — answered in the form the application supports.
+                An IN-BAND app (SecureBank) answers with the before/after diff:
+                the same request with and without Prefront in the path. An
+                OUT-OF-BAND one (LoanPro) has no such pair — Prefront only
+                observes it — so its answer is a session and the findings the
+                evaluator raised about it afterwards. `key` remounts on a demo
+                switch so no catalogue or run result crosses applications. */}
+            {demo.runtimeDiff ? <RuntimeDiff demo={demo} />
+             : demo.scenarioCatalogue ? <ScenarioRunner key={demo.id} app={demo} />
+             : (
               // Not an error state: this demo genuinely has no two-sided diff
               // to show. Say which demo does, and offer the switch, rather
               // than leaving the reader to work out that the tab is fine and
@@ -432,7 +443,7 @@ export default function App() {
                   pair: its before/after is a whole governed <em>session</em>,
                   which the Verdict app runs instead.
                 </p>
-                {DEMOS.filter((d) => d.runtimeDiff).map((d) => (
+                {DEMOS.filter((d) => d.runtimeDiff || d.scenarioCatalogue).map((d) => (
                   <button key={d.id} className="pf-btn" style={{ marginTop: 10 }}
                           onClick={() => openChooser()}>
                     Switch to {d.label} to see it
