@@ -158,9 +158,8 @@ observability" section. What follows is the UI over it.
   LLM / Ingestion), CSS under `.pf-oob-*`. Findings queries eval-engine's `/eval/*`
   (autonomous_build.md step 16), a separate nginx `location /eval/` block (and
   `VITE_EVAL_TARGET` dev proxy) alongside the existing `/oob/` one; Verdict's
-  `SessionDetail.tsx` and `verdict-nginx.conf` carry the same addition (its own
-  hand-curated CSS copy already had the `.pf-oob-chip.red/green/amber` tone
-  classes). Vite dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
+  (the retired Verdict app carried the same addition in its own
+  `SessionDetail.tsx` and `verdict-nginx.conf`). Vite dev proxies `/oob` → `VITE_OOB_TARGET` (default `http://localhost:8110`).
 - **Findings lives in `components/DecisionTraces.tsx` now, not Observability** -
   a `FindingsSection`, toggled via a "Decisions | Findings" sub-nav at the top
   of that tab (`.pf-oob-view`/`.pf-oob-views`, reused from Observability's own
@@ -429,11 +428,11 @@ body branches on the demo rather than showing one thing:
   for an application Prefront only observes.
 - neither → a panel naming the demo and offering a switch.
 
-`ScenarioRunner.tsx` is a hand-port of Verdict's `SessionRunner.tsx` — a second
-COPY, not a move: the standalone Verdict app still exists and still runs the
-same catalogue, so a behavioural change must be made in both files, the same
-rule that already applies to the stylesheet. Three adaptations are marked in
-the file: the registry comes through the `@apps` alias rather than Verdict's
+`ScenarioRunner.tsx` began as a hand-port of the standalone Verdict app's
+`SessionRunner.tsx`. That app has since been RETIRED — once its runner lived
+here it was pure duplication with nothing left only it could do — so this is
+the only copy and there is no second file to keep in step. Three adaptations
+from the original are marked in the file: the registry comes through the `@apps` alias rather than Verdict's
 `../demo` re-export; `SessionDetail` comes from this app's `Observability`
 (a superset of Verdict's copy — the extra props are optional); and the
 component is keyed on `demo.id` by its caller, because this app keeps tab

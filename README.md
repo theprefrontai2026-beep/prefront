@@ -41,7 +41,7 @@ project, attaching to the engine's network and `artifacts` volume as
 
 | Compose file | Services |
 |---|---|
-| `loanpro-demo/docker-compose.yml` | `loanpro-orchestrator` :8098, `loanpro-ungoverned` :8097, `loanpro-app-mcp` :8102, `loanpro-db` :5435, `verdict` :5180 (+ `loanpro-mcp` :8101 behind that file's own `mcp` profile, unused by default) |
+| `loanpro-demo/docker-compose.yml` | `loanpro-orchestrator` :8098, `loanpro-ungoverned` :8097, `loanpro-app-mcp` :8102, `loanpro-db` :5435 (+ `loanpro-mcp` :8101 behind that file's own `mcp` profile, unused by default) |
 | `securebank-demo/docker-compose.yml` | `securebank-orchestrator` :8095, `securebank-ungoverned` :8096, `securebank-mcp` :8100, `securebank-db` :5434 |
 
 **LoanPro is the active demo** — an intentionally ungoverned deployment that is

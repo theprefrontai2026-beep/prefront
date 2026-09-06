@@ -1,15 +1,16 @@
 /*
- * The APPLICATION registry — the one place both front-ends agree on what an
- * application IS and how to scope a request to it.
+ * The APPLICATION registry — the one definition of what an application IS and
+ * which keys scope a request to it.
  *
- * Why this file exists at all, given that prefront-app and verdict deliberately
- * share no code (see prefront-ui/CLAUDE.md): everything else they duplicate is
- * PRESENTATION, and duplicated presentation drifts visibly — two pages look
- * different and someone notices. An application id or a Phoenix project name
- * drifting does not look like anything. It silently scopes a read to an
- * application that does not exist, and the page renders a confident, empty
- * result. That failure is invisible by construction, so this is the one thing
- * the two apps must not each keep their own copy of.
+ * It was written when there were TWO front-ends that deliberately shared no
+ * code: everything else they duplicated was PRESENTATION, which drifts visibly
+ * — two pages look different and someone notices — whereas an application id
+ * or a Phoenix project name drifting does not look like anything. It silently
+ * scopes a read to an application that does not exist and renders a confident,
+ * empty result. The second app (verdict) has since been retired, so this now
+ * has one consumer; it stays because the ids below are still the contract
+ * between this UI and three separately-scoped backends, and a wrong one still
+ * fails silently.
  *
  * It is NOT a workspace package on purpose. Adding one changes
  * pnpm-lock.yaml, and both Dockerfiles build with `pnpm install
@@ -49,18 +50,18 @@ export interface AppIdentity {
 
   /** This application's orchestrator, or "" when it has none at all. Absolute
    *  because it is a cross-origin fetch (those services send permissive CORS).
-   *  Populated even when Verdict cannot DRIVE it — see `scenarioCatalogue`. */
+   *  Populated even when the runner cannot DRIVE it — see `scenarioCatalogue`. */
   orchestratorUrl: string;
 
-  /** Whether that orchestrator serves the SESSION CATALOGUE Verdict drives:
+  /** Whether that orchestrator serves the SESSION CATALOGUE the Runtime tab's
+   *  ScenarioRunner drives:
    *  `GET /api/scenarios` shaped `{families:[…]}` plus `GET /api/run`.
    *
    *  Separate from `orchestratorUrl` because "has no orchestrator" and "has one
    *  Verdict cannot drive" are different facts, and collapsing them into an
    *  empty URL hid the second: SecureBank's orchestrator is real and serves
-   *  :8095, but its /api/scenarios returns a bare LIST and it exposes /api/diff
-   *  instead of /api/run — a governed-vs-ungoverned diff, not a catalogue of
-   *  sessions. Blanking the URL made the field look unconfigured when the
+   *  :8095, but it exposes /api/diff — a governed-vs-ungoverned diff, which the
+   *  Runtime tab renders through RuntimeDiff instead (see `runtimeDiff`). Blanking the URL made the field look unconfigured when the
    *  address is in fact known and correct. */
   scenarioCatalogue: boolean;
 
@@ -140,7 +141,7 @@ export const DEFAULT_APP: AppId = "loanpro";
  *  The registry stores `http://localhost:<port>` because that is what a
  *  developer runs. But this URL is dereferenced by the BROWSER, so `localhost`
  *  means the machine the browser is on — not the machine the services are on.
- *  Open the app as `http://a-host:5180` and every orchestrator call goes to the
+ *  Open the app as `http://a-host:5173` and every orchestrator call goes to the
  *  viewer's own laptop and fails, while the page itself loads fine, which reads
  *  as "the button does nothing".
  *

@@ -23,7 +23,6 @@ header comment for why)
 | `loanpro-app-mcp` | `app_mcp_server.py` + `app_tools.py` | 8102 | the shop's API as **plain MCP tools**. One `tool <name>` span per call, stamped with session, user, role, channel, intent, side-effect, args, SQL, rows |
 | `loanpro-ungoverned` | `ungoverned_server.py` | 8097 | the agent: an MCP **client** with server-side **sessions** (`POST /sessions`, `/sessions/{id}/messages`, `/sessions/{id}/replay`) |
 | `loanpro-orchestrator` | `demo_server.py` + `scenarios.py` | 8098 | runs the catalogue as sessions (`GET /api/scenarios`, `GET /api/run?only=&repeat=&variant=`) and opens the `session <id>` root span |
-| `verdict` | `../prefront-ui/artifacts/verdict` | 5180 | standalone scenario-runner UI |
 
 `loanpro-mcp` (Prefront's governed MCP) is still declared but sits behind
 this file's own `mcp` compose profile and plays no part here.
@@ -130,7 +129,7 @@ seed is never mutated — the agent still sees its mutation succeed.
 
 ## Where to look
 
-* Verdict (`localhost:5180`, standalone app — see the root `CLAUDE.md`) → session transcript + "what Prefront should report".
+* The main UI's **Runtime** tab (`localhost:5173/runtime`) → session transcript + "what Prefront should report". (This was a standalone app, Verdict, on :5180; it was retired once the runner moved into the tab.)
 * Observability → **Sessions**: one row per `session.id`, the ordered step
   stream, the population table (distinct action shapes per scenario × variant).
 * `curl localhost:8110/oob/sessions/<id>` for the raw spans; or ClickHouse:

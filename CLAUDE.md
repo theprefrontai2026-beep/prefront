@@ -10,7 +10,7 @@ docker compose up --build -d                                # the ENGINE (ui:517
                                                             #   semantic-layer:8010 oob-ingest:8110
                                                             #   eval-engine:8120 clickhouse phoenix:6006)
 docker compose -f loanpro-demo/docker-compose.yml up --build -d   # the ACTIVE DEMO (orchestrator:8098,
-                                                            #   agent:8097, app-mcp:8102, verdict:5180)
+                                                            #   agent:8097, app-mcp:8102)
 make test                                                   # every offline suite + vendoring drift check
 ```
 
@@ -70,7 +70,6 @@ real map:
 | `semantic-layer/semanticlayer` | module docstrings and LLM few-shot prompt examples only — no executable default any more (`api.py`'s `SEMANTICLAYER_KEEP_DATASOURCES` now defaults to `""`; the old `"securebank-demo"` literal was dead since the demo/engine compose split and was removed) | no |
 | `skill-builder/skillbuilder` | comments + `domain_packs/securebank.yaml`, config that labels itself as such on line 1 | no |
 | `prefront-ui` | `demos.ts` (the demo registry — by design), `sampleFlows.ts` fixtures, and `routes/decisions.ts`'s demo fallback (`lib/db`'s `demo` column no longer carries a `"securebank"` default — it is now a required, non-defaulted column, so every writer must set it explicitly) | no |
-| `artifacts/verdict` | it IS the LoanPro runner | n/a |
 
 So the invariant that actually holds without exception is: **the OOB evaluation
 engine names no demo, and that one is tested.** Everywhere else the names are
@@ -90,7 +89,6 @@ This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml`
 | api-server | `prefront-ui/` (Node/Express) | 8080 | UI companion: persistent audit log (`/api/audit`), **decision-trace store** (`/api/decisions`, `/api/stats`, `/api/policies`, `/api/intents`) that backs the live Dashboard, + collaborative-review WebSocket (`/api/ws/review`); backed by Drizzle/Postgres |
 | pii-analyzer | `pii-analyzer/app.py` | 8020 | **design-time PII guesser** (FastAPI + Presidio): `POST /pii/analyze` takes a list of `{table, column, type}` and returns a best-guess PII entity + confidence per column. It reads **column NAMES only, never row data** — the built-in Presidio recognizers match values (a real SSN, a real email), which never appear in a bare column name, so the registry is custom name-matching `PatternRecognizer`s instead. Feeds the Data Connector's PII scan and, through it, the candidate compliance overlay (`/design/semantic/compliance/overlay/suggest`). Guesses are candidates for a human, like everything else an inference step emits. |
 | ui | `prefront-ui` | 5173 | React front-end; nginx proxies `/design/semantic/` → :8010, `/design/` → :8000, `/api/` → :8080, `/oob/` → :8110, `/eval/` → :8120, `/pii/` → :8020 (`prefront-ui/nginx.conf` is the list — it caches upstream IPs at startup, see "nginx caches upstream IPs" below) |
-| verdict | `prefront-ui/artifacts/verdict`| 5180| **Verdict** — standalone "business decision evaluator": runs LoanPro's scenario catalogue interactively and shows each session's transcript beside its expected findings. Its own Vite/React app sharing no code or stylesheet with `prefront-app` (a style change meant for both must be made twice, by hand). Talks to `loanpro-orchestrator` by absolute URL; deployed from `loanpro-demo/docker-compose.yml` |
 | phoenix | (image `arizephoenix/phoenix`) | 6006 | Arize Phoenix trace collector + UI — receives OTLP/HTTP spans from every Python service (see "Tracing" below) |
 | clickhouse | (image `clickhouse/clickhouse-server`) | 8123/9000 | **OOB trace store** — db `prefront`, table `spans` (ReplacingMergeTree keyed by trace_id+span_id) |
 | oob-ingest | `oob-ingest/oobingest` | 8110 | **OOB ingestion + query API** (FastAPI): tails Phoenix's REST into ClickHouse, receives the OTLP fan-out on `/v1/traces`, serves `/oob/*` for the UI's Observability tab (nginx proxies `/oob/` → here) |
@@ -111,7 +109,9 @@ In the UI, both the LLM-generate and dbt-import paths are unified in one **Seman
 
 The UI is a **pnpm workspace** (`pnpm-workspace.yaml`) with packages under `artifacts/` (the React SPA, api-server, and `verdict` — see below) and `lib/` (shared: `api-spec`, `api-zod`, `api-client-react`, `db`). The React SPA lives at `prefront-ui/artifacts/prefront-app/src/`.
 
-`artifacts/verdict/` is a second, independent Vite/React app (`@workspace/verdict`) with its own `package.json`/`vite.config.ts`/`Dockerfile.verdict`/`verdict-nginx.conf` and **no shared code or stylesheet with `prefront-app`** — a change meant for both apps must be made in both places by hand. **The one exception is `lib/apps/registry.ts`**, the APPLICATION registry both import via the `@apps` Vite alias: duplicated presentation drifts *visibly*, but a duplicated application id or Phoenix project name drifts *invisibly* — it scopes a read to an application that does not exist and renders a confident empty page. It is an alias rather than a workspace package because both Dockerfiles build with `pnpm install --frozen-lockfile`, so a new package would break the image until the lockfile were regenerated. Verdict takes its application from `?app=`, offers a switcher when more than one is registered, and remounts on switch so no catalogue or run result crosses applications. `prefront-app`'s **Runtime tab now runs LoanPro's catalogue too** — `ScenarioRunner.tsx` is a hand-port of Verdict's `SessionRunner`, so the standalone app is no longer the only place to drive it. The port is a SECOND COPY, not a move: Verdict still exists and still runs, and a behavioural change now has to be made in both files by hand, exactly like the stylesheet.
+**There was a second front-end, `artifacts/verdict` (:5180), and it is gone.** It was a standalone Vite/React app that ran LoanPro's scenario catalogue, sharing no code or stylesheet with `prefront-app` — so every change meant for both had to be made twice, by hand. Its runner is now `prefront-app`'s Runtime tab (`ScenarioRunner.tsx`), which made the second app pure duplication with nothing left only it could do, so it was retired: the package, `Dockerfile.verdict`, `verdict-nginx.conf` and the `verdict` compose service all removed, and `pnpm-lock.yaml` regenerated (removing a workspace package invalidates it, and both images build `--frozen-lockfile`).
+
+`lib/apps/registry.ts` survives it. It existed because two front-ends had to agree on application ids and Phoenix project names — a disagreement there is invisible, scoping a read to an application that does not exist and rendering a confident empty page — and it is now single-consumer, but it remains the one definition of what an application IS and which keys scope a request to it. It is reached through the `@apps` Vite alias rather than being a workspace package, because a new package would break the image build until the lockfile were regenerated.
 
 The `db` lib is the Drizzle schema shared between the `api-server` and the Drizzle migrations (`lib/db/src/`). The OpenAPI spec at `lib/api-spec/openapi.yaml` is the contract; `api-client-react` (generated by orval) is the typed React-Query client.
 
@@ -125,7 +125,7 @@ starts NEITHER any more. Bring LoanPro up explicitly:
 ```bash
 docker compose -f loanpro-demo/docker-compose.yml up --build -d
 # orchestrator :8098, ungoverned agent :8097, app-mcp :8102, Postgres :5435,
-# verdict :5180 (now lives here — see that file's own header), and the GOVERNED
+# and the GOVERNED
 # lane: loanpro-mcp :8101 (Prefront proxying the app's tools) + loanpro-governed
 # :8099 (the same agent image pointed at it). Nothing is profile-gated here now.
 
@@ -175,9 +175,8 @@ Both yield `session → turn → ChatCompletion → tool …`; the replay's stan
 span carries `app.replay=true`. Catalogue ids: `F1-*`, `F2-*`, `F3-*`, `POP-*`
 (carry `repeat`/`variant`), `BASE-*` (clean controls); `F2-04R` is hidden
 (runnable by id). Each scenario declares `expected_findings` — what the
-evaluator SHOULD report — which Verdict shows beside the transcript (see
-"Verdict" in the services table above; the main Prefront UI has no Runtime
-tab any more).
+evaluator SHOULD report — shown beside the transcript in the main UI's
+Runtime tab.
 
 - **`db/*.sql` only run on a fresh volume.** After any schema/seed change:
   `docker compose -f loanpro-demo/docker-compose.yml rm -sf loanpro-db && docker volume rm prefront-loanpro-demo_loanpro_pgdata`,
@@ -661,7 +660,7 @@ docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:
                               # oob-ingest:8110  clickhouse:8123  phoenix:6006  eval-engine:8120
 docker compose -f loanpro-demo/docker-compose.yml up --build -d
                               # LoanPro (the active demo): orchestrator:8098
-                              #   agent:8097  app-mcp:8102  postgres:5435  verdict:5180
+                              #   agent:8097  app-mcp:8102  postgres:5435
 curl 'localhost:8098/api/run?only=F2-05'          # one LoanPro session (see loanpro-demo/README.md)
 curl 'localhost:8098/api/run?only=F2-05&mode=both'  # ...and its governed counterpart
 curl 'localhost:8110/oob/sessions?since=3600'     # what OOB ingested, per session
@@ -736,7 +735,6 @@ pnpm --filter ./lib/api-spec run codegen   # runs orval + typecheck:libs
 docker run --rm -v "$PWD":/w -w /w/artifacts/prefront-app node:24-slim \
   node /w/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
 ```
-Same pattern for `artifacts/verdict` (swap the `-w` path).
 
 `api-server` and `prefront-app` are **composite TS projects that consume `@workspace/db`'s emitted `dist/*.d.ts`** (project references), *not* its src — so after editing a `lib/db` schema, rebuild declarations first or the app typecheck won't see new exports:
 ```bash

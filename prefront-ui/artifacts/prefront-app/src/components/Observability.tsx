@@ -1151,7 +1151,7 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, eventId, f
 /** Slide-out panel showing one session's full trace detail without leaving
  *  the current view - what a Findings row opens (autonomous_build.md step
  *  16's Findings view: click a finding, see the trace it came from). Same
- *  pattern as Verdict's SessionFlyout (artifacts/verdict/src/components/
+ *  pattern as the retired Verdict app's SessionFlyout (its own
  *  SessionRunner.tsx) - no shared code between the two apps, so this is a
  *  deliberate port, not an import. Reuses the parent's own refresh tick
  *  rather than a second poll timer. */

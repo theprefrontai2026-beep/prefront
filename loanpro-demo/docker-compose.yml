@@ -12,7 +12,6 @@
 #   loanpro-app-mcp       the shop's own tool API, ungoverned MCP      :8102
 #   loanpro-ungoverned    the agent (LLM as MCP client)                :8097
 #   loanpro-orchestrator  scenario catalogue runner                    :8098
-#   verdict               standalone scenario-runner UI (nginx)        :5180
 #   loanpro-mcp           Prefront's governed MCP for LoanPro (unused, :8101
 #                         profile `mcp` only)
 #
@@ -250,25 +249,6 @@ services:
     depends_on:
       loanpro-ungoverned: {condition: service_started}
       loanpro-governed: {condition: service_started}
-
-  # ---- Verdict: standalone LoanPro scenario runner (nginx, static) ---------
-  # The main Prefront UI's old Runtime tab (SessionRunner), pulled out into
-  # its own small app so it can run/be shared independently of the
-  # design-time Prefront UI — and now lives in the LoanPro demo compose
-  # since that's exactly what it is: a LoanPro-specific tool, not part of the
-  # engine. Orchestrator calls are cross-origin fetches at an absolute URL
-  # (it already sends permissive CORS); the one relative path (oob-ingest
-  # session lookups) is proxied by its own nginx conf (verdict-nginx.conf),
-  # resolved by name across the shared network same as every other
-  # engine-facing call here.
-  verdict:
-    build:
-      context: ../prefront-ui
-      dockerfile: Dockerfile.verdict
-    ports: ["5180:80"]
-    depends_on:
-      - loanpro-orchestrator
-
 networks:
   default:
     name: prefront_default

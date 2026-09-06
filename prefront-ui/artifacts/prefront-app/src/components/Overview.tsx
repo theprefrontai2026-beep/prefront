@@ -17,6 +17,8 @@
 import { useState, type ReactNode } from "react";
 import CopyLink from "./CopyLink";
 import type { DemoConfig } from "../demos";
+// navTo carries ?demo= along, which a bare href would drop.
+import { navTo, TAB_PATH } from "../routes";
 import {
   useOverviewData, byEffect, byRule, familySpread, severityBreakdown,
   severityHistogram, topRulesShare, type SeverityRow, type SeverityBucket,
@@ -31,13 +33,16 @@ const WINDOWS: { label: string; secs: number }[] = [
   { label: "7 days", secs: 604800 },
 ];
 
-// Verdict (the scenario runner) lives on its own port on the same host.
-const verdictUrl = () => `${window.location.protocol}//${window.location.hostname}:5180`;
+// The scenario runner is a tab in this app now — it used to be Verdict, a
+// separate SPA on :5180, and this link left the app to reach it.
 
 function EmptyHint({ text }: { text: string }) {
   return (
     <div className="pf-ov2-empty">
-      {text} <a className="pf-ov2-link" href={verdictUrl()} target="_blank" rel="noreferrer">Run a scenario in Verdict →</a>
+      {text}{" "}
+      <button className="pf-ov2-link" type="button" onClick={() => navTo(TAB_PATH.runtime)}>
+        Run a scenario →
+      </button>
     </div>
   );
 }

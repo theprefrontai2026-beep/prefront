@@ -2201,7 +2201,7 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-find-origin-where { display: block; margin-top: 2px; }
 
 /* ── Findings: session fly-out panel ────────────────────────────────────── */
-/* Same pattern as Verdict's SessionFlyout (artifacts/verdict/src/index.css) -
+/* Originally ported from the (now retired) Verdict app's SessionFlyout -
    no shared stylesheet between the two apps, so this is a deliberate copy,
    not an import; keep both in sync by hand if either changes. */
 .pf-flyout-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.35); z-index: 60; }
@@ -2443,11 +2443,10 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-trace-exec.off { color: var(--muted); }
 
 /* ── Scenario runner (components/ScenarioRunner.tsx) ──────────────────────
-   Ported from the Verdict app with the component. Every custom property it
-   uses is already defined above, and none of these selectors collided with
-   the existing sheet (both checked before appending). The two apps share no
-   stylesheet by design, so a visual change here has to be made in
-   artifacts/verdict/src/index.css too, by hand. */
+   Ported from the Verdict app with the component; that app has since been
+   retired, so this is the only copy and there is nothing to keep in step.
+   Every custom property it uses is defined above, and no selector collided
+   with the existing sheet (both checked before appending). */
 .pf-sess-run { display: flex; flex-direction: column; gap: 14px; }
 .pf-sess-family-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .pf-sess-family-head h3 { margin: 0; font-size: 15px; }
