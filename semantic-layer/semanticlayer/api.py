@@ -894,6 +894,11 @@ class MineIntentsBody(BaseModel):
     # out of its absence. Defaulting to learning because assuming a baseline
     # that is not there is the more damaging mistake.
     mode: str = "learning"
+    # eval-engine's readiness verdict (GET /eval/behavior/baseline), passed
+    # through because this service holds no trace store of its own — the same
+    # boundary every other aggregate crosses. Inference is REFUSED without it:
+    # see the endpoint.
+    baseline: Optional[dict] = None
     min_sessions: int = 3
     # The LLM names the operation and states the rule the behaviour implies.
     # Off by default: the counted half is useful on its own, is reproducible,
@@ -915,6 +920,29 @@ def mine_intents_endpoint(body: MineIntentsBody):
     identically to an authored one."""
     from .intent_mining import DEFAULT_MINING_MODEL, mine_intents
     from .llm import LLMClient
+
+    # THE MODEL DOES NOT RUN DURING LEARNING. Not a default, not a checkbox —
+    # a refusal, and enforced here rather than in the UI because the UI is not
+    # the only caller.
+    #
+    # While a baseline is forming the job is to learn how tools are called and
+    # in what patterns, which is counting. Summarising is what you do once that
+    # has settled and you are naming things to approve. Asking a model to read
+    # a rule out of traffic that is still surprising us produces a confident
+    # statement about a pattern that may not be the pattern — and it is exactly
+    # the output most likely to be believed.
+    if body.infer_policy and not (body.baseline or {}).get("ready"):
+        b = body.baseline or {}
+        detail = (
+            "Refusing to run the model: this deployment is still learning. "
+            + (f"Most recent traffic was {int(float(b.get('recent_coverage') or 0) * 100)}% "
+               f"explained by patterns learned before it, with "
+               f"{int(float(b.get('recent_novelty') or 0) * 100)}% new shapes still arriving "
+               f"(thresholds {b.get('thresholds')}). " if b else
+               "No baseline verdict was supplied — pass GET /eval/behavior/baseline as `baseline`. ")
+            + "Keep observing; summarise once the pattern set has settled. The counted "
+              "patterns are returned regardless and need no model.")
+        raise HTTPException(409, detail)
 
     llm = None
     if body.infer_policy:

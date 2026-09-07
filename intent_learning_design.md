@@ -95,14 +95,37 @@ same counted facts are framed differently by mode:
 | warning | "81% of the time this operation was performed with nothing preceding it" | …"either no precondition is required, or one is being bypassed routinely" |
 | inferred | "appears to require no preconditions in the majority of cases" | "appears to require certain preconditions … but is frequently performed without any" |
 
+**The model does not run during learning at all** — a refusal, enforced in
+semantic-layer (409) rather than only in the UI, because the UI is not the only
+caller. Asking a model to read a rule out of traffic that is still surprising us
+produces a confident statement about a pattern that may not be the pattern, and
+that is exactly the output most likely to be believed. Summarising is what you
+do once the set has settled and you are naming things to approve.
+
 `learning_progress()` answers the one question the phase CAN answer by
 counting: do we know what normal looks like yet? Two measures, neither a
 judgement — how many patterns appeared for the first time in the most recent
 period, and what share of that period was already explained by patterns learned
 from EARLIER periods. Prior-coverage rather than whole-window coverage, because
-the latter is circular: the shapes were derived from that traffic. On the
-bundled corpus it correctly refuses to declare readiness — 78% prior coverage,
-30% novelty, both short of the (conventional, movable) thresholds.
+the latter is circular: the shapes were derived from that traffic. Bucketing is by CLOCK, and getting that wrong was this section's own bug.
+The first version split by POSITION over the whole window, so every new episode
+re-partitioned all of history and the "most recent" chunk kept re-inheriting
+older bursts. Running steady repeated traffic exposed it: five rounds of an
+identical scenario mix added no new shapes at all — the distinct-shape count
+sat at 49 — while the measure went on reporting 25% novelty and refusing to
+settle. A convergence measure that cannot notice convergence is worse than
+none. With real time buckets the same corpus reads:
+
+    period 1   18 eps  10 new    0% explained by prior
+    period 2  371 eps  33 new   50%
+    period 3  272 eps   3 new   98%
+    period 4    7 eps   0 new  100%
+    period 5   54 eps   2 new   96%
+    period 6  230 eps   1 new   99%      -> STABLE (99.6% / 2.8%)
+
+Empty periods are dropped rather than scored as perfectly covered: a deployment
+idle overnight has not thereby learned anything, and counting that as 100%
+would let idleness declare readiness.
 
 ## 3. What can actually be learned, field by field
 

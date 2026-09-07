@@ -2656,3 +2656,5 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-lb-lbl { font-size: 10px; color: var(--muted); font-family: var(--app-font-mono); }
 .pf-lb-legend { margin-top: 6px; font-size: 11px; color: var(--muted); }
 .pf-lb-new { color: var(--amber); font-family: var(--app-font-mono); }
+.pf-li-toggle.off { color: var(--muted); cursor: not-allowed; }
+.pf-li-locked { font-size: 11px; font-style: italic; color: var(--amber); margin-left: 8px; }

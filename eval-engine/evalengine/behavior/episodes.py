@@ -63,6 +63,7 @@ class Episode:
     subject_arg: str                  # which argument identified the subject
     subject: str                      # its value, as text
     closed_by: str                    # the side-effecting tool that ended it, or ""
+    started_at: str = ""              # when the episode's first call happened
     # The steps that preceded the closing write — candidate preconditions on it.
     before_effect: tuple[str, ...] = ()
 
@@ -82,6 +83,7 @@ def session_episodes(since: int = 7 * 86400, app: str = "") -> list[Episode]:
     where, params = _window(since, app)
     rows_ = ch.rows(f"""
         SELECT session_id, tool_name, user_role, input_value AS raw,
+               toString(start_time) AS ts,
                attributes['app.side_effect'] AS effect
         FROM {ch.SPANS_T} {where}
         ORDER BY session_id, start_time, span_id
@@ -96,6 +98,7 @@ def session_episodes(since: int = 7 * 86400, app: str = "") -> list[Episode]:
         steps: list[str] = []
         subjects: dict[str, str] = {}
         role = ""
+        started = ""
 
         def flush(closed_by: str = "") -> None:
             if not steps:
@@ -107,6 +110,7 @@ def session_episodes(since: int = 7 * 86400, app: str = "") -> list[Episode]:
             out.append(Episode(
                 session_id=sid, role=role, steps=tuple(steps),
                 subject_arg=arg, subject=val, closed_by=closed_by,
+                started_at=started,
                 before_effect=tuple(steps[:-1]) if closed_by else (),
             ))
             steps.clear()
@@ -131,6 +135,8 @@ def session_episodes(since: int = 7 * 86400, app: str = "") -> list[Episode]:
                 flush()
             subjects.update(ids)
 
+            if not steps:
+                started = str(c.get("ts") or "")
             if not steps or steps[-1] != tool:      # collapse retries
                 steps.append(tool)
 

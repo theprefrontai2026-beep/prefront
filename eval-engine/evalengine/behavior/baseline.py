@@ -35,6 +35,23 @@ from typing import Any
 
 from .episodes import session_episodes
 
+
+def _lerp(lo: str, hi: str, f: float) -> str:
+    """A timestamp fraction f of the way from lo to hi.
+
+    String timestamps, compared and interpolated as text: they are ISO-ordered,
+    which is all this needs, and parsing them would add a dependency on their
+    exact format for no gain.
+    """
+    from datetime import datetime
+    fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in lo else "%Y-%m-%d %H:%M:%S"
+    try:
+        a = datetime.strptime(lo[:26], fmt)
+        b = datetime.strptime(hi[:26], "%Y-%m-%d %H:%M:%S.%f" if "." in hi else "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return lo if f < 1 else hi
+    return (a + (b - a) * f).strftime("%Y-%m-%d %H:%M:%S.%f")
+
 # Conventions, not findings. A deployment whose recent traffic is 90% explained
 # by earlier learning, still turning up under 10% new shapes, has stopped
 # telling us things we did not know.
@@ -59,14 +76,40 @@ def learning_progress(since: int = 7 * 86400, app: str = "",
                 "ready": False,
                 "recommendation": "No tool calls in this window — nothing to learn from yet."}
 
-    # Episodes carry no timestamp of their own; order within the window is what
-    # matters here, and session_episodes returns them in session/time order. So
-    # bucket by position rather than clock, which also keeps the measure
-    # meaningful for a deployment with bursty, uneven traffic — the alternative
-    # is empty days dominating the answer.
+    # BUCKET BY TIME, not by position. Positional bucketing was the first
+    # implementation and it could not see convergence at all: every new episode
+    # re-partitions the whole history, so the "most recent" chunk keeps
+    # re-inheriting whatever fell in the last seventh of ALL traffic. Running
+    # steady repeated traffic proved it — the distinct-shape count sat at 49
+    # for four rounds, meaning nothing new was being learned, while the measure
+    # went on reporting 25% novelty and refusing to settle. A convergence
+    # measure that cannot notice convergence is worse than none.
+    #
+    # Episodes are ordered by time already, so a real clock split is a
+    # partition on `started_at`. Empty periods are dropped rather than counted
+    # as perfectly-covered: a deployment that was idle overnight has not
+    # thereby learned anything.
+    stamped = [e for e in eps if e.started_at]
+    if len(stamped) < 2:
+        return {"observed_episodes": len(eps), "status": "no_traffic", "buckets": [],
+                "ready": False,
+                "recommendation": "Not enough timestamped traffic in this window to judge."}
+    stamped.sort(key=lambda e: e.started_at)
+    lo, hi = stamped[0].started_at, stamped[-1].started_at
     n_buckets = max(2, min(7, int(since / bucket_seconds) or 2))
-    size = max(1, len(eps) // n_buckets)
-    chunks = [eps[i:i + size] for i in range(0, len(eps), size)][:n_buckets]
+    edges = [_lerp(lo, hi, i / n_buckets) for i in range(n_buckets + 1)]
+    chunks = []
+    for i in range(n_buckets):
+        a, b = edges[i], edges[i + 1]
+        last = i == n_buckets - 1
+        chunk = [e for e in stamped if a <= e.started_at and (e.started_at <= b if last else e.started_at < b)]
+        if chunk:
+            chunks.append(chunk)
+    if len(chunks) < 2:
+        return {"observed_episodes": len(eps), "status": "no_traffic", "buckets": [],
+                "ready": False,
+                "recommendation": "All traffic in this window arrived at once — "
+                                  "observe over a longer period before judging."}
 
     seen: set[tuple] = set()
     buckets: list[Bucket] = []

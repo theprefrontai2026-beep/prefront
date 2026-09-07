@@ -454,7 +454,8 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const ej = er.ok ? await er.json() : {};
       const shapes = ej.shapes || [];
       setExplained(ej.explained || null);
-      setBaseline(br.ok ? await br.json() : null);
+      const bj = br.ok ? await br.json() : null;
+      setBaseline(bj);
       if (!profiles.length) {
         setCands([]); setGroups([]); setCohorts([]); setOps([]); setExplained(null);
         setRejected([]); setStatus("idle");
@@ -464,7 +465,9 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ profiles, intent_groups: runs, cohorts: cos,
                                episode_shapes: shapes, min_sessions: minSessions,
-                               infer_policy: withLlm }),
+                               // The server enforces the same rule and needs
+                               // the verdict to do it; it holds no trace store.
+                               baseline: bj, infer_policy: withLlm && !!bj?.ready }),
       });
       const mj = await mr.json();
       if (!mr.ok) throw new Error(mj?.detail || mj?.error || `${mr.status} mining`);
@@ -518,19 +521,22 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             <input type="number" min={1} value={minSessions}
                    onChange={(e) => setMinSessions(Math.max(1, Number(e.target.value)))} />
           </label>
-          <label className="pf-li-toggle">
-            <input type="checkbox" checked={withLlm} onChange={(e) => setWithLlm(e.target.checked)} />
-            Also ask a model what rule each pattern implies (optional, one call per pattern)
+          {/* Disabled, not merely defaulted off. The server refuses it too
+              (409) — the UI is not the only caller, and "never run the model
+              while learning" is a rule about the system, not a preference. */}
+          <label className={`pf-li-toggle${baseline?.ready ? "" : " off"}`}>
+            <input type="checkbox" checked={withLlm && !!baseline?.ready}
+                   disabled={!baseline?.ready}
+                   onChange={(e) => setWithLlm(e.target.checked)} />
+            Summarise the patterns with a model
+            {!baseline?.ready && <span className="pf-li-locked">available once the baseline settles</span>}
           </label>
         </div>
-        {!withLlm && (
-          <p className="pf-hint">
-            Off by default, and secondary by design: learning the patterns is counting, and
-            counting is reproducible, auditable and free. Naming them and reading a rule out of
-            them is a later step — useful when you come to approve, not part of establishing what
-            normal looks like.
-          </p>
-        )}
+        <p className="pf-hint">
+          {baseline?.ready
+            ? "The pattern set has settled, so summarising is now meaningful: a model can name each pattern and read the rule it implies, for you to approve."
+            : "No model runs while learning. Learning the patterns is counting — reproducible, auditable and free. Summarising is what you do once the pattern set has settled and you are naming things to approve; asking a model to read a rule out of traffic that is still surprising us produces a confident statement about a pattern that may not be the pattern."}
+        </p>
         {error && <p className="pf-error">{error}</p>}
       </section>
 

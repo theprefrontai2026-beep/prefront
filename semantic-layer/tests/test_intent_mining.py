@@ -402,3 +402,23 @@ def test_operation_prompt_shows_every_path_with_its_share():
     assert "(nothing preceded it)" in p and "gather" in p and "75%" in p
     assert "FREQUENCY IS NOT LEGITIMACY" in OPERATION_SYSTEM
     assert "rule" in OPERATION_SYSTEM and "habit" in OPERATION_SYSTEM
+
+
+# ── the model does not run during learning ────────────────────────────────
+
+def test_mine_functions_run_the_counted_half_with_no_model():
+    """The guarantee the gate rests on: refusing the model must still leave a
+    usable result, or the refusal would just be an outage."""
+    from semanticlayer.intent_mining import (mine_cohort_policies, mine_intent_groups,
+                                             mine_intents, mine_operation_policies)
+    cands, _ = mine_intents([profile()], llm=None, min_sessions=1)
+    groups, _ = mine_intent_groups([group()], llm=None, min_sessions=1)
+    cos, _ = mine_cohort_policies([cohort()], llm=None)
+    ops, _ = mine_operation_policies([shape(["gather", "act"], "act", 5)], llm=None)
+    assert cands and groups and cos and ops
+    for c in (cands[0], groups[0], cos[0], ops[0]):
+        assert c.inferred_policy is None
+        assert c.review_status == "pending"
+    # ...and the counted structure is all there.
+    assert ops[0].paths and ops[0].total_episodes == 5
+    assert cands[0].fields == ["a"]
