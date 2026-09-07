@@ -2604,3 +2604,14 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-li-evidence code { font-size: 11px; color: var(--muted); }
 .pf-li-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .pf-li-toggle input { width: auto; }
+
+/* A mined process. The steps render as an ordered chain, not a list: the ORDER
+   is the evidence (what precedes is a candidate precondition, what follows a
+   candidate obligation), and a bulleted set would discard exactly that. */
+.pf-li-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-top: 8px; }
+.pf-li-step { display: inline-flex; align-items: center; }
+.pf-li-step code {
+  font-size: 11px; background: var(--surface-alt); border: 1px solid var(--line);
+  border-radius: 4px; padding: 2px 7px;
+}
+.pf-li-arrow { color: var(--muted); margin: 0 6px; font-size: 12px; }

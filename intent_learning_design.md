@@ -91,6 +91,21 @@ honest about which fields are inferable is the core of the design:
 | `expected_rows_p99` | **yes, statistical** | p99 of observed `row_count` — a genuinely free win: it turns on volume/minimization checking with zero policy input |
 | `mandatory_filters` | **yes, as a hypothesis** | "this arg equalled the caller id in 100% of N sessions". Note the convergence: `scope.py`'s `filter_scope` only recognizes the exact shape `<field> = caller`, and that is precisely the shape this test produces |
 | `closing_obligation` | **yes, as a hypothesis** | sequence mining: B follows A within the session in X% of cases |
+
+**An intent is not always one call, and this table assumed it was.** The
+original §3 treats one tool as one intent and reduces sequence to a single
+pairwise field. But "underwrite an application" is *fetch the record, pull the
+report, score it, decide* — and mining tool-by-tool reports that as four
+unrelated operations with nothing saying they belong together. `behavior/
+workflows.py` mines the contiguous ordered runs and `intent_mining.
+mine_workflows` proposes them as multi-call candidates, with the ORDER carried
+into the prompt as evidence: a step that consistently precedes another is a
+candidate **precondition**, one that follows is a candidate **obligation** —
+both of which Family 3 already enforces. Three filters decide whether the
+output is readable at all: consecutive repeats collapse (a retry is not a
+step), support counts sessions rather than occurrences, and a run that is only
+a fragment of a longer run with the same support is dropped. Without the last
+one, every prefix and rotation of every real pattern is its own row.
 | `allowed_roles` | **observed ≠ allowed** | the normalization-of-deviance hotspot. Emit as *observed callers with support counts*; the human must narrow. Never present the observed set as the permitted set |
 | `allowed_channels` | same caveat | same |
 | `intent` (the name) | **no — language, not counting** | LLM-drafted from tool name + observed usage; advisory only |

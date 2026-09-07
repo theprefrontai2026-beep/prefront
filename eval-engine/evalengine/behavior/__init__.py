@@ -23,6 +23,13 @@ learnable without a policy. A profile supported by sessions carrying
 param_taint or entity_consistency violations is never presented as clean
 observed practice.
 
+AN INTENT IS NOT ALWAYS ONE CALL. A business operation is often a SEQUENCE —
+fetch the record, pull the report, score it, decide — and mining one tool at a
+time reports that as several unrelated operations with no hint they belong
+together. `workflows.py` mines the contiguous runs; `profiles.py`'s
+`followed_by` is the pairwise shadow of the same signal and is kept because it
+is cheap and answers a narrower question (closing obligations).
+
 THE ANSWER KEY IS NOT AN INPUT. A deployment may already stamp an approved
 intent name on its spans (`app.intent`). Mining must not read it: a miner that
 consumes the label it is meant to predict measures nothing. It is exposed
@@ -37,6 +44,7 @@ from .profiles import (
     following_tools,
     observed_intent_labels,
 )
+from .workflows import Workflow, frequent_workflows
 
 __all__ = [
     "ToolProfile",
@@ -44,4 +52,6 @@ __all__ = [
     "caller_invariants",
     "following_tools",
     "observed_intent_labels",
+    "Workflow",
+    "frequent_workflows",
 ]

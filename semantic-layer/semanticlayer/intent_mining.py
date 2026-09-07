@@ -264,3 +264,154 @@ def mine_intents(profiles: list[dict], llm: Optional[LLMClient] = None,
                 rejected.append(err)
         candidates.append(c)
     return candidates, rejected
+
+
+# ── Multi-call intents ────────────────────────────────────────────────────
+# An intent is not always one call. "Underwrite an application" is fetch the
+# record, pull the report, score it, decide — and mining tool-by-tool reports
+# that as four unrelated operations with nothing saying they belong together.
+# These consume eval-engine's frequent tool RUNS and propose the process.
+
+
+class WorkflowCandidate(BaseModel):
+    """A candidate intent spanning several tool calls, in order."""
+    # ── counted ──
+    steps: list[str]
+    sessions: int = 0
+    occurrences: int = 0
+    # Of the sessions that used the FIRST step at all, the share that went on
+    # to complete the whole run. The number that separates "this is how that
+    # tool is used" from "this is one of several things people do next".
+    coverage: float = 0.0
+    observed_roles: list[dict] = Field(default_factory=list)
+    contested: list[dict] = Field(default_factory=list)
+    example_sessions: list[str] = Field(default_factory=list)
+    # ── inferred ──
+    intent: str = ""
+    description: str = ""
+    inferred_policy: Optional[InferredPolicy] = None
+    # ── review ──
+    review_status: str = "pending"
+    warnings: list[str] = Field(default_factory=list)
+
+
+WORKFLOW_SYSTEM = """You are reverse-engineering a business PROCESS from \
+production traces. You are given an ordered run of tool calls that recurs \
+across many sessions, with how often it happens and who ran it.
+
+Name the process and state the policy it appears to encode. The order is the \
+evidence: a step that consistently precedes another is a candidate \
+PRECONDITION, and a step that consistently follows one is a candidate \
+OBLIGATION. Say which you think each is.
+
+Three hard rules:
+
+1. NEVER state a prohibition as fact. You see what happened, not what is \
+permitted. Phrase restrictions as "appears to" and put alternatives in caveats.
+2. FREQUENCY IS NOT LEGITIMACY. If the run carries integrity violations, or \
+its coverage is low, the sequence may be a workaround or an exfiltration \
+pattern rather than an approved process. Say so plainly.
+3. LOW COVERAGE MEANS IT IS NOT THE NORM. If only a small share of sessions \
+that started this way finished it, this is one path among many, not "the" \
+process, and confidence should be low.
+
+Return STRICT JSON only:
+{"intent": "verb_noun snake_case process name",
+ "description": "one sentence on what the process accomplishes",
+ "policy": {"statement": "...", "rationale": "...",
+            "confidence": "high|medium|low", "caveats": ["..."]}}"""
+
+
+def structural_workflow(w: dict) -> WorkflowCandidate:
+    """The counted half of a multi-call candidate."""
+    sessions = int(w.get("sessions") or 0)
+    roles = _share(w.get("roles") or [], sessions)
+    coverage = float(w.get("coverage") or 0.0)
+
+    warnings: list[str] = []
+    if sessions < MIN_SESSIONS:
+        warnings.append(f"thin evidence: {sessions} session(s) — below the {MIN_SESSIONS} floor")
+    if coverage < 0.25:
+        warnings.append(
+            f"low coverage ({int(coverage * 100)}%): most sessions that used "
+            f"{(w.get('steps') or ['the first step'])[0]!r} did NOT go on to complete this run, "
+            f"so this is one path among several rather than the normal one")
+    if w.get("contested"):
+        warnings.append("steps in this run carry Family 2 integrity violations: "
+                        + ", ".join(f"{c['check_id']} ({c['sessions']} sessions)" for c in w["contested"]))
+    for r in roles:
+        if r["share"] < MIN_ROLE_SHARE:
+            warnings.append(f"rare runner {r['value']!r} ({r['sessions']} of {sessions} sessions) — "
+                            f"an outlier to narrow, not a role to bless")
+
+    return WorkflowCandidate(
+        steps=list(w.get("steps") or []),
+        sessions=sessions, occurrences=int(w.get("occurrences") or 0), coverage=coverage,
+        observed_roles=roles, contested=list(w.get("contested") or []),
+        example_sessions=list(w.get("example_sessions") or [])[:5],
+        warnings=warnings,
+    )
+
+
+def render_workflow_prompt(c: WorkflowCandidate) -> str:
+    parts = [
+        "ordered tool run: " + " -> ".join(c.steps),
+        f"seen in {c.sessions} sessions ({c.occurrences} occurrences)",
+        f"coverage: {int(c.coverage * 100)}% of sessions that used {c.steps[0]!r} completed this run"
+        if c.steps else "coverage: unknown",
+        "runners: " + (", ".join(
+            f"{r['value']} ({r['sessions']} sessions, {int(r['share'] * 100)}%)" for r in c.observed_roles)
+            or "none observed"),
+    ]
+    if c.contested:
+        parts.append("INTEGRITY VIOLATIONS on steps of this run: " + ", ".join(
+            f"{x['check_id']} in {x['sessions']} sessions" for x in c.contested))
+    if c.warnings:
+        parts.append("counted warnings: " + " | ".join(c.warnings))
+    return "\n".join(parts)
+
+
+def infer_workflow_policy(c: WorkflowCandidate, llm: LLMClient) -> tuple[WorkflowCandidate, Optional[str]]:
+    """Same contract as infer_policy: degrade to the counted half on failure."""
+    label = " -> ".join(c.steps)
+    raw = llm.complete(WORKFLOW_SYSTEM, render_workflow_prompt(c))
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return c, f"{label}: LLM output was not valid JSON: {e}"
+    if not isinstance(parsed, dict):
+        return c, f"{label}: LLM returned {type(parsed).__name__}, expected an object"
+    pol = parsed.get("policy") or {}
+    try:
+        inferred = InferredPolicy.model_validate(pol) if pol else None
+    except Exception as e:  # noqa: BLE001
+        return c, f"{label}: policy block invalid: {e}"
+    return c.model_copy(update={
+        "intent": str(parsed.get("intent") or "").strip() or "_".join(c.steps[:2]),
+        "description": str(parsed.get("description") or "").strip(),
+        "inferred_policy": inferred,
+    }), None
+
+
+def mine_workflows(workflows: list[dict], llm: Optional[LLMClient] = None,
+                   min_sessions: int = 3, limit: int = 12) -> tuple[list[WorkflowCandidate], list[str]]:
+    """Runs in, process candidates out.
+
+    `limit` bounds the LLM spend and, more importantly, the reading: a mined
+    corpus yields dozens of overlapping runs, and a reviewer handed all of them
+    reviews none. The aggregate arrives ranked by support, so the cap keeps the
+    best-evidenced ones.
+    """
+    candidates: list[WorkflowCandidate] = []
+    rejected: list[str] = []
+    for w in workflows[:limit]:
+        c = structural_workflow(w)
+        if c.sessions < min_sessions:
+            rejected.append(f"{' -> '.join(c.steps)}: {c.sessions} session(s), below min_sessions={min_sessions}")
+            continue
+        if llm is not None:
+            c, err = infer_workflow_policy(c, llm)
+            if err:
+                rejected.append(err)
+        candidates.append(c)
+    return candidates, rejected

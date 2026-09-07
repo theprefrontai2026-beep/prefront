@@ -13,11 +13,21 @@ from typing import Any, Optional
 
 from .. import ch, config
 
-# A tool span, in the two shapes deployments produce. `kind='TOOL'` is the
-# OpenInference span kind; `tool_name != ''` catches an exporter that lifted the
-# name without setting the kind. Same predicate oob-ingest uses for "a tool
-# call", kept identical so the two surfaces cannot disagree about what counts.
-_TOOL_PRED = "(kind = 'TOOL' OR tool_name != '') AND tool_name != ''"
+# A tool CALL, which is narrower than "a span mentioning a tool".
+#
+# `kind='TOOL'` is the OpenInference span kind and is the real thing. The
+# `tool_name != ''` fallback exists for an exporter that lifts the name without
+# setting a kind — but taken alone it also matches an AGENT turn span, which
+# carries the tool name of a call made INSIDE it. On the bundled corpus that is
+# 1011 turn spans against 1644 real calls: a 62% over-count, and worse for
+# sequence mining, where each turn injects a phantom step that made every mined
+# workflow start and end with the same tool.
+#
+# So the fallback is admitted only when the exporter set no kind at all.
+# oob-ingest uses the looser predicate deliberately (there, the agent's own span
+# IS the unit it counts); this is a different question about the same table.
+_TOOL_PRED = ("(kind = 'TOOL' OR (tool_name != '' AND kind = '')) "
+              "AND tool_name != ''")
 
 
 @dataclass(frozen=True)

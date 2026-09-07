@@ -34,7 +34,80 @@ type Candidate = {
   inferred_policy: Policy | null; review_status: string;
 };
 
+type Workflow = {
+  steps: string[]; sessions: number; occurrences: number; coverage: number;
+  observed_roles: Counted[]; contested: Contested[]; example_sessions: string[];
+  intent: string; description: string; inferred_policy: Policy | null;
+  review_status: string; warnings: string[];
+};
+
 const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
+
+function PolicyBlock({ p }: { p: Policy }) {
+  return (
+    <div className={`pf-li-policy ${CONF_TONE[p.confidence] || "slate"}`}>
+      <div className="pf-li-policy-head">
+        Inferred policy
+        <span className="pf-li-conf">{p.confidence} confidence</span>
+        <span className="pf-li-src">from observed behaviour — not a policy document</span>
+      </div>
+      <div className="pf-li-stmt">{p.statement}</div>
+      {p.rationale && <div className="pf-li-why"><span className="lbl">because</span>{p.rationale}</div>}
+      {p.caveats?.map((cv, i) => <div key={i} className="pf-li-caveat">{cv}</div>)}
+    </div>
+  );
+}
+
+/** A candidate intent that spans several calls.
+ *
+ *  The steps render as an ordered chain rather than a list, because the ORDER
+ *  is the evidence: a step that consistently precedes another is a candidate
+ *  precondition and one that follows is a candidate obligation, and a bulleted
+ *  set would throw away exactly the information that makes the run a process
+ *  rather than a bag of tools. */
+function WorkflowCard({ w }: { w: Workflow }) {
+  const weak = w.coverage < 0.25;
+  return (
+    <div className={`pf-li-card${w.contested.length ? " contested" : ""}`}>
+      <div className="pf-li-head">
+        <code className="pf-li-name">{w.intent || w.steps.join(" → ")}</code>
+        <span className="pf-li-support">{w.sessions} sessions · {w.steps.length} steps</span>
+        {/* Coverage is the honesty number: it says whether this is THE way the
+            first step is used, or one path among several. */}
+        <span className={`pf-dash-chip ${weak ? "gold" : "slate"}`}
+              title={`of the sessions that used ${w.steps[0]}, this share completed the whole run`}>
+          {Math.round(w.coverage * 100)}% coverage
+        </span>
+        <span className="pf-li-spacer" />
+        {w.contested.length > 0 && (
+          <span className="pf-dash-chip red">contested by {w.contested.length} integrity check{w.contested.length === 1 ? "" : "s"}</span>
+        )}
+        <span className="pf-dash-chip slate">{w.review_status}</span>
+      </div>
+
+      <div className="pf-li-flow">
+        {w.steps.map((t, i) => (
+          <span key={`${t}-${i}`} className="pf-li-step">
+            <code>{t}</code>{i < w.steps.length - 1 && <span className="pf-li-arrow">→</span>}
+          </span>
+        ))}
+      </div>
+
+      {w.description && <div className="pf-li-desc">{w.description}</div>}
+      {w.inferred_policy && <PolicyBlock p={w.inferred_policy} />}
+
+      <div className="pf-li-grid">
+        <div><span className="lbl">who ran it</span><Chips items={w.observed_roles} /></div>
+      </div>
+      {w.warnings.length > 0 && (
+        <details className="pf-li-warn" open={w.contested.length > 0 || weak}>
+          <summary>{w.warnings.length} thing{w.warnings.length === 1 ? "" : "s"} to check before approving</summary>
+          {w.warnings.map((x, i) => <div key={i} className="pf-li-warn-row">{x}</div>)}
+        </details>
+      )}
+    </div>
+  );
+}
 
 function Chips({ items, tone = "" }: { items: Counted[]; tone?: string }) {
   if (!items.length) return <span className="muted">none observed</span>;
@@ -76,23 +149,9 @@ function CandidateCard({ c }: { c: Candidate }) {
 
       {c.description && <div className="pf-li-desc">{c.description}</div>}
 
-      {p && (
-        <div className={`pf-li-policy ${CONF_TONE[p.confidence] || "slate"}`}>
-          <div className="pf-li-policy-head">
-            Inferred policy
-            <span className="pf-li-conf">{p.confidence} confidence</span>
-            {/* Stated on every card, because the distinction is the whole
-                epistemics of this page: a mined rule cites observed practice,
-                never a clause someone wrote down. */}
-            <span className="pf-li-src">from observed behaviour — not a policy document</span>
-          </div>
-          <div className="pf-li-stmt">{p.statement}</div>
-          {p.rationale && <div className="pf-li-why"><span className="lbl">because</span>{p.rationale}</div>}
-          {p.caveats?.map((cv, i) => (
-            <div key={i} className="pf-li-caveat">{cv}</div>
-          ))}
-        </div>
-      )}
+      {/* The inferred half is boxed away from the counted half on every card:
+          a mined rule cites observed practice, never a clause someone wrote. */}
+      {p && <PolicyBlock p={p} />}
 
       <div className="pf-li-grid">
         <div><span className="lbl">callers observed</span><Chips items={c.observed_roles} /></div>
@@ -140,6 +199,7 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [minSessions, setMinSessions] = useState(3);
   const [withLlm, setWithLlm] = useState(false);
   const [cands, setCands] = useState<Candidate[] | null>(null);
+  const [flows, setFlows] = useState<Workflow[]>([]);
   const [rejected, setRejected] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "mining" | "error">("idle");
   const [error, setError] = useState("");
@@ -151,21 +211,26 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       // only ClickHouse reader and returns AGGREGATES; semantic-layer owns the
       // catalog schema and the candidate/approve pattern and turns them into
       // candidates. Aggregates cross the boundary, raw spans never do.
-      const pr = await fetch(`/eval/behavior/tools?since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_sessions=${minSessions}`);
+      const q = `since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_sessions=${minSessions}`;
+      const [pr, wr] = await Promise.all([
+        fetch(`/eval/behavior/tools?${q}`),
+        fetch(`/eval/behavior/workflows?${q}`),
+      ]);
       const pj = await pr.json();
       if (!pr.ok) throw new Error(pj?.error || `${pr.status} reading behaviour`);
       const profiles = pj.tools || [];
+      const runs = wr.ok ? ((await wr.json()).workflows || []) : [];
       if (!profiles.length) {
-        setCands([]); setRejected([]); setStatus("idle");
+        setCands([]); setFlows([]); setRejected([]); setStatus("idle");
         return;
       }
       const mr = await fetch("/design/semantic/intents/mine", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ profiles, min_sessions: minSessions, infer_policy: withLlm }),
+        body: JSON.stringify({ profiles, workflows: runs, min_sessions: minSessions, infer_policy: withLlm }),
       });
       const mj = await mr.json();
       if (!mr.ok) throw new Error(mj?.detail || mj?.error || `${mr.status} mining`);
-      setCands(mj.candidates || []); setRejected(mj.rejected || []);
+      setCands(mj.candidates || []); setFlows(mj.workflows || []); setRejected(mj.rejected || []);
       setStatus("idle");
     } catch (e: any) {
       setError(String(e?.message || e)); setStatus("error");
@@ -239,6 +304,20 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             </div>
           )}
           {cands.map((c) => <CandidateCard key={c.tool_name} c={c} />)}
+        </section>
+      )}
+
+      {flows.length > 0 && (
+        <section className="pf-panel" style={{ marginTop: 14 }}>
+          <div className="pf-dash-panel-head"><h2>Processes — intents that span several calls</h2></div>
+          <p className="pf-hint" style={{ marginTop: 0 }}>
+            Not every intent is one call. These are tool runs that recur in order across sessions —
+            the ORDER is the evidence, so a step that consistently precedes another is a candidate
+            <em> precondition</em> and one that follows is a candidate <em>obligation</em>.
+            Consecutive repeats are collapsed (a retry is not a step), support counts sessions
+            rather than occurrences, and a run that is only a fragment of a longer one is dropped.
+          </p>
+          {flows.map((w) => <WorkflowCard key={w.steps.join(">")} w={w} />)}
         </section>
       )}
 

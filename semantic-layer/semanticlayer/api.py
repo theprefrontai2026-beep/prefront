@@ -870,6 +870,10 @@ class MineIntentsBody(BaseModel):
     ClickHouse client and no knowledge of the trace store — aggregates cross the
     service boundary, raw spans never do (intent_learning_design.md §4)."""
     profiles: list[dict]
+    # Frequent ordered tool RUNS (GET /eval/behavior/workflows). An intent is
+    # not always one call — "underwrite an application" is four — and mining
+    # tool-by-tool reports a process as unrelated operations.
+    workflows: list[dict] = []
     min_sessions: int = 3
     # The LLM names the operation and states the rule the behaviour implies.
     # Off by default: the counted half is useful on its own, is reproducible,
@@ -905,10 +909,14 @@ def mine_intents_endpoint(body: MineIntentsBody):
                    else LLMClient(provider="openai", model=DEFAULT_MINING_MODEL))
         except Exception as e:  # noqa: BLE001 - unconfigured provider is a 400, not a 500
             raise HTTPException(400, f"LLM unavailable for policy inference: {e}")
+    from .intent_mining import mine_workflows
+
     candidates, rejected = mine_intents(body.profiles, llm=llm, min_sessions=body.min_sessions)
+    flows, flow_rejected = mine_workflows(body.workflows, llm=llm, min_sessions=body.min_sessions)
     return {
         "candidates": [c.model_dump() for c in candidates],
-        "rejected": rejected,
+        "workflows": [c.model_dump() for c in flows],
+        "rejected": rejected + flow_rejected,
         "policy_inferred": bool(llm),
         # Said in the payload, not just the docs: a learned catalog cites
         # OBSERVED PRACTICE, never a clause, and cannot express prohibition —

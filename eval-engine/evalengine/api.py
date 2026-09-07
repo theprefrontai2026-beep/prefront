@@ -222,6 +222,28 @@ async def behavior_tools(since: int = 7 * 86400, app: str = AppQ, min_sessions: 
             "tools": [_profile_json(p) for p in profiles]}
 
 
+@app.get("/eval/behavior/workflows")
+async def behavior_workflows(since: int = 7 * 86400, app: str = AppQ,
+                             min_sessions: int = 3, max_len: int = 6):
+    """Frequent contiguous tool RUNS — intents that span several calls.
+
+    A business operation is often a sequence, and per-tool profiles report that
+    as unrelated operations. Consecutive repeats are collapsed (a retry is not
+    a step), support is counted over sessions, and a run that is merely a
+    fragment of a longer run with the same support is dropped — without that
+    last filter the output is every prefix of every pattern and a reviewer
+    cannot tell which rows are the same finding."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "workflows": []}
+    ws = await asyncio.to_thread(behavior.frequent_workflows, since, app, min_sessions, 2, max_len)
+    return {"configured": True, "since": since, "app": app, "workflows": [
+        {"steps": list(w.steps), "sessions": w.sessions, "occurrences": w.occurrences,
+         "coverage": w.coverage, "roles": list(w.roles), "contested": list(w.contested),
+         "example_sessions": list(w.example_sessions)}
+        for w in ws]}
+
+
 @app.get("/eval/behavior/sequences")
 async def behavior_sequences(since: int = 7 * 86400, app: str = AppQ, min_support: int = 3):
     """Ordered tool pairs adjacent within a session — the closing-obligation

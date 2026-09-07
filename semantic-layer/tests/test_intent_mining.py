@@ -149,3 +149,61 @@ def test_nothing_is_ever_auto_approved():
                  infer_policy(structural_candidate(profile()),
                               _LLM({"intent": "x", "policy": {"statement": "s", "rationale": "r"}}))]:
         assert c.review_status == "pending"
+
+
+# ── multi-call intents ────────────────────────────────────────────────────
+
+def flow(**over):
+    base = {"steps": ["a", "b", "c"], "sessions": 20, "occurrences": 25, "coverage": 0.8,
+            "roles": [{"value": "Agent", "sessions": 20, "calls": 25}],
+            "contested": [], "example_sessions": ["s1"]}
+    base.update(over)
+    return base
+
+
+def test_workflow_structural_half_needs_no_model():
+    from semanticlayer.intent_mining import structural_workflow
+    c = structural_workflow(flow())
+    assert c.steps == ["a", "b", "c"] and c.sessions == 20
+    assert c.review_status == "pending" and c.inferred_policy is None
+    assert c.warnings == []
+
+
+def test_low_coverage_is_flagged_as_not_the_norm():
+    """The honesty number for a sequence: if most sessions that started this way
+    did not finish it, this is one path among several, not 'the' process."""
+    from semanticlayer.intent_mining import structural_workflow
+    c = structural_workflow(flow(coverage=0.1))
+    assert any("low coverage" in w and "one path among several" in w for w in c.warnings)
+
+
+def test_a_contested_step_contests_the_whole_run():
+    """Which step was at fault is exactly what is unknown without a policy."""
+    from semanticlayer.intent_mining import structural_workflow
+    c = structural_workflow(flow(contested=[{"check_id": "param_taint", "sessions": 5, "findings": 7}]))
+    assert any("param_taint" in w for w in c.warnings) and c.contested
+
+
+def test_workflow_prompt_carries_order_and_coverage():
+    """The ORDER is the evidence — what precedes is a candidate precondition,
+    what follows a candidate obligation — so it must survive into the prompt."""
+    from semanticlayer.intent_mining import render_workflow_prompt, structural_workflow
+    p = render_workflow_prompt(structural_workflow(flow()))
+    assert "a -> b -> c" in p and "80%" in p
+
+
+def test_workflow_llm_failure_degrades_to_the_counted_half():
+    from semanticlayer.intent_mining import infer_workflow_policy, structural_workflow
+    out, err = infer_workflow_policy(structural_workflow(flow()), _LLM("nonsense"))
+    assert err and "not valid JSON" in err
+    assert out.steps == ["a", "b", "c"] and out.inferred_policy is None
+
+
+def test_mine_workflows_caps_what_it_sends_to_the_model():
+    """A mined corpus yields dozens of overlapping runs; a reviewer handed all
+    of them reviews none, and each one costs a model call."""
+    from semanticlayer.intent_mining import mine_workflows
+    llm = _LLM({"intent": "x", "description": "d",
+                "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
+    cands, _ = mine_workflows([flow() for _ in range(30)], llm=llm, min_sessions=1, limit=4)
+    assert len(cands) == 4 and len(llm.prompts) == 4
