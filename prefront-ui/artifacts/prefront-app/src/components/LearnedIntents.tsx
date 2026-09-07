@@ -120,6 +120,75 @@ function CohortCard({ c }: { c: CohortRow }) {
   );
 }
 
+type OpPath = { before: string[]; episodes: number };
+type Operation = {
+  operation: string; total_episodes: number; bare_episodes: number;
+  paths: OpPath[]; observed_roles: Counted[]; subject_args: string[];
+  example_sessions: string[]; intent: string; description: string;
+  inferred_policy: Policy | null; review_status: string; warnings: string[];
+};
+
+/** One side-effecting operation and every observed way of reaching it.
+ *
+ *  This is the sharpest evidence on the page, because it is a COMPARISON: the
+ *  times evidence was gathered before the act, beside the times it was not.
+ *  A rate over co-occurring tools cannot express that. "196 of 241 with
+ *  nothing first" is either a missing control or a bypassed one, and which is
+ *  a question a reviewer can answer where a miner cannot. */
+function OperationCard({ o }: { o: Operation }) {
+  const bare = o.total_episodes ? o.bare_episodes / o.total_episodes : 0;
+  return (
+    <div className={`pf-li-card${bare > 0.5 ? " contested" : ""}`}>
+      <div className="pf-li-head">
+        <code className="pf-li-name">{o.intent || o.operation}</code>
+        <span className="pf-li-tool">closes on {o.operation}</span>
+        <span className="pf-li-support">{o.total_episodes} times</span>
+        <span className="pf-li-spacer" />
+        {o.bare_episodes > 0 && (
+          <span className={`pf-dash-chip ${bare > 0.5 ? "red" : "gold"}`}
+                title="performed with no preceding calls at all">
+            {Math.round(bare * 100)}% with nothing first
+          </span>
+        )}
+        <span className="pf-dash-chip slate">{o.review_status}</span>
+      </div>
+
+      {o.description && <div className="pf-li-desc">{o.description}</div>}
+      {o.inferred_policy && <PolicyBlock p={o.inferred_policy} />}
+
+      <div className="pf-li-corelbl">observed paths to it</div>
+      {o.paths.map((pa, i) => {
+        const share = o.total_episodes ? Math.round(pa.episodes / o.total_episodes * 100) : 0;
+        return (
+          <div key={i} className="pf-li-path">
+            <span className="pf-li-vmeta">{pa.episodes}× · {share}%</span>
+            {pa.before.length
+              ? <Steps steps={[...pa.before, o.operation]} />
+              : <div className="pf-li-flow"><span className="pf-li-bare">nothing preceded it →</span>
+                  <span className="pf-li-step"><code>{o.operation}</code></span></div>}
+          </div>
+        );
+      })}
+
+      <div className="pf-li-grid">
+        <div><span className="lbl">performed by</span><Chips items={o.observed_roles} /></div>
+        {o.subject_args.length > 0 && (
+          <div><span className="lbl">subject identified by</span>
+            {o.subject_args.map((a) => <span key={a} className="pf-li-chip">{a}</span>)}
+          </div>
+        )}
+      </div>
+
+      {o.warnings.length > 0 && (
+        <details className="pf-li-warn" open={bare > 0.5}>
+          <summary>{o.warnings.length} thing{o.warnings.length === 1 ? "" : "s"} to check before approving</summary>
+          {o.warnings.map((w, i) => <div key={i} className="pf-li-warn-row">{w}</div>)}
+        </details>
+      )}
+    </div>
+  );
+}
+
 const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
 
 function Steps({ steps, tone = "" }: { steps: string[]; tone?: string }) {
@@ -309,6 +378,8 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [cands, setCands] = useState<Candidate[] | null>(null);
   const [groups, setGroups] = useState<Grouped[]>([]);
   const [cohorts, setCohorts] = useState<CohortRow[]>([]);
+  const [ops, setOps] = useState<Operation[]>([]);
+  const [explained, setExplained] = useState<{episodes:number;fraction:number;shapes:number}|null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "mining" | "error">("idle");
   const [error, setError] = useState("");
@@ -323,29 +394,36 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const q = `since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_sessions=${minSessions}`;
       // Grouped runs are preferred: N shapes of one operation become one
       // candidate and one model call, rather than N near-identical policies.
-      const [pr, gr, cr] = await Promise.all([
+      const [pr, gr, cr, er] = await Promise.all([
         fetch(`/eval/behavior/tools?${q}`),
         fetch(`/eval/behavior/intents?${q}`),
         fetch(`/eval/behavior/cohorts?${q}`),
+        fetch(`/eval/behavior/episodes?since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_episodes=${minSessions}`),
       ]);
       const pj = await pr.json();
       if (!pr.ok) throw new Error(pj?.error || `${pr.status} reading behaviour`);
       const profiles = pj.tools || [];
       const runs = gr.ok ? ((await gr.json()).intents || []) : [];
       const cos = cr.ok ? ((await cr.json()).cohorts || []) : [];
+      const ej = er.ok ? await er.json() : {};
+      const shapes = ej.shapes || [];
+      setExplained(ej.explained || null);
       if (!profiles.length) {
-        setCands([]); setGroups([]); setCohorts([]); setRejected([]); setStatus("idle");
+        setCands([]); setGroups([]); setCohorts([]); setOps([]); setExplained(null);
+        setRejected([]); setStatus("idle");
         return;
       }
       const mr = await fetch("/design/semantic/intents/mine", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ profiles, intent_groups: runs, cohorts: cos,
-                               min_sessions: minSessions, infer_policy: withLlm }),
+                               episode_shapes: shapes, min_sessions: minSessions,
+                               infer_policy: withLlm }),
       });
       const mj = await mr.json();
       if (!mr.ok) throw new Error(mj?.detail || mj?.error || `${mr.status} mining`);
       setCands(mj.candidates || []); setGroups(mj.intent_groups || []);
-      setCohorts(mj.cohorts || []); setRejected(mj.rejected || []);
+      setCohorts(mj.cohorts || []); setOps(mj.operations || []);
+      setRejected(mj.rejected || []);
       setStatus("idle");
     } catch (e: any) {
       setError(String(e?.message || e)); setStatus("error");
@@ -419,6 +497,28 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             </div>
           )}
           {cands.map((c) => <CandidateCard key={c.tool_name} c={c} />)}
+        </section>
+      )}
+
+      {ops.length > 0 && (
+        <section className="pf-panel" style={{ marginTop: 14 }}>
+          <div className="pf-dash-panel-head">
+            <h2>Operations — what must happen before an act that changes something</h2>
+          </div>
+          <p className="pf-hint" style={{ marginTop: 0 }}>
+            Sessions are cut into <em>episodes</em> — one operation on one subject, bounded by the
+            subject changing or by a side effect — and grouped by the act that closed them. Each
+            row is therefore every observed way of reaching one write, side by side. That
+            comparison is the evidence: a step present in most paths is a candidate
+            <em> precondition</em>, and a write frequently performed with <strong>nothing first</strong>
+            is either a control that does not exist or one being bypassed — a distinction the
+            traces cannot settle and a reviewer can.
+            {explained && (
+              <> These shapes account for <strong>{Math.round(explained.fraction * 100)}%</strong> of
+              the {explained.episodes} episodes observed.</>
+            )}
+          </p>
+          {ops.map((o) => <OperationCard key={o.operation} o={o} />)}
         </section>
       )}
 

@@ -275,6 +275,37 @@ async def behavior_intents(since: int = 7 * 86400, app: str = AppQ,
         for g in gs]}
 
 
+@app.get("/eval/behavior/episodes")
+async def behavior_episodes(since: int = 7 * 86400, app: str = AppQ, min_episodes: int = 3):
+    """Sessions cut into EPISODES — one operation on one subject — and the
+    distinct shapes those take.
+
+    Everything else here aggregates across sessions; nothing asked what a
+    single session revealed, and a session is a sequence of intents rather than
+    one. An n-gram says "these tools co-occur"; an episode says "to do X for
+    subject S, this caller first did A, B and C" — which is the claim a
+    business policy actually makes, and the unit a reviewer can approve.
+
+    Boundaries are structural, not statistical: the subject id changes, or a
+    side-effecting call closes the operation it was gathering evidence for.
+    `explained` is the share of all episodes these shapes account for — a
+    catalog covering a third of the traffic leaves most of it ungoverned, and
+    that belongs in front of a reviewer before approval, not after."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "shapes": [], "explained": {}}
+    shapes = await asyncio.to_thread(behavior.episode_shapes, since, app, min_episodes)
+    explained = await asyncio.to_thread(behavior.explained_fraction, since, app, min_episodes)
+    return {"configured": True, "since": since, "app": app, "explained": explained,
+            "shapes": [
+                {"steps": list(s.steps), "closed_by": s.closed_by, "episodes": s.episodes,
+                 "sessions": s.sessions, "roles": list(s.roles),
+                 "subject_args": list(s.subject_args),
+                 "before_effect": list(s.before_effect),
+                 "example_sessions": list(s.example_sessions)}
+                for s in shapes]}
+
+
 @app.get("/eval/behavior/cohorts")
 async def behavior_cohorts(since: int = 7 * 86400, app: str = AppQ):
     """What differs BETWEEN groups of callers — the access-policy signal.

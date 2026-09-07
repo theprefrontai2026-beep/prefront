@@ -883,6 +883,11 @@ class MineIntentsBody(BaseModel):
     # Per-cohort contrasts (GET /eval/behavior/cohorts). The access-policy
     # signal: what one group of callers does that another never does.
     cohorts: list[dict] = []
+    # Episode shapes (GET /eval/behavior/episodes) — sessions cut into bounded
+    # operations. Grouped here by their CLOSING act, which puts every way an
+    # operation was performed side by side: the times evidence was gathered
+    # first and the times it was not. The sharpest input for inferring a rule.
+    episode_shapes: list[dict] = []
     min_sessions: int = 3
     # The LLM names the operation and states the rule the behaviour implies.
     # Off by default: the counted half is useful on its own, is reproducible,
@@ -918,7 +923,8 @@ def mine_intents_endpoint(body: MineIntentsBody):
                    else LLMClient(provider="openai", model=DEFAULT_MINING_MODEL))
         except Exception as e:  # noqa: BLE001 - unconfigured provider is a 400, not a 500
             raise HTTPException(400, f"LLM unavailable for policy inference: {e}")
-    from .intent_mining import mine_cohort_policies, mine_intent_groups, mine_workflows
+    from .intent_mining import (mine_cohort_policies, mine_intent_groups,
+                                mine_operation_policies, mine_workflows)
 
     candidates, rejected = mine_intents(body.profiles, llm=llm, min_sessions=body.min_sessions)
     # Grouped runs supersede ungrouped ones when both are supplied: they say
@@ -931,12 +937,14 @@ def mine_intents_endpoint(body: MineIntentsBody):
         groups, group_rejected = [], []
         flows, flow_rejected = mine_workflows(body.workflows, llm=llm, min_sessions=body.min_sessions)
     cohorts, cohort_rejected = mine_cohort_policies(body.cohorts, llm=llm)
+    ops, op_rejected = mine_operation_policies(body.episode_shapes, llm=llm)
     return {
         "candidates": [c.model_dump() for c in candidates],
         "workflows": [c.model_dump() for c in flows],
         "intent_groups": [c.model_dump() for c in groups],
         "cohorts": [c.model_dump() for c in cohorts],
-        "rejected": rejected + flow_rejected + group_rejected + cohort_rejected,
+        "operations": [o.model_dump() for o in ops],
+        "rejected": rejected + flow_rejected + group_rejected + cohort_rejected + op_rejected,
         "policy_inferred": bool(llm),
         # Said in the payload, not just the docs: a learned catalog cites
         # OBSERVED PRACTICE, never a clause, and cannot express prohibition —

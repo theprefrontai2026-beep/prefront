@@ -2635,3 +2635,9 @@ td.pf-tr-share { width: 34px; text-align: right; }
    the reader should see what was considered and rejected as evidence, but it
    must not read like the boundaries beside it. */
 .pf-li-chip.opt-dim { opacity: 0.5; border-style: dashed; }
+
+/* A path to a side-effecting operation. The bare path is called out in words
+   rather than shown as an empty chain: "nothing preceded it" is the finding,
+   and an empty row would read as missing data. */
+.pf-li-path { padding: 3px 0; }
+.pf-li-bare { font-size: 11px; color: var(--red); font-style: italic; margin-right: 6px; }

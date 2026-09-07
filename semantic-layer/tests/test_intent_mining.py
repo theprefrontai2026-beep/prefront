@@ -316,3 +316,62 @@ def test_cohort_llm_failure_degrades_to_the_counted_half():
     from semanticlayer.intent_mining import infer_cohort_policy, structural_cohort
     out, err = infer_cohort_policy(structural_cohort(cohort()), _LLM("nope"))
     assert err and out.role == "Agent" and out.inferred_policy is None
+
+
+# ── the rule governing a side-effecting operation ─────────────────────────
+
+def shape(steps, closed, n, **over):
+    d = {"steps": steps, "closed_by": closed, "episodes": n, "sessions": n,
+         "before_effect": steps[:-1] if closed else [],
+         "roles": [{"value": "Agent", "episodes": n}], "subject_args": ["a_id"],
+         "example_sessions": ["s1"]}
+    d.update(over)
+    return d
+
+
+def test_only_side_effecting_operations_get_a_rule():
+    """A read leaves nothing behind for a rule to be about; 'what must be true
+    before this is allowed' only arises for an act that changes something."""
+    from semanticlayer.intent_mining import operations_from_shapes
+    ops = operations_from_shapes([shape(["look"], "", 10), shape(["gather", "act"], "act", 4)])
+    assert [o.operation for o in ops] == ["act"]
+
+
+def test_paths_to_one_operation_are_gathered_together():
+    """The comparison IS the evidence: the times evidence was gathered, beside
+    the times it was not."""
+    from semanticlayer.intent_mining import operations_from_shapes
+    o = operations_from_shapes([
+        shape(["act"], "act", 196),
+        shape(["gather", "act"], "act", 15),
+        shape(["other", "act"], "act", 15),
+    ])[0]
+    assert o.total_episodes == 226 and o.bare_episodes == 196
+    assert o.paths[0]["episodes"] == 196          # ranked by frequency
+    assert o.bare_share == round(196 / 226, 3)
+
+
+def test_a_mostly_bare_operation_is_warned_about():
+    """Either no precondition is required or one is routinely bypassed, and
+    the traces cannot tell you which — so the warning says exactly that rather
+    than picking."""
+    from semanticlayer.intent_mining import operations_from_shapes
+    o = operations_from_shapes([shape(["act"], "act", 90), shape(["gather", "act"], "act", 10)])[0]
+    assert any("NOTHING" in w and "bypassed" in w for w in o.warnings)
+
+
+def test_a_fully_guarded_operation_raises_no_bare_warning():
+    from semanticlayer.intent_mining import operations_from_shapes
+    o = operations_from_shapes([shape(["gather", "act"], "act", 40)])[0]
+    assert o.bare_episodes == 0
+    assert not any("NOTHING" in w for w in o.warnings)
+
+
+def test_operation_prompt_shows_every_path_with_its_share():
+    from semanticlayer.intent_mining import (operations_from_shapes,
+                                             render_operation_prompt, OPERATION_SYSTEM)
+    o = operations_from_shapes([shape(["act"], "act", 3), shape(["gather", "act"], "act", 1)])[0]
+    p = render_operation_prompt(o)
+    assert "(nothing preceded it)" in p and "gather" in p and "75%" in p
+    assert "FREQUENCY IS NOT LEGITIMACY" in OPERATION_SYSTEM
+    assert "rule" in OPERATION_SYSTEM and "habit" in OPERATION_SYSTEM

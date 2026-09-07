@@ -727,3 +727,171 @@ def mine_cohort_policies(cohorts: list[dict], llm: Optional[LLMClient] = None,
                 rejected.append(err)
         out.append(p)
     return out, rejected
+
+
+# ── The policy behind an operation, from how it was actually performed ────
+# Episode shapes grouped by their CLOSING action. This is the sharpest input
+# available for reverse-engineering a rule, because it puts every way an
+# operation was performed side by side: the times it was preceded by evidence
+# and the times it was not. A rate over n-grams cannot express that; "196 times
+# with nothing first, 30 times after pulling a credit report" can.
+
+
+class OperationPolicy(BaseModel):
+    """One side-effecting operation, and the rule its usage implies."""
+    # ── counted ──
+    operation: str
+    total_episodes: int = 0
+    # Every observed way of reaching it, most frequent first.
+    paths: list[dict] = Field(default_factory=list)
+    bare_episodes: int = 0            # performed with nothing preceding it
+    observed_roles: list[dict] = Field(default_factory=list)
+    subject_args: list[str] = Field(default_factory=list)
+    example_sessions: list[str] = Field(default_factory=list)
+    # ── inferred ──
+    intent: str = ""
+    description: str = ""
+    inferred_policy: Optional[InferredPolicy] = None
+    # ── review ──
+    review_status: str = "pending"
+    warnings: list[str] = Field(default_factory=list)
+
+    @property
+    def bare_share(self) -> float:
+        return round(self.bare_episodes / self.total_episodes, 3) if self.total_episodes else 0.0
+
+
+OPERATION_SYSTEM = """You are reverse-engineering the business rule governing ONE \
+operation, from how it was actually performed in production.
+
+You are given a side-effecting operation and every observed path to it: the \
+sequence of calls that preceded it each time, with counts. Some paths gather \
+evidence first; some perform the operation with nothing before it at all.
+
+State the rule that appears to govern it. The comparison between paths is your \
+evidence:
+- Steps that appear before the operation in MANY paths are candidate \
+PRECONDITIONS - things the business appears to require before this act.
+- If the operation is frequently performed with NOTHING first, say so plainly. \
+That is either a rule being bypassed or evidence there is no such rule, and \
+you should say which you think it is and why. Do not smooth it over.
+- A path taken once is an anomaly, not a rule.
+
+Three hard rules:
+1. NEVER state a prohibition as fact. Phrase as "appears to require" and put \
+alternatives in caveats.
+2. FREQUENCY IS NOT LEGITIMACY. The most common path may be the wrong one. If \
+the bare path dominates, the honest reading may be that a control is missing \
+entirely - say that rather than concluding no precondition exists.
+3. Distinguish "the evidence shows a rule" from "the evidence shows a habit". \
+A precondition present in 95% of paths is a candidate rule; one in 40% is a \
+common practice at best.
+
+Return STRICT JSON only:
+{"intent": "verb_noun snake_case name for the operation",
+ "description": "one sentence on what it does",
+ "policy": {"statement": "...", "rationale": "...",
+            "confidence": "high|medium|low", "caveats": ["..."]}}"""
+
+
+def operations_from_shapes(shapes: list[dict]) -> list[OperationPolicy]:
+    """Group episode shapes by their closing action.
+
+    Only shapes that CLOSE on a side effect: a read leaves nothing behind for a
+    rule to be about, and the interesting question — what must be true before
+    this is allowed to happen — only arises for an act that changes something.
+    """
+    by_op: dict[str, dict[str, Any]] = {}
+    for s in shapes:
+        op = str(s.get("closed_by") or "")
+        if not op:
+            continue
+        slot = by_op.setdefault(op, {"paths": [], "episodes": 0, "bare": 0,
+                                     "roles": {}, "subjects": set(), "examples": []})
+        before = list(s.get("before_effect") or [])
+        n = int(s.get("episodes") or 0)
+        slot["paths"].append({"before": before, "episodes": n})
+        slot["episodes"] += n
+        if not before:
+            slot["bare"] += n
+        for r in s.get("roles") or []:
+            slot["roles"][r["value"]] = slot["roles"].get(r["value"], 0) + int(r.get("episodes") or 0)
+        slot["subjects"].update(s.get("subject_args") or [])
+        for e in s.get("example_sessions") or []:
+            if len(slot["examples"]) < 5:
+                slot["examples"].append(e)
+
+    out: list[OperationPolicy] = []
+    for op, v in by_op.items():
+        paths = sorted(v["paths"], key=lambda p: -p["episodes"])
+        total = v["episodes"]
+        roles = _share([{"value": r, "sessions": n} for r, n in v["roles"].items()], total)
+        warnings: list[str] = []
+        bare_share = (v["bare"] / total) if total else 0.0
+        if bare_share > 0.5:
+            warnings.append(
+                f"{int(bare_share * 100)}% of the time this operation was performed with NOTHING "
+                f"preceding it — either no precondition is required, or one is being bypassed "
+                f"routinely, and the traces alone cannot tell you which")
+        if len(paths) > 1 and paths[0]["episodes"] < 0.5 * total:
+            warnings.append("no dominant path: the operation is reached many different ways, "
+                            "which is weak ground for calling any of them required")
+        out.append(OperationPolicy(
+            operation=op, total_episodes=total, paths=paths[:8], bare_episodes=v["bare"],
+            observed_roles=roles, subject_args=sorted(v["subjects"]),
+            example_sessions=v["examples"], warnings=warnings,
+        ))
+    out.sort(key=lambda o: -o.total_episodes)
+    return out
+
+
+def render_operation_prompt(o: OperationPolicy) -> str:
+    lines = [
+        f"operation: {o.operation}  (a side-effecting act)",
+        f"performed {o.total_episodes} times",
+        "subject identified by: " + (", ".join(o.subject_args) or "unknown"),
+        "performed by: " + (", ".join(
+            f"{r['value']} ({int(r['share'] * 100)}%)" for r in o.observed_roles) or "unknown"),
+        "observed paths to it:",
+    ]
+    for p in o.paths:
+        before = " -> ".join(p["before"]) if p["before"] else "(nothing preceded it)"
+        share = int(p["episodes"] / o.total_episodes * 100) if o.total_episodes else 0
+        lines.append(f"  - {before}   [{p['episodes']} times, {share}%]")
+    if o.warnings:
+        lines.append("counted warnings: " + " | ".join(o.warnings))
+    return "\n".join(lines)
+
+
+def infer_operation_policy(o: OperationPolicy, llm: LLMClient) -> tuple[OperationPolicy, Optional[str]]:
+    raw = llm.complete(OPERATION_SYSTEM, render_operation_prompt(o))
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return o, f"{o.operation}: LLM output was not valid JSON: {e}"
+    if not isinstance(parsed, dict):
+        return o, f"{o.operation}: LLM returned {type(parsed).__name__}, expected an object"
+    pol = parsed.get("policy") or {}
+    try:
+        inferred = InferredPolicy.model_validate(pol) if pol else None
+    except Exception as e:  # noqa: BLE001
+        return o, f"{o.operation}: policy block invalid: {e}"
+    return o.model_copy(update={
+        "intent": str(parsed.get("intent") or "").strip() or o.operation,
+        "description": str(parsed.get("description") or "").strip(),
+        "inferred_policy": inferred,
+    }), None
+
+
+def mine_operation_policies(shapes: list[dict], llm: Optional[LLMClient] = None,
+                            limit: int = 10) -> tuple[list[OperationPolicy], list[str]]:
+    ops = operations_from_shapes(shapes)
+    out: list[OperationPolicy] = []
+    rejected: list[str] = []
+    for o in ops[:limit]:
+        if llm is not None:
+            o, err = infer_operation_policy(o, llm)
+            if err:
+                rejected.append(err)
+        out.append(o)
+    return out, rejected

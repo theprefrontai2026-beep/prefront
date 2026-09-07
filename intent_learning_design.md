@@ -148,6 +148,48 @@ Two consequences worth stating plainly:
   gap to be engineered away, and it should be communicated as such — a learned
   catalog complements a policy document, it does not replace one.
 
+### 3.2 The unit a reviewer can approve: the EPISODE
+
+Everything above aggregates across sessions. Nothing asked what a single
+session revealed, and a session is not one intent — it is a sequence of them.
+To hand a reviewer "this is a governed intent, approve it", something has to
+say where one operation ends and the next begins, and an n-gram cannot: it is a
+window slid over a stream with no notion of when the stream changed subject.
+
+`behavior/episodes.py` cuts each session into EPISODES — one operation on one
+subject — on two structural boundaries: the same identifier taking a different
+value, and a side-effecting call closing the operation it was gathering
+evidence for. Structural rather than statistical, which is what makes an
+episode trustworthy where a frequent substring is not.
+
+**A different identifier is NOT a boundary, and getting that wrong was the
+first version's bug.** One operation legitimately walks between related
+entities — fetch the record by its own id, then pull a report by the id of the
+party it names — and treating that hop as a new subject severed every decision
+from the evidence gathered for it. It reported 228 decisions as having no
+preconditions, which was an artifact of the cut, not a finding. Each episode
+now carries a MAP of identifier → value and only a contradiction ends it.
+
+**Grouping episodes by their CLOSING act is the sharpest input for inferring a
+rule that this corpus offers**, because it is a comparison rather than a rate.
+Every observed way of reaching one write, side by side:
+
+    decide_loan            241 times
+      (nothing preceded it)                                 196x  81%
+      find_applicant -> get_applicant_profile ->             15x   6%
+      get_credit_report -> get_income_verification ->        15x   6%
+
+An n-gram rate cannot express that. This can, and the model reads it correctly:
+"appears to require certain preconditions … but is frequently performed without
+any preceding steps", caveated as "may indicate a lack of control rather than a
+legitimate absence of requirements". Which of the two it is, the traces cannot
+settle and a reviewer can — which is exactly the right division of labour.
+
+`explained_fraction` reports what share of all episodes the candidate shapes
+account for (98% of 897 on the bundled corpus). A catalog covering a third of
+the traffic leaves most of it ungoverned, and a reviewer should be told that
+before approving rather than inferring it from a thin findings feed afterwards.
+
 ### 3.1 The signal §3 missed: what differs BETWEEN cohorts
 
 The table above asks what can be learned about one intent from its own usage.

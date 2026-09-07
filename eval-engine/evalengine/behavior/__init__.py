@@ -45,6 +45,7 @@ from .profiles import (
     observed_intent_labels,
 )
 from .cohorts import Cohort, cohort_contrasts
+from .episodes import Episode, EpisodeShape, episode_shapes, explained_fraction, session_episodes
 from .workflows import Workflow, WorkflowGroup, frequent_workflows, group_workflows
 
 __all__ = [
@@ -54,6 +55,11 @@ __all__ = [
     "following_tools",
     "observed_intent_labels",
     "Cohort",
+    "Episode",
+    "EpisodeShape",
+    "episode_shapes",
+    "explained_fraction",
+    "session_episodes",
     "cohort_contrasts",
     "Workflow",
     "WorkflowGroup",
