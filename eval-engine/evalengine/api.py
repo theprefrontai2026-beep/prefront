@@ -275,6 +275,29 @@ async def behavior_intents(since: int = 7 * 86400, app: str = AppQ,
         for g in gs]}
 
 
+@app.get("/eval/behavior/map")
+async def behavior_map(since: int = 7 * 86400, app: str = AppQ,
+                       min_edge: int = 2, top_n: int = 24):
+    """The observed process map — tools as nodes, transitions as weighted edges.
+
+    Every other behaviour surface is a list, which is right for reviewing one
+    candidate and wrong for the question people ask first: what does this
+    system DO? That is a question about structure, and thirty rows of sequences
+    do not answer it.
+
+    Transitions are counted WITHIN episodes, never across them: a hop inside
+    one operation is part of the same piece of work, while the gap between two
+    is just what the caller did next. Counting across would draw edges between
+    unrelated operations and make the map denser and less true — which on a
+    diagram reads as more insight rather than less. Rare edges are pruned and
+    the pruned weight reported, so nothing is hidden silently."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "nodes": [], "edges": []}
+    return {"configured": True,
+            **(await asyncio.to_thread(behavior.process_map, since, app, min_edge, top_n))}
+
+
 @app.get("/eval/behavior/baseline")
 async def behavior_baseline(since: int = 7 * 86400, app: str = AppQ):
     """Has this deployment been watched long enough to have a baseline?

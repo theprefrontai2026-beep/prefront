@@ -409,6 +409,38 @@ services have: aggregates cross the boundary, raw spans never do.
 - The LLM pass is **off by default** — the counted half needs no model, is
   reproducible and costs nothing; one call per tool should be asked for.
 
+### The observed process map (`components/ProcessMap.tsx`)
+
+Leads the Learned Intents tab, before any list. "What does this system do" is
+the question a reader arrives with and it is answered by STRUCTURE; the lists
+answer "is this particular pattern acceptable", which is later and narrower.
+ReactFlow + dagre LR, the same idiom as `DataGraph`, so both graph surfaces in
+this app pan, zoom and fit identically.
+
+Four things keep it honest, which is the only reason it is worth showing anyone
+— an impressive diagram of something inferred would be a liability, and every
+visual weight here corresponds to a count printed beside it:
+
+- **Edges are transitions observed INSIDE one operation**, never across two.
+  Counting across episode boundaries draws edges between unrelated operations
+  and makes the map denser and less true — which, on a diagram, reads as more
+  insight rather than less.
+- **Pruned edges are reported** ("9 rarer transitions hidden"). A map that
+  quietly drops its tail looks cleaner than the system is and the reader cannot
+  tell; the threshold is also a control, so a demo can tighten or open it live.
+- **Stroke width carries frequency.** A uniform-width map draws a rare hop with
+  the same authority as the spine, which is how a process map becomes a
+  hairball that looks like insight.
+- **Entry points and writes are marked on the node**, because where work begins
+  and what changes something are most of what a reader wants and are invisible
+  in a plain adjacency count.
+
+A custom ReactFlow node MUST render `<Handle>` (target left, source right, both
+`opacity: 0`) or edges have nothing to attach to: ReactFlow then draws every
+node and silently no edges at all — a process map with no process in it, and no
+error anywhere. Cost an hour here; `DataGraph`'s nodes carry them for the same
+reason.
+
 ## Runtime tab (`components/RuntimeDiff.tsx` + `DecisionTrace.tsx`, route `/runtime`)
 
 The in-band before/after: one request answered twice — a realistic app-layer

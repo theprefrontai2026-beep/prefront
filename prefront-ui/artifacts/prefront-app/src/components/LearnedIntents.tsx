@@ -19,6 +19,7 @@
 
 import { useCallback, useState } from "react";
 import type { DemoConfig } from "../demos";
+import ProcessMap from "./ProcessMap";
 
 type Counted = { value: string; sessions: number; calls: number; share?: number };
 type Contested = { check_id: string; sessions: number; findings: number };
@@ -557,6 +558,20 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
           {cands.map((c) => <CandidateCard key={c.tool_name} c={c} />)}
         </section>
       )}
+
+      {/* The map goes FIRST, before any list. "What does this system do" is
+          the question a reader arrives with, and it is answered by structure;
+          the lists answer "is this particular pattern acceptable", which is a
+          later question and a narrower one. */}
+      <section className="pf-panel" style={{ marginTop: 14 }}>
+        <div className="pf-dash-panel-head"><h2>Observed process map</h2></div>
+        <p className="pf-hint" style={{ marginTop: 0 }}>
+          Every tool that was called, and every transition between them that was observed inside a
+          single operation — sized by how often. Nothing here is inferred or arranged: an edge
+          exists because that hop happened, and its thickness is the count.
+        </p>
+        <ProcessMap demo={demo} days={days} active={active} />
+      </section>
 
       {baseline && baseline.observed_episodes > 0 && (
         <section className="pf-panel" style={{ marginTop: 14 }}>

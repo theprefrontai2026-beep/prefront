@@ -45,6 +45,7 @@ from .profiles import (
     observed_intent_labels,
 )
 from .baseline import learning_progress
+from .processmap import process_map
 from .cohorts import Cohort, cohort_contrasts
 from .episodes import Episode, EpisodeShape, episode_shapes, explained_fraction, session_episodes
 from .workflows import Workflow, WorkflowGroup, frequent_workflows, group_workflows
@@ -56,6 +57,7 @@ __all__ = [
     "following_tools",
     "observed_intent_labels",
     "learning_progress",
+    "process_map",
     "Cohort",
     "Episode",
     "EpisodeShape",

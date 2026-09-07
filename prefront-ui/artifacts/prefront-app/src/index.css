@@ -2658,3 +2658,38 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-lb-new { color: var(--amber); font-family: var(--app-font-mono); }
 .pf-li-toggle.off { color: var(--muted); cursor: not-allowed; }
 .pf-li-locked { font-size: 11px; font-style: italic; color: var(--amber); margin-left: 8px; }
+
+/* ── Observed process map (components/ProcessMap.tsx) ─────────────────────
+   The corpus drawn. Frequency is carried by size and stroke width rather than
+   by numbers alone, so the spine of the system is legible before anything is
+   read — but every visual weight corresponds to a count shown beside it. */
+.pf-pm-canvas {
+  height: 520px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); margin-top: 10px;
+}
+.pf-pm-node {
+  width: 190px; box-sizing: border-box; padding: 7px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+/* A side-effecting tool is the point of whatever reached it. */
+.pf-pm-node.writes { border-color: var(--red); background: #fffaf9; }
+.pf-pm-node.entry { border-left: 3px solid var(--blue); }
+.pf-pm-name { font-size: 12px; font-family: var(--app-font-mono); color: var(--ink); }
+.pf-pm-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.pf-pm-count { font-size: 11px; color: var(--muted); }
+.pf-pm-tag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--blue); border: 1px solid currentColor; border-radius: 3px; padding: 0 3px;
+}
+.pf-pm-tag.write { color: var(--red); }
+.pf-pm-bar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+.pf-pm-bar > div { height: 100%; background: var(--blue); }
+.pf-pm-bar-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 8px; }
+.pf-pm-min { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.pf-pm-min input { width: 56px; }
+.pf-pm-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; color: var(--muted); }
+.pf-pm-sw { display: inline-block; width: 18px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.pf-pm-sw.entry { background: var(--blue); }
+.pf-pm-sw.write { background: var(--red); }
+.pf-pm-sw.thick { background: #0f766e; height: 5px; }
