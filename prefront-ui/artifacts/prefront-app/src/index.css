@@ -2630,3 +2630,8 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-li-variants { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .pf-li-variant { padding: 4px 0; }
 .pf-li-vmeta { font-size: 11px; color: var(--muted); }
+
+/* An unused operation whose silence says nothing. Greyed rather than omitted:
+   the reader should see what was considered and rejected as evidence, but it
+   must not read like the boundaries beside it. */
+.pf-li-chip.opt-dim { opacity: 0.5; border-style: dashed; }

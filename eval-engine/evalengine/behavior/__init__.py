@@ -44,6 +44,7 @@ from .profiles import (
     following_tools,
     observed_intent_labels,
 )
+from .cohorts import Cohort, cohort_contrasts
 from .workflows import Workflow, WorkflowGroup, frequent_workflows, group_workflows
 
 __all__ = [
@@ -52,6 +53,8 @@ __all__ = [
     "caller_invariants",
     "following_tools",
     "observed_intent_labels",
+    "Cohort",
+    "cohort_contrasts",
     "Workflow",
     "WorkflowGroup",
     "frequent_workflows",

@@ -576,3 +576,154 @@ def mine_intent_groups(groups: list[dict], llm: Optional[LLMClient] = None,
                 rejected.append(err)
         out.append(c)
     return out, rejected
+
+
+# ── Access policy, from what differs between cohorts ──────────────────────
+# The strongest policy signal in a corpus is not what any one group does, it is
+# what one group does that another never does. A policy is exactly what makes
+# those differ, and it is invisible in a single cohort's profile.
+
+
+class CohortPolicy(BaseModel):
+    """The access boundary a cohort appears to sit behind."""
+    # ── counted ──
+    role: str
+    sessions: int = 0
+    calls: int = 0
+    tools: list[dict] = Field(default_factory=list)
+    exclusive_tools: list[str] = Field(default_factory=list)
+    never_used: list[dict] = Field(default_factory=list)
+    field_gaps: list[dict] = Field(default_factory=list)
+    has_exposure: bool = False
+    # ── inferred ──
+    inferred_policy: Optional[InferredPolicy] = None
+    # ── review ──
+    review_status: str = "pending"
+    warnings: list[str] = Field(default_factory=list)
+
+
+COHORT_SYSTEM = """You are inferring an ACCESS POLICY from behaviour, for a \
+system whose policy document you cannot see. You are given one group of callers \
+(a role), the operations it performs, the operations only it performs, the \
+operations other roles perform that it never does, and any fields the same tool \
+returned to others but never to it.
+
+State the access boundary this role appears to sit behind.
+
+Weigh the evidence in this order, and say which you are using:
+- A FIELD GAP is the strongest signal: the role called the same operation and \
+got less back. That cannot be explained by what it happened to need.
+- An operation only this role performs suggests a capability reserved to it.
+- NEVER HAVING USED something is the weakest signal, and its strength has \
+already been computed for you PER TOOL. For each unused operation you are told \
+how often other roles reach it and how likely this role's silence is by chance. \
+Ones marked a likely boundary are worth reporting. Ones marked inconclusive are \
+NOT evidence - this role may simply not have had the occasion, and you must not \
+build a restriction on them. Do not treat a long list of inconclusive \
+operations as though its length were evidence; it is not.
+
+Three hard rules:
+1. ABSENCE OF EVIDENCE IS NOT EVIDENCE OF PROHIBITION. Never write that a role \
+"cannot" or "is not permitted to" do something. Write "appears not to" or \
+"was never observed to", and put the alternative - that it simply never needed \
+to - in caveats.
+2. OBSERVED REACH IS NOT PERMITTED REACH. The operations this role DID perform \
+are not thereby approved; some may be exactly what a reviewer needs to remove.
+3. If the evidence is too thin to say anything, say that, with low confidence. \
+An honest "not enough traffic to tell" is more useful than a confident guess.
+
+Return STRICT JSON only:
+{"policy": {"statement": "...", "rationale": "...",
+            "confidence": "high|medium|low", "caveats": ["..."]}}"""
+
+
+def structural_cohort(c: dict) -> CohortPolicy:
+    sessions = int(c.get("sessions") or 0)
+    warnings: list[str] = []
+    if not c.get("has_exposure"):
+        warnings.append(
+            f"only {sessions} session(s): too little traffic for 'never used' to mean anything — "
+            f"absence here is silence, not a boundary")
+    if not c.get("field_gaps"):
+        # Worth saying out loud rather than rendering an empty section: on an
+        # UNGOVERNED deployment nothing is withheld from anyone, and that is
+        # itself the finding.
+        warnings.append("no field gaps: every cohort that called a tool saw the same fields, "
+                        "so no field-level restriction is being enforced anywhere in this corpus")
+    return CohortPolicy(
+        role=str(c.get("role") or ""), sessions=sessions, calls=int(c.get("calls") or 0),
+        tools=list(c.get("tools") or []), exclusive_tools=list(c.get("exclusive_tools") or []),
+        never_used=list(c.get("never_used") or []), field_gaps=list(c.get("field_gaps") or []),
+        has_exposure=bool(c.get("has_exposure")), warnings=warnings,
+    )
+
+
+def render_cohort_prompt(c: CohortPolicy) -> str:
+    lines = [
+        f"role: {c.role}",
+        f"traffic: {c.sessions} sessions, {c.calls} tool calls",
+        "operations performed: " + (", ".join(
+            f"{t['tool']} ({t['sessions']})" for t in c.tools) or "none"),
+        "performed ONLY by this role: " + (", ".join(c.exclusive_tools) or "none"),
+    ]
+    # Split by whether the silence is statistically meaningful, rather than
+    # handing over one list and a session count for the model to weigh — it
+    # weighed it wrongly, returning HIGH confidence for a 31-session cohort.
+    strong = [x for x in c.never_used if x.get("likely_boundary")]
+    weak = [x for x in c.never_used if not x.get("likely_boundary")]
+    if strong:
+        lines.append("never performed by this role, and the silence is UNLIKELY BY CHANCE "
+                     "(a likely boundary): " + "; ".join(
+                         f"{x['tool']} — others reach it in {int(float(x.get('others_use_rate') or 0) * 100)}% "
+                         f"of their sessions, this role had {x['this_cohort_sessions']} sessions "
+                         f"(p={x.get('silence_by_chance')})" for x in strong))
+    if weak:
+        lines.append("never performed, but INCONCLUSIVE — too rare for this role's traffic to "
+                     "say anything, do not infer a restriction from these: "
+                     + ", ".join(x["tool"] for x in weak))
+    if c.field_gaps:
+        lines.append("FIELDS WITHHELD from this role by the same tool: " + "; ".join(
+            f"{g['tool']}: {', '.join(g['withheld'])} (seen by {', '.join(g['seen_by'])})"
+            for g in c.field_gaps))
+    else:
+        lines.append("no fields were withheld from this role that others saw")
+    if c.warnings:
+        lines.append("counted warnings: " + " | ".join(c.warnings))
+    return "\n".join(lines)
+
+
+def infer_cohort_policy(c: CohortPolicy, llm: LLMClient) -> tuple[CohortPolicy, Optional[str]]:
+    raw = llm.complete(COHORT_SYSTEM, render_cohort_prompt(c))
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return c, f"{c.role}: LLM output was not valid JSON: {e}"
+    if not isinstance(parsed, dict):
+        return c, f"{c.role}: LLM returned {type(parsed).__name__}, expected an object"
+    pol = parsed.get("policy") or {}
+    try:
+        inferred = InferredPolicy.model_validate(pol) if pol else None
+    except Exception as e:  # noqa: BLE001
+        return c, f"{c.role}: policy block invalid: {e}"
+    return c.model_copy(update={"inferred_policy": inferred}), None
+
+
+def mine_cohort_policies(cohorts: list[dict], llm: Optional[LLMClient] = None,
+                         ) -> tuple[list[CohortPolicy], list[str]]:
+    """One access-boundary candidate per cohort.
+
+    Every cohort is returned, including under-exposed ones — a role with three
+    sessions is part of the picture and hiding it would hide that the corpus
+    cannot yet say anything about it. Its thinness rides along as a warning
+    and is put in front of the model rather than filtered out.
+    """
+    out: list[CohortPolicy] = []
+    rejected: list[str] = []
+    for c in cohorts:
+        p = structural_cohort(c)
+        if llm is not None:
+            p, err = infer_cohort_policy(p, llm)
+            if err:
+                rejected.append(err)
+        out.append(p)
+    return out, rejected

@@ -42,6 +42,84 @@ type Grouped = {
   inferred_policy: Policy | null; review_status: string; warnings: string[];
 };
 
+type Unused = { tool: string; used_by: string[]; others_use_rate: number;
+                silence_by_chance: number; likely_boundary: boolean; this_cohort_sessions: number };
+type CohortRow = {
+  role: string; sessions: number; calls: number;
+  tools: { tool: string; sessions: number; calls: number }[];
+  exclusive_tools: string[]; never_used: Unused[];
+  field_gaps: { tool: string; withheld: string[]; seen_by: string[] }[];
+  has_exposure: boolean; inferred_policy: Policy | null;
+  review_status: string; warnings: string[];
+};
+
+/** An access boundary, inferred from what this cohort does that others do not.
+ *
+ *  Absence is the weakest evidence and the easiest to over-read, so it is split
+ *  here exactly as it is scored: operations whose silence is unlikely by chance
+ *  are candidate boundaries; the rest are shown greyed and explicitly labelled
+ *  inconclusive, because a long list of rarely-used tools is not evidence and
+ *  its LENGTH is the thing most likely to be mistaken for some. */
+function CohortCard({ c }: { c: CohortRow }) {
+  const strong = c.never_used.filter((u) => u.likely_boundary);
+  const weak = c.never_used.filter((u) => !u.likely_boundary);
+  return (
+    <div className="pf-li-card">
+      <div className="pf-li-head">
+        <code className="pf-li-name">{c.role}</code>
+        <span className="pf-li-support">{c.sessions} sessions · {c.tools.length} operations</span>
+        <span className="pf-li-spacer" />
+        {!c.has_exposure && <span className="pf-dash-chip gold">too little traffic to conclude</span>}
+        <span className="pf-dash-chip slate">{c.review_status}</span>
+      </div>
+
+      {c.inferred_policy && <PolicyBlock p={c.inferred_policy} />}
+
+      {c.field_gaps.length > 0 && (
+        <div className="pf-li-grid">
+          <div><span className="lbl">fields withheld from this cohort</span>
+            {c.field_gaps.map((g) => (
+              <div key={g.tool} className="pf-li-warn-row">
+                <code>{g.tool}</code>: {g.withheld.join(", ")} — seen by {g.seen_by.join(", ")}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="pf-li-grid">
+        {c.exclusive_tools.length > 0 && (
+          <div><span className="lbl">only this cohort does</span>
+            {c.exclusive_tools.map((t) => <span key={t} className="pf-li-chip">{t}</span>)}
+          </div>
+        )}
+        {strong.length > 0 && (
+          <div><span className="lbl">never done — unlikely by chance</span>
+            {strong.map((u) => (
+              <span key={u.tool} className="pf-li-chip rare"
+                    title={`others reach it in ${Math.round(u.others_use_rate * 100)}% of their sessions; silence by chance p=${u.silence_by_chance}`}>
+                {u.tool}
+              </span>
+            ))}
+          </div>
+        )}
+        {weak.length > 0 && (
+          <div><span className="lbl">never done — inconclusive, too rare to tell</span>
+            {weak.map((u) => <span key={u.tool} className="pf-li-chip opt-dim">{u.tool}</span>)}
+          </div>
+        )}
+      </div>
+
+      {c.warnings.length > 0 && (
+        <details className="pf-li-warn">
+          <summary>{c.warnings.length} thing{c.warnings.length === 1 ? "" : "s"} to check before approving</summary>
+          {c.warnings.map((w, i) => <div key={i} className="pf-li-warn-row">{w}</div>)}
+        </details>
+      )}
+    </div>
+  );
+}
+
 const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
 
 function Steps({ steps, tone = "" }: { steps: string[]; tone?: string }) {
@@ -230,6 +308,7 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [withLlm, setWithLlm] = useState(false);
   const [cands, setCands] = useState<Candidate[] | null>(null);
   const [groups, setGroups] = useState<Grouped[]>([]);
+  const [cohorts, setCohorts] = useState<CohortRow[]>([]);
   const [rejected, setRejected] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "mining" | "error">("idle");
   const [error, setError] = useState("");
@@ -244,26 +323,29 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const q = `since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_sessions=${minSessions}`;
       // Grouped runs are preferred: N shapes of one operation become one
       // candidate and one model call, rather than N near-identical policies.
-      const [pr, gr] = await Promise.all([
+      const [pr, gr, cr] = await Promise.all([
         fetch(`/eval/behavior/tools?${q}`),
         fetch(`/eval/behavior/intents?${q}`),
+        fetch(`/eval/behavior/cohorts?${q}`),
       ]);
       const pj = await pr.json();
       if (!pr.ok) throw new Error(pj?.error || `${pr.status} reading behaviour`);
       const profiles = pj.tools || [];
       const runs = gr.ok ? ((await gr.json()).intents || []) : [];
+      const cos = cr.ok ? ((await cr.json()).cohorts || []) : [];
       if (!profiles.length) {
-        setCands([]); setGroups([]); setRejected([]); setStatus("idle");
+        setCands([]); setGroups([]); setCohorts([]); setRejected([]); setStatus("idle");
         return;
       }
       const mr = await fetch("/design/semantic/intents/mine", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ profiles, intent_groups: runs, min_sessions: minSessions, infer_policy: withLlm }),
+        body: JSON.stringify({ profiles, intent_groups: runs, cohorts: cos,
+                               min_sessions: minSessions, infer_policy: withLlm }),
       });
       const mj = await mr.json();
       if (!mr.ok) throw new Error(mj?.detail || mj?.error || `${mr.status} mining`);
       setCands(mj.candidates || []); setGroups(mj.intent_groups || []);
-      setRejected(mj.rejected || []);
+      setCohorts(mj.cohorts || []); setRejected(mj.rejected || []);
       setStatus("idle");
     } catch (e: any) {
       setError(String(e?.message || e)); setStatus("error");
@@ -337,6 +419,22 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             </div>
           )}
           {cands.map((c) => <CandidateCard key={c.tool_name} c={c} />)}
+        </section>
+      )}
+
+      {cohorts.length > 0 && (
+        <section className="pf-panel" style={{ marginTop: 14 }}>
+          <div className="pf-dash-panel-head"><h2>Access boundaries — what differs between cohorts</h2></div>
+          <p className="pf-hint" style={{ marginTop: 0 }}>
+            An access policy is precisely what makes one group of callers behave differently from
+            another, so the <em>differences</em> are where it is visible — and they appear in no
+            single cohort's profile. Strongest first: a field the same tool returned to others but
+            never to this cohort cannot be explained by what they happened to need. Weakest, and
+            easiest to over-read: never having done something. That is scored per operation against
+            how often other cohorts reach it, so a rarely-used tool is marked
+            <em> inconclusive</em> rather than counted as a restriction.
+          </p>
+          {cohorts.map((c) => <CohortCard key={c.role} c={c} />)}
         </section>
       )}
 

@@ -275,6 +275,32 @@ async def behavior_intents(since: int = 7 * 86400, app: str = AppQ,
         for g in gs]}
 
 
+@app.get("/eval/behavior/cohorts")
+async def behavior_cohorts(since: int = 7 * 86400, app: str = AppQ):
+    """What differs BETWEEN groups of callers — the access-policy signal.
+
+    A policy is what makes one cohort's behaviour differ from another's, so the
+    differences are where it is visible and no single cohort's profile contains
+    it. Returns, per cohort: the operations it performs, the ones only it
+    performs, the ones others perform that it never does (with its own traffic
+    volume, so a reader can weigh the claim), and — the strongest signal — the
+    fields the same tool returned to others but never to it.
+
+    Absence is reported with exposure rather than as a conclusion: a cohort
+    with 400 sessions that never touched a tool is a boundary, one with 3 is
+    silence, and nothing here distinguishes them without the volume."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "cohorts": []}
+    cs = await asyncio.to_thread(behavior.cohort_contrasts, since, app)
+    return {"configured": True, "since": since, "app": app, "cohorts": [
+        {"role": c.role, "sessions": c.sessions, "calls": c.calls,
+         "tools": list(c.tools), "exclusive_tools": list(c.exclusive_tools),
+         "never_used": list(c.never_used), "field_gaps": list(c.field_gaps),
+         "has_exposure": c.has_exposure}
+        for c in cs]}
+
+
 @app.get("/eval/behavior/sequences")
 async def behavior_sequences(since: int = 7 * 86400, app: str = AppQ, min_support: int = 3):
     """Ordered tool pairs adjacent within a session — the closing-obligation

@@ -261,3 +261,58 @@ def test_grouped_llm_failure_degrades_to_the_counted_half():
     from semanticlayer.intent_mining import infer_group_policy, structural_group
     out, err = infer_group_policy(structural_group(group()), _LLM("{"))
     assert err and out.core_steps == ["a", "b"] and out.inferred_policy is None
+
+
+# ── access boundaries from cohort contrasts ───────────────────────────────
+
+def cohort(**over):
+    base = {"role": "Agent", "sessions": 100, "calls": 300,
+            "tools": [{"tool": "read", "sessions": 100, "calls": 300}],
+            "exclusive_tools": [], "field_gaps": [], "has_exposure": True,
+            "never_used": [
+                {"tool": "approve", "used_by": ["Boss"], "this_cohort_sessions": 100,
+                 "others_use_rate": 0.4, "silence_by_chance": 0.0, "likely_boundary": True},
+                {"tool": "rare", "used_by": ["Boss"], "this_cohort_sessions": 100,
+                 "others_use_rate": 0.01, "silence_by_chance": 0.36, "likely_boundary": False}]}
+    base.update(over)
+    return base
+
+
+def test_cohort_prompt_separates_evidence_from_noise():
+    """A long list of rarely-used tools is not evidence, and its LENGTH is the
+    thing most likely to be mistaken for some — so the split is made for the
+    model rather than left to it."""
+    from semanticlayer.intent_mining import render_cohort_prompt, structural_cohort
+    p = render_cohort_prompt(structural_cohort(cohort()))
+    assert "UNLIKELY BY CHANCE" in p and "approve" in p.split("INCONCLUSIVE")[0]
+    assert "INCONCLUSIVE" in p and "rare" in p.split("INCONCLUSIVE")[1]
+    assert "do not infer a restriction from these" in p
+
+
+def test_no_field_gaps_is_itself_reported():
+    """On an ungoverned deployment nothing is withheld from anyone, and that is
+    a finding — not an empty section."""
+    from semanticlayer.intent_mining import structural_cohort
+    c = structural_cohort(cohort())
+    assert any("no field-level restriction is being enforced" in w for w in c.warnings)
+
+
+def test_a_thin_cohort_is_warned_about_not_dropped():
+    """A role with three sessions is part of the picture; hiding it would hide
+    that the corpus cannot yet say anything about it."""
+    from semanticlayer.intent_mining import mine_cohort_policies
+    out, _ = mine_cohort_policies([cohort(sessions=3, has_exposure=False)], llm=None)
+    assert len(out) == 1
+    assert any("too little traffic" in w for w in out[0].warnings)
+
+
+def test_cohort_prompt_forbids_stating_prohibition_as_fact():
+    from semanticlayer.intent_mining import COHORT_SYSTEM
+    assert "ABSENCE OF EVIDENCE IS NOT EVIDENCE OF PROHIBITION" in COHORT_SYSTEM
+    assert "OBSERVED REACH IS NOT PERMITTED REACH" in COHORT_SYSTEM
+
+
+def test_cohort_llm_failure_degrades_to_the_counted_half():
+    from semanticlayer.intent_mining import infer_cohort_policy, structural_cohort
+    out, err = infer_cohort_policy(structural_cohort(cohort()), _LLM("nope"))
+    assert err and out.role == "Agent" and out.inferred_policy is None

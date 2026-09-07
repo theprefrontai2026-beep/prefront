@@ -125,7 +125,7 @@ group if similar to ANY member — chained the whole corpus into one 31-variant
 common to it. Complete linkage (similar to EVERY member) gives 18 coherent
 groups with a non-empty core in each. Over-splitting is the better failure: two
 candidates a reviewer merges by eye beats one they must take apart.
-| `allowed_roles` | **observed ≠ allowed** | the normalization-of-deviance hotspot. Emit as *observed callers with support counts*; the human must narrow. Never present the observed set as the permitted set |
+| `allowed_roles` | **observed ≠ allowed**, but see cohort contrasts below | the normalization-of-deviance hotspot. Emit as *observed callers with support counts*; the human must narrow. Never present the observed set as the permitted set |
 | `allowed_channels` | same caveat | same |
 | `intent` (the name) | **no — language, not counting** | LLM-drafted from tool name + observed usage; advisory only |
 | `trigger_descriptors` | **no — language** | LLM-drafted, advisory |
@@ -147,6 +147,39 @@ Two consequences worth stating plainly:
   practice* well and *prohibition* not at all. That is a real ceiling, not a
   gap to be engineered away, and it should be communicated as such — a learned
   catalog complements a policy document, it does not replace one.
+
+### 3.1 The signal §3 missed: what differs BETWEEN cohorts
+
+The table above asks what can be learned about one intent from its own usage.
+That framing misses where an access policy is actually visible. A policy is
+precisely what makes one group of callers behave differently from another, so
+the DIFFERENCES carry it — and they appear in no single intent's profile.
+`behavior/cohorts.py` computes three, worth very different amounts:
+
+1. **Field gaps** — the same tool returning fewer fields to one cohort than to
+   another. The strongest signal available, because it cannot be explained by
+   what a cohort happened to need: they called the same operation and got less
+   back. On an ungoverned corpus there are none, and that absence is itself
+   reported: nothing is being withheld from anyone.
+2. **Exclusive operations** — performed by one cohort only.
+3. **Absence, scored per tool** — and this is the one that is easy to get
+   wrong. A cohort that never called an operation may be barred or may simply
+   never have needed it. Which, depends on how often it WOULD have: if other
+   cohorts reach a tool in a fraction p of their sessions, silence across n
+   sessions happens by chance with probability (1-p)^n.
+
+   A flat session threshold was tried first and was wrong in an instructive
+   way. It told the model a 31-session cohort had "ample traffic", and the
+   model returned HIGH confidence on a boundary spanning 13 unused tools —
+   most of which its own traffic could say nothing about. Per-tool scoring cuts
+   that cohort to the 4 tools where silence is genuinely unlikely. The prompt
+   is handed the split rather than the raw list, because a long list of
+   rarely-used tools is not evidence and its LENGTH is the thing most likely to
+   be mistaken for some.
+
+The ceiling from §3 still binds: absence of evidence is not evidence of
+prohibition. These are candidate boundaries for a human, and a cohort's
+observed reach is never its permitted reach.
 
 ## 4. Where the code lives
 
