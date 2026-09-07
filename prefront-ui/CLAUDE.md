@@ -441,6 +441,26 @@ node and silently no edges at all — a process map with no process in it, and n
 error anywhere. Cost an hour here; `DataGraph`'s nodes carry them for the same
 reason.
 
+### Reviewing a candidate, as distinct from reading the map
+
+A graph orients; it does not help anyone decide. Approving is a different act
+from understanding, and it needs one bounded thing plus a plain statement of
+the consequence — so two things sit alongside the map:
+
+- **`ApprovalSummary`** on every candidate: *"If approved, this would permit
+  Underwriter, Loan Officer, Branch Manager to run `decide_loan` … which
+  CHANGES DATA … on the evidence of 246 observed sessions — approval turns
+  those observed callers into permitted ones."* Counted, never phrased by a
+  model: this is the sentence the decision rests on. Written as a GRANT rather
+  than a description of traffic, because that is what approval means and the
+  distinction is easy to lose — the observed callers become the allowed callers
+  the moment someone clicks yes, and saying so is what gives a reviewer the
+  chance to notice one they did not intend to bless.
+- **Clicking a candidate focuses the map on it** — everything else DIMMED, not
+  hidden. Removing the rest would re-lay the graph out and lose the point of
+  focusing: seeing where this operation sits among everything it could have
+  touched.
+
 ## Runtime tab (`components/RuntimeDiff.tsx` + `DecisionTrace.tsx`, route `/runtime`)
 
 The in-band before/after: one request answered twice — a realistic app-layer

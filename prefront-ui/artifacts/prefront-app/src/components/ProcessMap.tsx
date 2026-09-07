@@ -38,7 +38,7 @@ const NODE_H = 58;
 
 function MapNodeBox({ data }: { data: any }) {
   return (
-    <div className={`pf-pm-node${data.writes ? " writes" : ""}${data.entry ? " entry" : ""}`}
+    <div className={`pf-pm-node${data.writes ? " writes" : ""}${data.entry ? " entry" : ""}${data.dim ? " dim" : ""}`}
          title={`${data.episodes} episodes · starts ${data.starts} · ends ${data.ends}`
                 + (data.roles.length ? `\n${data.roles.map((r: any) => `${r.value} ${r.episodes}`).join("\n")}` : "")}>
       <div className="pf-pm-name">{data.label}</div>
@@ -105,7 +105,14 @@ function layout(d: MapData) {
   return { nodes, edges };
 }
 
-export default function ProcessMap({ demo, days, active }: { demo: DemoConfig; days: number; active?: boolean }) {
+export default function ProcessMap({ demo, days, active, focus }: {
+  demo: DemoConfig; days: number; active?: boolean;
+  /** Tools belonging to the candidate under review. When set, everything else
+   *  is dimmed — the map stops being "the whole system" and becomes "this one
+   *  operation, in context", which is the only form in which a graph helps
+   *  somebody decide whether to approve something. */
+  focus?: string[];
+}) {
   const [data, setData] = useState<MapData | null>(null);
   const [err, setErr] = useState("");
   const [minEdge, setMinEdge] = useState(3);
@@ -123,9 +130,21 @@ export default function ProcessMap({ demo, days, active }: { demo: DemoConfig; d
   }, [demo.id, days, minEdge, active]);
 
   const laid = useMemo(() => (data && data.nodes.length ? layout(data) : null), [data]);
+  const focusSet = useMemo(() => new Set(focus || []), [focus]);
   useEffect(() => {
-    if (laid) { setNodes(laid.nodes as any); setEdges(laid.edges as any); }
-  }, [laid, setNodes, setEdges]);
+    if (!laid) return;
+    if (!focusSet.size) { setNodes(laid.nodes as any); setEdges(laid.edges as any); return; }
+    // Dim rather than hide. Removing the rest would re-lay the graph out and
+    // lose the thing focus is FOR — seeing where this operation sits relative
+    // to everything else it could have touched.
+    setNodes(laid.nodes.map((n: any) =>
+      ({ ...n, data: { ...n.data, dim: !focusSet.has(n.id) } })) as any);
+    setEdges(laid.edges.map((e: any) => {
+      const on = focusSet.has(e.source) && focusSet.has(e.target);
+      return { ...e, style: { ...e.style, opacity: on ? 1 : 0.12 },
+               labelStyle: { ...e.labelStyle, opacity: on ? 1 : 0.15 } };
+    }) as any);
+  }, [laid, focusSet, setNodes, setEdges]);
 
   if (err) return <p className="pf-error">{err}</p>;
   if (!data) return <div className="pf-dash-feed-status">Loading the map…</div>;

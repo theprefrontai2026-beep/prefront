@@ -2693,3 +2693,32 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-pm-sw.entry { background: var(--blue); }
 .pf-pm-sw.write { background: var(--red); }
 .pf-pm-sw.thick { background: #0f766e; height: 5px; }
+/* Dimmed, not hidden: removing the rest would re-lay the graph and lose the
+   point of focusing — seeing where this operation sits among everything it
+   could have touched. */
+.pf-pm-node.dim { opacity: 0.18; }
+
+/* "If approved, this would permit …" — the sentence the decision rests on, so
+   it is counted rather than phrased by a model, and framed as a GRANT rather
+   than a description of traffic. The observed callers become permitted callers
+   the moment someone clicks yes, and saying so is what gives a reviewer the
+   chance to spot one they did not intend to bless. */
+.pf-li-approve {
+  margin-top: 10px; padding: 9px 12px; border-radius: var(--radius);
+  background: #f8fbff; border: 1px solid #dbeafe;
+}
+.pf-li-approve-h {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--blue);
+}
+.pf-li-approve-l { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink); }
+.pf-li-approve-l li { margin: 3px 0; line-height: 1.5; }
+.pf-li-approve-l code { font-size: 11px; background: #fff; border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; }
+.pf-li-approve-f { font-family: var(--app-font-mono); font-size: 11px; color: var(--muted); }
+.pf-li-approve-w { color: var(--muted); font-size: 11.5px; }
+.pf-li-selectable { cursor: pointer; }
+.pf-li-selectable:hover .pf-li-card { border-color: var(--blue); }
+.pf-li-focus {
+  display: flex; align-items: center; gap: 10px; margin-top: 8px;
+  font-size: 12px; color: var(--ink-soft);
+}

@@ -157,6 +157,13 @@ function OperationCard({ o }: { o: Operation }) {
       {o.description && <div className="pf-li-desc">{o.description}</div>}
       {o.inferred_policy && <PolicyBlock p={o.inferred_policy} />}
 
+      <ApprovalSummary
+        steps={[o.operation]}
+        roles={o.observed_roles}
+        writes={[o.operation]}
+        sessions={o.total_episodes}
+      />
+
       <div className="pf-li-corelbl">observed paths to it</div>
       {o.paths.map((pa, i) => {
         const share = o.total_episodes ? Math.round(pa.episodes / o.total_episodes * 100) : 0;
@@ -234,6 +241,47 @@ function BaselineBanner({ b }: { b: Baseline }) {
   );
 }
 
+/** What saying yes to this candidate would actually permit.
+ *
+ *  A graph orients; it does not help anyone decide. An approver needs one
+ *  bounded thing and a plain statement of the consequence — and that statement
+ *  must be COUNTED, never phrased by a model, because it is the sentence the
+ *  decision rests on. Everything below is read straight off the aggregates.
+ *
+ *  Written as a grant ("would permit X to do Y") rather than a description of
+ *  the traffic, because that is what approval means and the distinction is
+ *  easy to lose: the observed callers become the ALLOWED callers the moment
+ *  someone clicks yes. Stating it that way is what gives a reviewer the chance
+ *  to notice a caller they did not intend to bless.
+ */
+function ApprovalSummary({ steps, roles, writes, fields, sessions }: {
+  steps: string[]; roles: Counted[]; writes?: string[]; fields?: string[]; sessions: number;
+}) {
+  const who = roles.length ? roles.map((r) => r.value).join(", ") : "any caller observed";
+  return (
+    <div className="pf-li-approve">
+      <div className="pf-li-approve-h">If approved, this would permit</div>
+      <ul className="pf-li-approve-l">
+        <li><strong>{who}</strong> to run{" "}
+          {steps.length === 1 ? <code>{steps[0]}</code>
+            : <>this sequence of {steps.length}: {steps.map((t, i) => (
+                <span key={i}><code>{t}</code>{i < steps.length - 1 ? " → " : ""}</span>))}</>}
+        </li>
+        {writes && writes.length > 0 && (
+          <li>…including <strong>{writes.join(", ")}</strong>, which <strong>changes data</strong></li>
+        )}
+        {fields && fields.length > 0 && (
+          <li>returning <span className="pf-li-approve-f">{fields.join(", ")}</span></li>
+        )}
+        <li className="pf-li-approve-w">
+          on the evidence of <strong>{sessions}</strong> observed session{sessions === 1 ? "" : "s"} —
+          approval turns those observed callers into <em>permitted</em> ones
+        </li>
+      </ul>
+    </div>
+  );
+}
+
 const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
 
 function Steps({ steps, tone = "" }: { steps: string[]; tone?: string }) {
@@ -287,6 +335,8 @@ function GroupCard({ g }: { g: Grouped }) {
 
       {g.description && <div className="pf-li-desc">{g.description}</div>}
       {g.inferred_policy && <PolicyBlock p={g.inferred_policy} />}
+
+      <ApprovalSummary steps={g.core_steps} roles={g.observed_roles} sessions={g.sessions} />
 
       <div className="pf-li-grid">
         <div><span className="lbl">who ran it</span><Chips items={g.observed_roles} /></div>
@@ -424,6 +474,8 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [groups, setGroups] = useState<Grouped[]>([]);
   const [cohorts, setCohorts] = useState<CohortRow[]>([]);
   const [ops, setOps] = useState<Operation[]>([]);
+  // The candidate under review; focuses the map and nothing else.
+  const [focus, setFocus] = useState<{ label: string; tools: string[] } | null>(null);
   const [explained, setExplained] = useState<{episodes:number;fraction:number;shapes:number}|null>(null);
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
@@ -570,7 +622,15 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
           single operation — sized by how often. Nothing here is inferred or arranged: an edge
           exists because that hop happened, and its thickness is the count.
         </p>
-        <ProcessMap demo={demo} days={days} active={active} />
+        {focus && (
+          <div className="pf-li-focus">
+            Showing only <code>{focus.label}</code>
+            <button className="pf-dash-link" type="button" onClick={() => setFocus(null)}>
+              show everything ✕
+            </button>
+          </div>
+        )}
+        <ProcessMap demo={demo} days={days} active={active} focus={focus?.tools} />
       </section>
 
       {baseline && baseline.observed_episodes > 0 && (
@@ -597,7 +657,17 @@ How tools are actually called. Sessions are cut into <em>episodes</em> — one o
               the {explained.episodes} episodes observed.</>
             )}
           </p>
-          {ops.map((o) => <OperationCard key={o.operation} o={o} />)}
+          {ops.map((o) => (
+            <div key={o.operation} className="pf-li-selectable"
+                 onClick={() => setFocus({
+                   label: o.intent || o.operation,
+                   // Everything this operation was ever reached through, so
+                   // the map shows the whole neighbourhood being approved.
+                   tools: Array.from(new Set([o.operation, ...o.paths.flatMap((p) => p.before)])),
+                 })}>
+              <OperationCard o={o} />
+            </div>
+          ))}
         </section>
       )}
 
@@ -629,7 +699,15 @@ How tools are actually called. Sessions are cut into <em>episodes</em> — one o
             That split is counted, not inferred. Order is the evidence: a step that consistently
             precedes another is a candidate <em>precondition</em>.
           </p>
-          {groups.map((g) => <GroupCard key={g.core_steps.join(">") + g.intent} g={g} />)}
+          {groups.map((g) => (
+            <div key={g.core_steps.join(">") + g.intent} className="pf-li-selectable"
+                 onClick={() => setFocus({
+                   label: g.intent || g.core_steps.join(" → "),
+                   tools: Array.from(new Set([...g.core_steps, ...g.optional_steps])),
+                 })}>
+              <GroupCard g={g} />
+            </div>
+          ))}
         </section>
       )}
 
