@@ -2641,3 +2641,18 @@ td.pf-tr-share { width: 34px; text-align: right; }
    and an empty row would read as missing data. */
 .pf-li-path { padding: 3px 0; }
 .pf-li-bare { font-size: 11px; color: var(--red); font-style: italic; margin-right: 6px; }
+
+/* Learning-phase banner. Leads the page because it decides what everything
+   below MEANS: while a baseline is forming these are observations, not
+   findings, and styling them as alerts would be the error the phase exists to
+   avoid. */
+.pf-lb { border-left: 3px solid var(--muted); padding: 10px 12px; background: var(--surface-alt); border-radius: var(--radius); }
+.pf-lb.ready { border-left-color: var(--green); }
+.pf-lb-head { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+.pf-lb-buckets { display: flex; gap: 6px; align-items: flex-end; margin-top: 10px; }
+.pf-lb-bucket { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.pf-lb-bar { width: 26px; height: 42px; background: var(--line); border-radius: 3px; display: flex; align-items: flex-end; overflow: hidden; }
+.pf-lb-fill { width: 100%; background: var(--blue); }
+.pf-lb-lbl { font-size: 10px; color: var(--muted); font-family: var(--app-font-mono); }
+.pf-lb-legend { margin-top: 6px; font-size: 11px; color: var(--muted); }
+.pf-lb-new { color: var(--amber); font-family: var(--app-font-mono); }

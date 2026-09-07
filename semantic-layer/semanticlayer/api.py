@@ -888,6 +888,12 @@ class MineIntentsBody(BaseModel):
     # operation was performed side by side: the times evidence was gathered
     # first and the times it was not. The sharpest input for inferring a rule.
     episode_shapes: list[dict] = []
+    # "learning" (default) describes the baseline; "monitoring" reads behaviour
+    # against one that already exists. Different jobs, not different
+    # intensities: judging traffic before a baseline exists manufactures issues
+    # out of its absence. Defaulting to learning because assuming a baseline
+    # that is not there is the more damaging mistake.
+    mode: str = "learning"
     min_sessions: int = 3
     # The LLM names the operation and states the rule the behaviour implies.
     # Off by default: the counted half is useful on its own, is reproducible,
@@ -937,7 +943,7 @@ def mine_intents_endpoint(body: MineIntentsBody):
         groups, group_rejected = [], []
         flows, flow_rejected = mine_workflows(body.workflows, llm=llm, min_sessions=body.min_sessions)
     cohorts, cohort_rejected = mine_cohort_policies(body.cohorts, llm=llm)
-    ops, op_rejected = mine_operation_policies(body.episode_shapes, llm=llm)
+    ops, op_rejected = mine_operation_policies(body.episode_shapes, llm=llm, mode=body.mode)
     return {
         "candidates": [c.model_dump() for c in candidates],
         "workflows": [c.model_dump() for c in flows],
@@ -946,11 +952,15 @@ def mine_intents_endpoint(body: MineIntentsBody):
         "operations": [o.model_dump() for o in ops],
         "rejected": rejected + flow_rejected + group_rejected + cohort_rejected + op_rejected,
         "policy_inferred": bool(llm),
+        "mode": body.mode,
         # Said in the payload, not just the docs: a learned catalog cites
         # OBSERVED PRACTICE, never a clause, and cannot express prohibition —
         # absence of evidence is not evidence of prohibition. It complements a
         # policy document; it does not replace one.
-        "caveat": ("Mined from observed behaviour. Frequency is not legitimacy: "
+        "caveat": (("Baseline learning: this describes what normal looks like here, and "
+                    "nothing in it is a finding — there is no approved policy to judge "
+                    "against yet. " if body.mode != "monitoring" else "")
+                   + "Mined from observed behaviour. Frequency is not legitimacy: "
                    "observed callers are not permitted callers, and contested "
                    "candidates carry integrity violations on their supporting "
                    "sessions. Review and narrow before approving."),

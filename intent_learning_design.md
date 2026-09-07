@@ -73,8 +73,36 @@ Three structural defences, in order of importance:
    field list, and the sensitive-looking columns it would bless. The reviewer
    approves a *narrowing*, not a rubber stamp.
 
-A fourth, weaker defence: a baseline period during which mining is descriptive
-only, so a reviewer sees the catalog stabilize before anything is published.
+A fourth defence, and it turned out not to be the weak one: **a baseline period
+during which mining is descriptive only.** Built as `behavior/baseline.py` and
+the `learning` / `monitoring` split in `intent_mining.py`.
+
+Learning is not a shorter monitoring phase. Monitoring compares behaviour
+against a known-good shape; learning is how that shape is obtained, and until
+it exists there is nothing to compare against. "This operation is frequently
+performed with no preconditions" is a FINDING only if you already know it ought
+to have some — on day one it is simply the shape of the operation. A miner that
+editorialises from the first minute manufactures issues out of the absence of a
+baseline, and a reviewer shown those learns to distrust the surface before it
+has told them anything true.
+
+So during learning the job is only to answer **how are tools being called, in
+what pattern** — which is counting, needs no model, and is reproducible. The
+same counted facts are framed differently by mode:
+
+| | learning | monitoring |
+|---|---|---|
+| warning | "81% of the time this operation was performed with nothing preceding it" | …"either no precondition is required, or one is being bypassed routinely" |
+| inferred | "appears to require no preconditions in the majority of cases" | "appears to require certain preconditions … but is frequently performed without any" |
+
+`learning_progress()` answers the one question the phase CAN answer by
+counting: do we know what normal looks like yet? Two measures, neither a
+judgement — how many patterns appeared for the first time in the most recent
+period, and what share of that period was already explained by patterns learned
+from EARLIER periods. Prior-coverage rather than whole-window coverage, because
+the latter is circular: the shapes were derived from that traffic. On the
+bundled corpus it correctly refuses to declare readiness — 78% prior coverage,
+30% novelty, both short of the (conventional, movable) thresholds.
 
 ## 3. What can actually be learned, field by field
 

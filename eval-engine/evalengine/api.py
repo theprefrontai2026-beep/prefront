@@ -275,6 +275,29 @@ async def behavior_intents(since: int = 7 * 86400, app: str = AppQ,
         for g in gs]}
 
 
+@app.get("/eval/behavior/baseline")
+async def behavior_baseline(since: int = 7 * 86400, app: str = AppQ):
+    """Has this deployment been watched long enough to have a baseline?
+
+    The learning phase is not a shorter monitoring phase. Monitoring compares
+    behaviour against a known-good shape; learning is how that shape is
+    obtained, and until it exists there is nothing to compare against. Calling
+    an operation "frequently performed without preconditions" is a finding only
+    if you already know it ought to have some — which is exactly what has not
+    been established yet.
+
+    So this answers "do we know what normal looks like", not "is anything
+    wrong", and answers it by counting: how much of the most RECENT traffic was
+    already explained by patterns learned from EARLIER traffic, and whether new
+    shapes are still arriving. Prior-coverage rather than whole-window coverage
+    because the latter is circular — the shapes came from that traffic."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "status": "unknown"}
+    return {"configured": True,
+            **(await asyncio.to_thread(behavior.learning_progress, since, app))}
+
+
 @app.get("/eval/behavior/episodes")
 async def behavior_episodes(since: int = 7 * 86400, app: str = AppQ, min_episodes: int = 3):
     """Sessions cut into EPISODES — one operation on one subject — and the

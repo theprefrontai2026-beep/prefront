@@ -351,13 +351,40 @@ def test_paths_to_one_operation_are_gathered_together():
     assert o.bare_share == round(196 / 226, 3)
 
 
-def test_a_mostly_bare_operation_is_warned_about():
-    """Either no precondition is required or one is routinely bypassed, and
-    the traces cannot tell you which — so the warning says exactly that rather
-    than picking."""
-    from semanticlayer.intent_mining import operations_from_shapes
-    o = operations_from_shapes([shape(["act"], "act", 90), shape(["gather", "act"], "act", 10)])[0]
-    assert any("NOTHING" in w and "bypassed" in w for w in o.warnings)
+def test_learning_states_the_fact_monitoring_states_the_concern():
+    """The same counted fact, framed by what is known. While a baseline is
+    still forming, "performed with nothing preceding it" is a description of
+    how the operation is used here. Once a baseline exists, the same number
+    raises the question of a bypass. Judging before there is anything to judge
+    against manufactures issues out of the absence of a baseline."""
+    from semanticlayer.intent_mining import LEARNING, MONITORING, operations_from_shapes
+    shapes = [shape(["act"], "act", 90), shape(["gather", "act"], "act", 10)]
+
+    learn = operations_from_shapes(shapes, LEARNING)[0]
+    assert any("nothing preceding it" in w for w in learn.warnings)
+    assert not any("bypassed" in w for w in learn.warnings)
+
+    watch = operations_from_shapes(shapes, MONITORING)[0]
+    assert any("bypassed" in w for w in watch.warnings)
+
+
+def test_learning_is_the_default_mode():
+    """Assuming a baseline that does not exist is the more damaging mistake."""
+    from semanticlayer.intent_mining import LEARNING, mode_preamble, operations_from_shapes
+    o = operations_from_shapes([shape(["act"], "act", 90)])[0]
+    assert not any("bypassed" in w for w in o.warnings)
+    assert mode_preamble("anything-unrecognised") == mode_preamble(LEARNING)
+
+
+def test_the_learning_preamble_forbids_judgement_language():
+    """The model is told plainly, because it will otherwise reach for the
+    vocabulary of audit — that is what its training rewards."""
+    from semanticlayer.intent_mining import LEARNING, MONITORING, mode_preamble
+    learn = mode_preamble(LEARNING)
+    for word in ("bypass", "gap", "violation", "risk", "control failure"):
+        assert word in learn, f"the preamble should name {word!r} as forbidden"
+    assert "not judge" in learn
+    assert mode_preamble(MONITORING) != learn
 
 
 def test_a_fully_guarded_operation_raises_no_bare_warning():

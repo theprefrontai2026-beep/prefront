@@ -48,6 +48,47 @@ DEFAULT_MINING_MODEL = "gpt-4o-mini"
 MIN_SESSIONS = 3
 MIN_ROLE_SHARE = 0.05   # a caller under this share of sessions is flagged rare
 
+# ── Learning vs monitoring ────────────────────────────────────────────────
+# These are different jobs, not different intensities of one job. MONITORING
+# compares behaviour against a known-good shape. LEARNING is how that shape is
+# obtained, and until it exists there is nothing to compare against — so during
+# learning the model must describe, never judge.
+#
+# The distinction is not cosmetic. "This operation is frequently performed with
+# no preconditions" is a FINDING only if you already know it ought to have
+# some; on day one it is simply the shape of the operation. A miner that
+# editorialises from the first minute manufactures issues out of the absence of
+# a baseline, and a reviewer shown those learns to distrust the whole surface
+# before it has told them anything true.
+LEARNING = "learning"
+MONITORING = "monitoring"
+
+_LEARNING_PREAMBLE = """
+YOU ARE ESTABLISHING A BASELINE, NOT AUDITING ONE.
+
+This deployment is being observed to learn what its normal behaviour looks \
+like. No approved policy exists yet, so there is nothing to judge against and \
+you must not judge. Describe the shape of what you see.
+
+Specifically: do NOT call anything a bypass, a gap, a violation, a risk, a \
+control failure or a concern, and do not recommend anything be tightened. If \
+an operation happens without preconditions, that is a description of how it is \
+performed here, not a fault. State the pattern; a human decides later whether \
+it is the pattern they want.
+"""
+
+_MONITORING_PREAMBLE = """
+A BASELINE ALREADY EXISTS. You are reading behaviour against it, so departures \
+from the established shape are worth naming as such.
+"""
+
+
+def mode_preamble(mode: str) -> str:
+    """The framing that turns the same counted facts into a description or a
+    judgement. Defaults to learning: assuming a baseline that does not exist is
+    the more damaging mistake of the two."""
+    return _MONITORING_PREAMBLE if mode == MONITORING else _LEARNING_PREAMBLE
+
 
 class InferredPolicy(BaseModel):
     """What the model thinks the observed behaviour implies, and why."""
@@ -794,7 +835,7 @@ Return STRICT JSON only:
             "confidence": "high|medium|low", "caveats": ["..."]}}"""
 
 
-def operations_from_shapes(shapes: list[dict]) -> list[OperationPolicy]:
+def operations_from_shapes(shapes: list[dict], mode: str = LEARNING) -> list[OperationPolicy]:
     """Group episode shapes by their closing action.
 
     Only shapes that CLOSE on a side effect: a read leaves nothing behind for a
@@ -830,9 +871,11 @@ def operations_from_shapes(shapes: list[dict]) -> list[OperationPolicy]:
         bare_share = (v["bare"] / total) if total else 0.0
         if bare_share > 0.5:
             warnings.append(
-                f"{int(bare_share * 100)}% of the time this operation was performed with NOTHING "
-                f"preceding it — either no precondition is required, or one is being bypassed "
-                f"routinely, and the traces alone cannot tell you which")
+                f"{int(bare_share * 100)}% of the time this operation was performed with nothing "
+                f"preceding it"
+                + ("" if mode == LEARNING else
+                   " — either no precondition is required, or one is being bypassed routinely, "
+                   "and the traces alone cannot tell you which"))
         if len(paths) > 1 and paths[0]["episodes"] < 0.5 * total:
             warnings.append("no dominant path: the operation is reached many different ways, "
                             "which is weak ground for calling any of them required")
@@ -863,8 +906,9 @@ def render_operation_prompt(o: OperationPolicy) -> str:
     return "\n".join(lines)
 
 
-def infer_operation_policy(o: OperationPolicy, llm: LLMClient) -> tuple[OperationPolicy, Optional[str]]:
-    raw = llm.complete(OPERATION_SYSTEM, render_operation_prompt(o))
+def infer_operation_policy(o: OperationPolicy, llm: LLMClient,
+                           mode: str = LEARNING) -> tuple[OperationPolicy, Optional[str]]:
+    raw = llm.complete(mode_preamble(mode) + OPERATION_SYSTEM, render_operation_prompt(o))
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -884,13 +928,14 @@ def infer_operation_policy(o: OperationPolicy, llm: LLMClient) -> tuple[Operatio
 
 
 def mine_operation_policies(shapes: list[dict], llm: Optional[LLMClient] = None,
-                            limit: int = 10) -> tuple[list[OperationPolicy], list[str]]:
-    ops = operations_from_shapes(shapes)
+                            limit: int = 10, mode: str = LEARNING,
+                            ) -> tuple[list[OperationPolicy], list[str]]:
+    ops = operations_from_shapes(shapes, mode)
     out: list[OperationPolicy] = []
     rejected: list[str] = []
     for o in ops[:limit]:
         if llm is not None:
-            o, err = infer_operation_policy(o, llm)
+            o, err = infer_operation_policy(o, llm, mode)
             if err:
                 rejected.append(err)
         out.append(o)

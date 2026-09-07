@@ -189,6 +189,50 @@ function OperationCard({ o }: { o: Operation }) {
   );
 }
 
+type Baseline = {
+  observed_episodes: number; distinct_shapes: number; ready: boolean; status: string;
+  recent_coverage: number; recent_novelty: number; recommendation: string;
+  buckets: { label: string; episodes: number; new_shapes: number; explained_by_prior: number }[];
+};
+
+/** Where the deployment is in the learning phase.
+ *
+ *  Leads the page because it determines what everything below MEANS. While a
+ *  baseline is still forming, the patterns are an observation of how tools are
+ *  being called; they are not findings, and nothing here is wrong. Presenting
+ *  them as issues before there is anything to compare against manufactures
+ *  problems out of the absence of a baseline. */
+function BaselineBanner({ b }: { b: Baseline }) {
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+  return (
+    <div className={`pf-lb ${b.ready ? "ready" : ""}`}>
+      <div className="pf-lb-head">
+        <span className={`pf-dash-chip ${b.ready ? "green" : "slate"}`}>
+          {b.ready ? "baseline settled" : "still learning"}
+        </span>
+        <strong>{b.observed_episodes} operations observed · {b.distinct_shapes} distinct patterns</strong>
+      </div>
+      <p className="pf-hint" style={{ margin: "6px 0 0" }}>{b.recommendation}</p>
+      {/* Prior-coverage, not whole-window coverage: the patterns learned up to
+          each period are scored on traffic they had never seen. Measuring over
+          the whole window would be circular — the patterns came from it. */}
+      <div className="pf-lb-buckets">
+        {b.buckets.map((x) => (
+          <div key={x.label} className="pf-lb-bucket"
+               title={`${x.episodes} operations · ${x.new_shapes} patterns seen for the first time · ${pct(x.explained_by_prior)} already known`}>
+            <div className="pf-lb-bar"><div className="pf-lb-fill" style={{ height: `${Math.round(x.explained_by_prior * 100)}%` }} /></div>
+            <span className="pf-lb-lbl">{x.new_shapes > 0 ? `+${x.new_shapes}` : "—"}</span>
+          </div>
+        ))}
+      </div>
+      <div className="pf-lb-legend">
+        bar = share of each period already explained by patterns learned before it;
+        <span className="pf-lb-new"> +n</span> = patterns seen for the first time
+      </div>
+    </div>
+  );
+}
+
 const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
 
 function Steps({ steps, tone = "" }: { steps: string[]; tone?: string }) {
@@ -380,6 +424,7 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [cohorts, setCohorts] = useState<CohortRow[]>([]);
   const [ops, setOps] = useState<Operation[]>([]);
   const [explained, setExplained] = useState<{episodes:number;fraction:number;shapes:number}|null>(null);
+  const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "mining" | "error">("idle");
   const [error, setError] = useState("");
@@ -394,11 +439,12 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const q = `since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_sessions=${minSessions}`;
       // Grouped runs are preferred: N shapes of one operation become one
       // candidate and one model call, rather than N near-identical policies.
-      const [pr, gr, cr, er] = await Promise.all([
+      const [pr, gr, cr, er, br] = await Promise.all([
         fetch(`/eval/behavior/tools?${q}`),
         fetch(`/eval/behavior/intents?${q}`),
         fetch(`/eval/behavior/cohorts?${q}`),
         fetch(`/eval/behavior/episodes?since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_episodes=${minSessions}`),
+        fetch(`/eval/behavior/baseline?since=${days * 86400}&app=${encodeURIComponent(demo.id)}`),
       ]);
       const pj = await pr.json();
       if (!pr.ok) throw new Error(pj?.error || `${pr.status} reading behaviour`);
@@ -408,6 +454,7 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const ej = er.ok ? await er.json() : {};
       const shapes = ej.shapes || [];
       setExplained(ej.explained || null);
+      setBaseline(br.ok ? await br.json() : null);
       if (!profiles.length) {
         setCands([]); setGroups([]); setCohorts([]); setOps([]); setExplained(null);
         setRejected([]); setStatus("idle");
@@ -450,11 +497,15 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
           traces and proposes candidates.
         </p>
         <p className="pf-hint">
-          <strong>Frequency is not legitimacy.</strong> Mining learns what the agent <em>did</em>,
-          never what it was allowed to do. Observed callers are not permitted callers, and an
-          agent that has been leaking for months makes leaking look normal — so every candidate
-          carries the integrity violations found on the sessions that support it. You are
-          approving a <em>narrowing</em>, not a rubber stamp. Nothing here is published.
+          <strong>This is observation, not assessment.</strong> While a baseline is forming, the
+          job is to learn how tools are actually called and in what patterns — nothing below is a
+          finding, and nothing here is wrong. Judging traffic before there is an approved shape to
+          compare against manufactures problems out of the absence of one.
+          <br /><br />
+          When you do come to approve: <strong>frequency is not legitimacy.</strong> Observed
+          callers are not permitted callers, and an agent that has been leaking for months makes
+          leaking look normal — so every pattern carries the integrity violations found on the
+          sessions supporting it. You approve a <em>narrowing</em>. Nothing here is published.
         </p>
 
         <div className="pf-fields">
@@ -469,14 +520,15 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
           </label>
           <label className="pf-li-toggle">
             <input type="checkbox" checked={withLlm} onChange={(e) => setWithLlm(e.target.checked)} />
-            Infer the policy behind each pattern (one LLM call per tool)
+            Also ask a model what rule each pattern implies (optional, one call per pattern)
           </label>
         </div>
         {!withLlm && (
           <p className="pf-hint">
-            Off by default: the counted half needs no model, is reproducible, and costs nothing.
-            Turn it on and each candidate also gets a name and a plain-language reading of the
-            rule its behaviour implies — advisory, and separated from the counted facts on every card.
+            Off by default, and secondary by design: learning the patterns is counting, and
+            counting is reproducible, auditable and free. Naming them and reading a rule out of
+            them is a later step — useful when you come to approve, not part of establishing what
+            normal looks like.
           </p>
         )}
         {error && <p className="pf-error">{error}</p>}
@@ -500,13 +552,19 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
         </section>
       )}
 
+      {baseline && baseline.observed_episodes > 0 && (
+        <section className="pf-panel" style={{ marginTop: 14 }}>
+          <BaselineBanner b={baseline} />
+        </section>
+      )}
+
       {ops.length > 0 && (
         <section className="pf-panel" style={{ marginTop: 14 }}>
           <div className="pf-dash-panel-head">
-            <h2>Operations — what must happen before an act that changes something</h2>
+            <h2>Call patterns — how each action is reached</h2>
           </div>
           <p className="pf-hint" style={{ marginTop: 0 }}>
-            Sessions are cut into <em>episodes</em> — one operation on one subject, bounded by the
+How tools are actually called. Sessions are cut into <em>episodes</em> — one operation on one subject, bounded by the
             subject changing or by a side effect — and grouped by the act that closed them. Each
             row is therefore every observed way of reaching one write, side by side. That
             comparison is the evidence: a step present in most paths is a candidate
