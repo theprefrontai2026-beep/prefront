@@ -2529,3 +2529,78 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-ptrace-checks summary {
   font-size: 11px; color: #64748b; cursor: pointer; padding: 2px 0;
 }
+
+/* ── Learned intents (components/LearnedIntents.tsx) ──────────────────────
+   A review surface for mined candidates. The visual job is to make a reviewer
+   suspicious in the right places: a contested candidate is marked before
+   anything else is read, the inferred (LLM) half is boxed away from the
+   counted facts, and a rare caller is tinted rather than listed flat. */
+.pf-li-card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; margin-top: 12px; background: var(--surface);
+}
+/* Not decoration: this is the difference between observed practice and
+   observed misbehaviour, and it has to survive a quick scan of the page. */
+.pf-li-card.contested { border-left: 3px solid var(--red); background: #fffbfb; }
+
+.pf-li-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pf-li-name { font-size: 14px; font-weight: 700; color: var(--ink); }
+.pf-li-tool { font-size: 11px; color: var(--muted); font-family: var(--app-font-mono); }
+.pf-li-support { font-size: 11px; color: var(--muted); }
+.pf-li-spacer { flex: 1; }
+.pf-li-desc { margin-top: 6px; font-size: 13px; color: var(--ink-soft); }
+
+/* The inferred half, visibly separated from everything counted. */
+.pf-li-policy {
+  margin-top: 10px; padding: 10px 12px; border-radius: var(--radius);
+  background: var(--surface-alt); border-left: 3px solid var(--line);
+}
+.pf-li-policy.green { border-left-color: var(--green); }
+.pf-li-policy.amber { border-left-color: var(--amber); }
+.pf-li-policy.slate { border-left-color: var(--muted); }
+.pf-li-policy-head {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  font-weight: 700; color: var(--muted);
+}
+.pf-li-conf { color: var(--ink-soft); }
+.pf-li-src { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
+.pf-li-stmt { margin-top: 5px; font-size: 13px; color: var(--ink); font-weight: 500; }
+.pf-li-why { margin-top: 4px; font-size: 12px; color: var(--ink-soft); }
+.pf-li-why .lbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-right: 6px;
+}
+.pf-li-caveat { margin-top: 4px; font-size: 12px; color: var(--amber); }
+
+.pf-li-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px; margin-top: 10px;
+}
+.pf-li-grid .lbl {
+  display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-bottom: 4px;
+}
+.pf-li-chip {
+  display: inline-block; font-size: 11px; font-family: var(--app-font-mono);
+  background: var(--surface-alt); border: 1px solid var(--line);
+  border-radius: 999px; padding: 1px 7px; margin: 0 4px 4px 0;
+}
+/* A caller under the support floor. Tinted, never hidden: hiding it would
+   hide the leak rather than the noise. */
+.pf-li-chip.rare { border-color: var(--amber); color: var(--amber); }
+.pf-li-n {
+  margin-left: 5px; padding-left: 5px; border-left: 1px solid var(--line);
+  color: var(--muted);
+}
+.pf-li-facts {
+  display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px;
+  font-size: 11px; color: var(--muted);
+}
+.pf-li-warn { margin-top: 8px; }
+.pf-li-warn summary { font-size: 12px; color: var(--amber); cursor: pointer; }
+.pf-li-warn-row { font-size: 12px; color: var(--ink-soft); padding: 3px 0 0 14px; }
+.pf-li-evidence { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+.pf-li-evidence code { font-size: 11px; color: var(--muted); }
+.pf-li-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.pf-li-toggle input { width: auto; }

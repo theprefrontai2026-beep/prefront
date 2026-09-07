@@ -7,7 +7,12 @@
 > |---|---|---|
 > | L1 | behavioural aggregates, no LLM | `eval-engine/evalengine/behavior/`, `GET /eval/behavior/{tools,sequences,invariants,labels}` |
 > | L2 | candidate synthesis + inferred policy | `semantic-layer/semanticlayer/intent_mining.py`, `POST /design/semantic/intents/mine` |
-> | L3-L5 | review UI, impact preview, drift watch | not built |
+> | L3 | review surface (read-only) | `prefront-app`'s **Learned Intents** tab, `/learned` |
+> | L4-L5 | impact preview, drift watch | not built |
+>
+> L3 is PARTIAL on purpose: candidates are shown with their evidence, but
+> approve/publish is not wired, and the page says so rather than offering a
+> control that does nothing.
 >
 > §6's holdout experiment has been RUN; its results are in §6.1 below.
 

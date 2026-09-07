@@ -17,6 +17,7 @@ export const TAB_PATH: Record<string, string> = {
   policy:     "/policy",
   bizgraph:   "/business-graph",
   graph:      "/data-graph",
+  learned:    "/learned",
   runtime:    "/runtime",
   traces:     "/traces",
   flows:      "/flows",

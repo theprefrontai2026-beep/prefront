@@ -120,14 +120,14 @@ def structural_candidate(profile: dict) -> CandidateIntent:
         warnings.append(f"thin evidence: {sessions} session(s) — below the {MIN_SESSIONS} floor")
     if len(ses) > 1:
         warnings.append("side effect is not consistent across calls: "
-                        + ", ".join(f"{s['value']}x{s['calls']}" for s in ses))
+                        + ", ".join(f"{s['value']} ({s['calls']} calls)" for s in ses))
     for r in roles:
         if r["share"] < MIN_ROLE_SHARE:
             warnings.append(f"rare caller {r['value']!r} ({r['sessions']} of {sessions} sessions) — "
                             f"an outlier to narrow, not a role to bless")
     if profile.get("contested"):
         warnings.append("supporting sessions carry Family 2 integrity violations: "
-                        + ", ".join(f"{c['check_id']}x{c['sessions']}" for c in profile["contested"]))
+                        + ", ".join(f"{c['check_id']} ({c['sessions']} sessions)" for c in profile["contested"]))
     if int(profile.get("error_calls") or 0):
         warnings.append(f"{profile['error_calls']} call(s) errored — the observed field list may be partial")
 

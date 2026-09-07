@@ -13,7 +13,7 @@ Package/workspace shape (pnpm workspace, the `verdict` second app, the shared
 
 ## Tab architecture (`artifacts/prefront-app/src/`)
 
-`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Business Graph → Data Graph → Semantic Layer → Runtime → Decision Traces → Intent Flows → Observability → Compliance**. **Runtime is always in the nav, but its BODY is conditional** on `demo.runtimeDiff` — whether the demo's orchestrator serves the two-sided `{ungoverned, governed}` diff (SecureBank does; LoanPro's `/api/diff` is an alias of `/api/run` and returns a session). It was first shipped filtered OUT of the nav for a demo that lacks it, which was wrong and reported immediately: the app opens on LoanPro, so the tab was simply absent — nothing to click, nothing to discover, and no way to tell a missing feature from a broken build. The body says "Not available for <demo>", explains that this demo's before/after is a whole governed session (Verdict's job), and offers a switch. Hide the CONTENT of a capability a demo lacks, never its entry point. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Learned Intents → Business Graph → Data Graph → Semantic Layer → Runtime → Decision Traces → Intent Flows → Observability → Compliance**. **Runtime is always in the nav, but its BODY is conditional** on `demo.runtimeDiff` — whether the demo's orchestrator serves the two-sided `{ungoverned, governed}` diff (SecureBank does; LoanPro's `/api/diff` is an alias of `/api/run` and returns a session). It was first shipped filtered OUT of the nav for a demo that lacks it, which was wrong and reported immediately: the app opens on LoanPro, so the tab was simply absent — nothing to click, nothing to discover, and no way to tell a missing feature from a broken build. The body says "Not available for <demo>", explains that this demo's before/after is a whole governed session (Verdict's job), and offers a switch. Hide the CONTENT of a capability a demo lacks, never its entry point. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
 
 ## Routing & shareable links (`lib/router.ts`, `routes.ts`, `components/CopyLink.tsx`)
@@ -379,6 +379,35 @@ observability" section. What follows is the UI over it.
   it), so `spans` repopulates on the next poll — that's a re-pull, not
   retention, and is what the confirm dialog now says explicitly.
 
+
+## Learned Intents tab (`components/LearnedIntents.tsx`, route `/learned`)
+
+The review surface for mined intents (`intent_learning_design.md` L3) — the
+onboarding path for a deployment with no policy document. Reads eval-engine's
+behavioural aggregates (`/eval/behavior/tools`) and posts them to
+semantic-layer (`/design/semantic/intents/mine`), which is the same split the
+services have: aggregates cross the boundary, raw spans never do.
+
+- **Its own tab, not a Policy Studio sub-view.** Those live under a SELECTED
+  DOCUMENT (`/policy/<id>?tab=`), and this path exists for deployments that
+  have no document to select — nesting it would have required picking a policy
+  document to reach the feature for people who have none.
+- **The page's job is to make a reviewer suspicious in the right places.**
+  Mining learns what an agent DID, never what it was allowed to do, so:
+  a contested candidate (Family 2 violations on its supporting sessions) is
+  marked before anything else is read and tinted red; a caller below the
+  support floor renders as a `rare` chip rather than a flat list entry; every
+  observed value carries its session count, because "which roles called this"
+  is not the question and "which roles, how often, is the tail an accident" is.
+- **The inferred half is boxed away from the counted half**, labelled with the
+  model's confidence and "from observed behaviour — not a policy document".
+  Structure is counted and reproducible; the policy sentence is advisory.
+- **There is no Approve button, deliberately.** The publish path is not built,
+  and a control that looks like it approves something while doing nothing is
+  worse than its absence. The page says review-only, and says a learned catalog
+  cannot express prohibition.
+- The LLM pass is **off by default** — the counted half needs no model, is
+  reproducible and costs nothing; one call per tool should be asked for.
 
 ## Runtime tab (`components/RuntimeDiff.tsx` + `DecisionTrace.tsx`, route `/runtime`)
 

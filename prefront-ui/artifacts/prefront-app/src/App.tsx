@@ -4,6 +4,7 @@ import { DEMOS } from "./demos";
 import DecisionTraces from "./components/DecisionTraces";
 import RuntimeDiff from "./components/RuntimeDiff";
 import ScenarioRunner from "./components/ScenarioRunner";
+import LearnedIntents from "./components/LearnedIntents";
 import IntentFlows from "./components/IntentFlows";
 import PolicyStudio from "./components/PolicyStudio";
 import DataConnector from "./components/DataConnector";
@@ -47,6 +48,11 @@ const TABS = [
   { id: "dashboard",label: "Overview",        sub: "Governance at a glance",   icon: IconHome },
   { id: "data",     label: "Data Connector",  sub: "Connect datasource",       icon: IconDatabase },
   { id: "policy",   label: "Policy Studio",   sub: "Review & approve rules",   icon: IconShield },
+  // Its own tab, not a Policy Studio sub-view: those live under a SELECTED
+  // DOCUMENT (/policy/<id>?tab=), and this whole path exists for deployments
+  // that have no document to select. Nesting it would have required picking a
+  // policy document to reach the feature for people who have none.
+  { id: "learned",  label: "Learned Intents", sub: "Mined from behaviour",     icon: IconLearn },
   { id: "bizgraph", label: "Business Graph",  sub: "Domain model & roles",     icon: IconBusiness },
   { id: "graph",    label: "Data Graph",      sub: "Schema & policy map",      icon: IconGraph },
   // Semantic Layer hidden for now — its tab body stays mounted below (never
@@ -75,6 +81,15 @@ function IconCheckShield() {
     </svg>
   );
 }
+function IconLearn() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 17c3 0 3-8 6-8s3 8 6 8 3-5 6-5"/>
+      <circle cx="9" cy="9" r="1.4"/>
+    </svg>
+  );
+}
+
 function IconSplit() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -180,6 +195,7 @@ function IconSettings() {
 
 const PAGE_META: Record<string, { title: string; desc: string }> = {
   dashboard:{ title: "Overview",          desc: "Moving agents from demo to production — every action follows business rules, uses approved context, and produces decision evidence." },
+  learned:  { title: "Learned Intents",   desc: "For a deployment with no policy document: what the traces imply. Tool calls are grouped by operation, profiled by counting, and — optionally — read by a model that states the rule the behaviour appears to follow. Candidates to review, never a published policy." },
   runtime:  { title: "Runtime",           desc: "The same request answered twice — a realistic app-layer agent with typed business functions and no authorization policy, versus the identical request through the Prefront runtime with identity injected and policy enforced. The verdict, the rows and the model's own answer, side by side." },
   traces:   { title: "Decision Traces",  desc: "The full governance decision log — filter every recorded decision by outcome, caller, role, intent, or policy." },
   flows:    { title: "Intent Flows",     desc: "Profile which intents each user invokes, in what order, within a session." },
@@ -417,6 +433,9 @@ export default function App() {
                       onOpenDecisions={() => navTo(decisionsHref())}
                       onOpenObservability={() => navTo(TAB_PATH.oob)}
                       onOpenSettings={() => navTo(TAB_PATH.settings)} />
+          </div>
+          <div className={tab === "learned" ? "" : "tab-hidden"}>
+            <LearnedIntents demo={demo} active={tab === "learned"} />
           </div>
           <div className={tab === "runtime" ? "" : "tab-hidden"}>
             {/* One tab, one question — "what does this application do at

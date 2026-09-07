@@ -890,11 +890,19 @@ def mine_intents_endpoint(body: MineIntentsBody):
     existing build_intent_catalog path, so Family 3 consumes a learned catalog
     identically to an authored one."""
     from .intent_mining import DEFAULT_MINING_MODEL, mine_intents
+    from .llm import LLMClient
 
     llm = None
     if body.infer_policy:
         try:
-            llm = LLMClient(model=body.model or DEFAULT_MINING_MODEL)
+            # Provider pinned to the one that serves the default model rather
+            # than inherited from SKILLBUILDER_PROVIDER: this deployment points
+            # that at a different vendor, and a gpt-* model name sent there
+            # fails at request time, per tool, as an opaque 400. An explicit
+            # `model` from the caller still picks its own provider up from the
+            # environment.
+            llm = (LLMClient(model=body.model) if body.model
+                   else LLMClient(provider="openai", model=DEFAULT_MINING_MODEL))
         except Exception as e:  # noqa: BLE001 - unconfigured provider is a 400, not a 500
             raise HTTPException(400, f"LLM unavailable for policy inference: {e}")
     candidates, rejected = mine_intents(body.profiles, llm=llm, min_sessions=body.min_sessions)
