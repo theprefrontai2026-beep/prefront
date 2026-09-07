@@ -441,6 +441,33 @@ node and silently no edges at all — a process map with no process in it, and n
 error anywhere. Cost an hour here; `DataGraph`'s nodes carry them for the same
 reason.
 
+### Separated workflows vs the merged map
+
+Two views over the same episodes, and **separated is the default** because it
+is the one used every time; the map is for orienting yourself once.
+
+`WorkflowStrips.tsx` draws one strip per workflow, ordered by volume: count,
+a "changes data" badge, the subject identifier, the step chain, and the role
+split as proportions. On a single graph every workflow is drawn over every
+other one, so judging any one of them means tracing it out of the tangle
+first — and a Sankey would make that worse rather than better, since merging
+is exactly the problem. Separated, comparison is scanning.
+
+Three details that carry meaning rather than decoration:
+
+- **Band thickness is volume**, floored at 6px — a hairline reads as "broken"
+  rather than "rare", and a reviewer still has to be able to see it.
+- **The role split is proportions, not a list.** A workflow one role runs
+  almost exclusively is a different thing to approve than one three roles
+  share, and a comma-separated set hides that completely.
+- **The tail is declared** ("20 rarer workflows not shown"). Fourteen of
+  forty-nine rows with no note reads as a complete inventory.
+
+Clicking a strip switches to the map with that workflow focused, so the two
+views compose: decide on the strip, check the neighbourhood on the map. Pure
+SVG/CSS, no new dependency — these are fixed left-to-right sequences with no
+layout problem to solve.
+
 ### Reviewing a candidate, as distinct from reading the map
 
 A graph orients; it does not help anyone decide. Approving is a different act

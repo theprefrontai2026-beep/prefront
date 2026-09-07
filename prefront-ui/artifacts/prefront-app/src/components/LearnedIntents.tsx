@@ -20,6 +20,7 @@
 import { useCallback, useState } from "react";
 import type { DemoConfig } from "../demos";
 import ProcessMap from "./ProcessMap";
+import WorkflowStrips, { type Shape } from "./WorkflowStrips";
 
 type Counted = { value: string; sessions: number; calls: number; share?: number };
 type Contested = { check_id: string; sessions: number; findings: number };
@@ -476,6 +477,10 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [ops, setOps] = useState<Operation[]>([]);
   // The candidate under review; focuses the map and nothing else.
   const [focus, setFocus] = useState<{ label: string; tools: string[] } | null>(null);
+  const [shapes, setShapes] = useState<Shape[]>([]);
+  // Separated workflows is the default view. The merged map is for orienting
+  // yourself once; separating them is what you do every time you review.
+  const [view, setView] = useState<"strips" | "map">("strips");
   const [explained, setExplained] = useState<{episodes:number;fraction:number;shapes:number}|null>(null);
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
@@ -506,6 +511,7 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const cos = cr.ok ? ((await cr.json()).cohorts || []) : [];
       const ej = er.ok ? await er.json() : {};
       const shapes = ej.shapes || [];
+      setShapes(shapes);
       setExplained(ej.explained || null);
       const bj = br.ok ? await br.json() : null;
       setBaseline(bj);
@@ -616,11 +622,19 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
           the lists answer "is this particular pattern acceptable", which is a
           later question and a narrower one. */}
       <section className="pf-panel" style={{ marginTop: 14 }}>
-        <div className="pf-dash-panel-head"><h2>Observed process map</h2></div>
+        <div className="pf-dash-panel-head">
+          <h2>{view === "strips" ? "Observed workflows" : "Observed process map"}</h2>
+          <div className="pf-oob-views">
+            <button className={`pf-oob-view ${view === "strips" ? "active" : ""}`} type="button"
+                    onClick={() => setView("strips")}>Separated</button>
+            <button className={`pf-oob-view ${view === "map" ? "active" : ""}`} type="button"
+                    onClick={() => setView("map")}>Merged map</button>
+          </div>
+        </div>
         <p className="pf-hint" style={{ marginTop: 0 }}>
-          Every tool that was called, and every transition between them that was observed inside a
-          single operation — sized by how often. Nothing here is inferred or arranged: an edge
-          exists because that hop happened, and its thickness is the count.
+          {view === "strips"
+            ? "One workflow per row, ordered by how often it happens, band thickness by volume. Separated rather than merged: on a single graph every workflow is drawn over every other one, so judging any one of them means tracing it out of the tangle first. Click one to see where it sits on the map."
+            : "Every tool called, and every transition observed inside a single operation — sized by how often. Good for orienting yourself; poor for deciding about any one workflow, which is what the separated view is for."}
         </p>
         {focus && (
           <div className="pf-li-focus">
@@ -630,7 +644,16 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             </button>
           </div>
         )}
-        <ProcessMap demo={demo} days={days} active={active} focus={focus?.tools} />
+        {view === "strips"
+          ? <WorkflowStrips shapes={shapes}
+                            picked={focus ? focus.label : undefined}
+                            onPick={(sh) => {
+                              if (!sh) { setFocus(null); return; }
+                              setView("map");
+                              setFocus({ label: sh.steps.join(">") + "|" + sh.closed_by,
+                                         tools: Array.from(new Set(sh.steps)) });
+                            }} />
+          : <ProcessMap demo={demo} days={days} active={active} focus={focus?.tools} />}
       </section>
 
       {baseline && baseline.observed_episodes > 0 && (
