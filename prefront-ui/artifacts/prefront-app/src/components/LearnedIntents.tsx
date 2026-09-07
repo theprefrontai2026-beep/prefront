@@ -41,7 +41,95 @@ type Workflow = {
   review_status: string; warnings: string[];
 };
 
+type Variant = { steps: string[]; sessions: number; coverage: number; occurrences: number };
+type Grouped = {
+  core_steps: string[]; optional_steps: string[]; variants: Variant[];
+  sessions: number; observed_roles: Counted[]; contested: Contested[];
+  example_sessions: string[]; intent: string; description: string;
+  inferred_policy: Policy | null; review_status: string; warnings: string[];
+};
+
 const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
+
+function Steps({ steps, tone = "" }: { steps: string[]; tone?: string }) {
+  return (
+    <div className="pf-li-flow">
+      {steps.map((t, i) => (
+        <span key={`${t}-${i}`} className="pf-li-step">
+          <code className={tone}>{t}</code>
+          {i < steps.length - 1 && <span className="pf-li-arrow">→</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** One intent, summarised from several observed shapes.
+ *
+ *  A business intent rarely has one shape — the agent sometimes already held
+ *  part of the data, sometimes went further — so the same operation shows up
+ *  as several runs. Rendering each separately gave a reviewer the same policy
+ *  three times without ever saying they were one thing.
+ *
+ *  The CORE / OPTIONAL split is counted, not the model's reading, and is drawn
+ *  that way: core steps are the backbone a reviewer would turn into a
+ *  precondition, optional ones are extensions that must never be presented as
+ *  requirements. */
+function GroupCard({ g }: { g: Grouped }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`pf-li-card${g.contested.length ? " contested" : ""}`}>
+      <div className="pf-li-head">
+        <code className="pf-li-name">{g.intent || g.core_steps.join(" → ")}</code>
+        <span className="pf-li-support">{g.sessions} sessions · {g.variants.length} observed shape{g.variants.length === 1 ? "" : "s"}</span>
+        <span className="pf-li-spacer" />
+        {g.contested.length > 0 && (
+          <span className="pf-dash-chip red">contested by {g.contested.length} integrity check{g.contested.length === 1 ? "" : "s"}</span>
+        )}
+        <span className="pf-dash-chip slate">{g.review_status}</span>
+      </div>
+
+      <div className="pf-li-corelbl">always</div>
+      <Steps steps={g.core_steps} />
+      {g.optional_steps.length > 0 && (
+        <>
+          <div className="pf-li-corelbl">sometimes also</div>
+          <div className="pf-li-flow">
+            {g.optional_steps.map((t) => <span key={t} className="pf-li-step"><code className="opt">{t}</code></span>)}
+          </div>
+        </>
+      )}
+
+      {g.description && <div className="pf-li-desc">{g.description}</div>}
+      {g.inferred_policy && <PolicyBlock p={g.inferred_policy} />}
+
+      <div className="pf-li-grid">
+        <div><span className="lbl">who ran it</span><Chips items={g.observed_roles} /></div>
+      </div>
+
+      {g.warnings.length > 0 && (
+        <details className="pf-li-warn" open={g.contested.length > 0}>
+          <summary>{g.warnings.length} thing{g.warnings.length === 1 ? "" : "s"} to check before approving</summary>
+          {g.warnings.map((x, i) => <div key={i} className="pf-li-warn-row">{x}</div>)}
+        </details>
+      )}
+
+      <button className="pf-dash-link" type="button" onClick={() => setOpen((v) => !v)}>
+        {open ? "Hide the observed shapes ▴" : `${g.variants.length} observed shape${g.variants.length === 1 ? "" : "s"} ▾`}
+      </button>
+      {open && (
+        <div className="pf-li-variants">
+          {g.variants.map((v, i) => (
+            <div key={i} className="pf-li-variant">
+              <span className="pf-li-vmeta">{v.sessions} sessions · {Math.round(v.coverage * 100)}% coverage</span>
+              <Steps steps={v.steps} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PolicyBlock({ p }: { p: Policy }) {
   return (
@@ -200,6 +288,7 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [withLlm, setWithLlm] = useState(false);
   const [cands, setCands] = useState<Candidate[] | null>(null);
   const [flows, setFlows] = useState<Workflow[]>([]);
+  const [groups, setGroups] = useState<Grouped[]>([]);
   const [rejected, setRejected] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "mining" | "error">("idle");
   const [error, setError] = useState("");
@@ -212,25 +301,28 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       // catalog schema and the candidate/approve pattern and turns them into
       // candidates. Aggregates cross the boundary, raw spans never do.
       const q = `since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_sessions=${minSessions}`;
-      const [pr, wr] = await Promise.all([
+      // Grouped runs are preferred: N shapes of one operation become one
+      // candidate and one model call, rather than N near-identical policies.
+      const [pr, gr] = await Promise.all([
         fetch(`/eval/behavior/tools?${q}`),
-        fetch(`/eval/behavior/workflows?${q}`),
+        fetch(`/eval/behavior/intents?${q}`),
       ]);
       const pj = await pr.json();
       if (!pr.ok) throw new Error(pj?.error || `${pr.status} reading behaviour`);
       const profiles = pj.tools || [];
-      const runs = wr.ok ? ((await wr.json()).workflows || []) : [];
+      const runs = gr.ok ? ((await gr.json()).intents || []) : [];
       if (!profiles.length) {
-        setCands([]); setFlows([]); setRejected([]); setStatus("idle");
+        setCands([]); setFlows([]); setGroups([]); setRejected([]); setStatus("idle");
         return;
       }
       const mr = await fetch("/design/semantic/intents/mine", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ profiles, workflows: runs, min_sessions: minSessions, infer_policy: withLlm }),
+        body: JSON.stringify({ profiles, intent_groups: runs, min_sessions: minSessions, infer_policy: withLlm }),
       });
       const mj = await mr.json();
       if (!mr.ok) throw new Error(mj?.detail || mj?.error || `${mr.status} mining`);
-      setCands(mj.candidates || []); setFlows(mj.workflows || []); setRejected(mj.rejected || []);
+      setCands(mj.candidates || []); setFlows(mj.workflows || []);
+      setGroups(mj.intent_groups || []); setRejected(mj.rejected || []);
       setStatus("idle");
     } catch (e: any) {
       setError(String(e?.message || e)); setStatus("error");
@@ -304,6 +396,22 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             </div>
           )}
           {cands.map((c) => <CandidateCard key={c.tool_name} c={c} />)}
+        </section>
+      )}
+
+      {groups.length > 0 && (
+        <section className="pf-panel" style={{ marginTop: 14 }}>
+          <div className="pf-dash-panel-head"><h2>Processes — intents that span several calls</h2></div>
+          <p className="pf-hint" style={{ marginTop: 0 }}>
+            Not every intent is one call, and one intent rarely has one shape — the agent
+            sometimes already held part of the data, sometimes went further. Runs that share
+            most of their steps are grouped, so each row below is <em>one operation</em> with
+            every shape it was observed in. <strong>Always</strong> is the backbone present in
+            every shape; <strong>sometimes also</strong> are extensions, never requirements.
+            That split is counted, not inferred. Order is the evidence: a step that consistently
+            precedes another is a candidate <em>precondition</em>.
+          </p>
+          {groups.map((g) => <GroupCard key={g.core_steps.join(">") + g.intent} g={g} />)}
         </section>
       )}
 

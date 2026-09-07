@@ -2615,3 +2615,18 @@ td.pf-tr-share { width: 34px; text-align: right; }
   border-radius: 4px; padding: 2px 7px;
 }
 .pf-li-arrow { color: var(--muted); margin: 0 6px; font-size: 12px; }
+
+/* Core vs optional steps of a grouped intent. Drawn differently because the
+   split is load-bearing: the core is the backbone a reviewer would turn into a
+   precondition, the optional steps are extensions that must never read as
+   requirements. */
+.pf-li-corelbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-top: 8px;
+}
+.pf-li-step code.opt {
+  border-style: dashed; color: var(--muted); background: transparent;
+}
+.pf-li-variants { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.pf-li-variant { padding: 4px 0; }
+.pf-li-vmeta { font-size: 11px; color: var(--muted); }

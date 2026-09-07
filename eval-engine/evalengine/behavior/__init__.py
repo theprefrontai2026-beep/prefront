@@ -44,7 +44,7 @@ from .profiles import (
     following_tools,
     observed_intent_labels,
 )
-from .workflows import Workflow, frequent_workflows
+from .workflows import Workflow, WorkflowGroup, frequent_workflows, group_workflows
 
 __all__ = [
     "ToolProfile",
@@ -53,5 +53,7 @@ __all__ = [
     "following_tools",
     "observed_intent_labels",
     "Workflow",
+    "WorkflowGroup",
     "frequent_workflows",
+    "group_workflows",
 ]

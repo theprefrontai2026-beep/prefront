@@ -244,6 +244,37 @@ async def behavior_workflows(since: int = 7 * 86400, app: str = AppQ,
         for w in ws]}
 
 
+@app.get("/eval/behavior/intents")
+async def behavior_intents(since: int = 7 * 86400, app: str = AppQ,
+                           min_sessions: int = 3, max_len: int = 6,
+                           min_overlap: float = 0.6):
+    """Mined runs GROUPED into candidate intents.
+
+    A business intent rarely has one shape — "assess an applicant" appears as
+    find->profile, profile->report, and the full four-step run, depending on
+    what the agent already had. Reported separately those are several
+    candidates with near-identical policies, and a reviewer reads the same
+    operation repeatedly without seeing that it is one. Grouping is
+    deterministic (step overlap); what a group MEANS is the synthesis step's
+    job, and it gets the whole group at once.
+
+    `core_steps` (in every variant) and `optional_steps` are COUNTED — that
+    backbone is what a reviewer would turn into a precondition, so it must not
+    depend on a model's reading."""
+    ok = await asyncio.to_thread(store.ch.ping)
+    if not ok:
+        return {"configured": False, "intents": []}
+    gs = await asyncio.to_thread(behavior.group_workflows, since, app, min_sessions, max_len, min_overlap)
+    return {"configured": True, "since": since, "app": app, "intents": [
+        {"core_steps": list(g.core_steps), "optional_steps": list(g.optional_steps),
+         "sessions": g.sessions, "roles": list(g.roles), "contested": list(g.contested),
+         "example_sessions": list(g.example_sessions),
+         "variants": [{"steps": list(v.steps), "sessions": v.sessions,
+                       "coverage": v.coverage, "occurrences": v.occurrences}
+                      for v in g.variants]}
+        for g in gs]}
+
+
 @app.get("/eval/behavior/sequences")
 async def behavior_sequences(since: int = 7 * 86400, app: str = AppQ, min_support: int = 3):
     """Ordered tool pairs adjacent within a session — the closing-obligation

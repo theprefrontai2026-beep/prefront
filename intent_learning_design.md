@@ -106,6 +106,25 @@ output is readable at all: consecutive repeats collapse (a retry is not a
 step), support counts sessions rather than occurrences, and a run that is only
 a fragment of a longer run with the same support is dropped. Without the last
 one, every prefix and rotation of every real pattern is its own row.
+
+**And one intent rarely has one shape.** The agent sometimes already held part
+of the data and sometimes went further, so "assess an applicant" surfaces as
+find→profile, profile→report, and the full four-step run. Reported separately
+those are several candidates with near-identical policies, and a reviewer reads
+the same operation repeatedly without seeing it is one.
+`behavior/workflows.group_workflows` merges runs that share most of their steps
+and `intent_mining.mine_intent_groups` summarises each group in ONE model call
+— N shapes become one candidate rather than N. The CORE steps (in every
+variant) and OPTIONAL ones (in some) are counted, and the prompt is told not to
+contradict that split: the core is the backbone a reviewer would turn into a
+precondition, so it must not depend on the model's reading.
+
+Linkage matters more than the similarity metric here. Single linkage — join a
+group if similar to ANY member — chained the whole corpus into one 31-variant
+"intent" spanning applicant lookup, quoting and loan decisions, with no step
+common to it. Complete linkage (similar to EVERY member) gives 18 coherent
+groups with a non-empty core in each. Over-splitting is the better failure: two
+candidates a reviewer merges by eye beats one they must take apart.
 | `allowed_roles` | **observed ≠ allowed** | the normalization-of-deviance hotspot. Emit as *observed callers with support counts*; the human must narrow. Never present the observed set as the permitted set |
 | `allowed_channels` | same caveat | same |
 | `intent` (the name) | **no — language, not counting** | LLM-drafted from tool name + observed usage; advisory only |

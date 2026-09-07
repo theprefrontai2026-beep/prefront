@@ -207,3 +207,57 @@ def test_mine_workflows_caps_what_it_sends_to_the_model():
                 "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
     cands, _ = mine_workflows([flow() for _ in range(30)], llm=llm, min_sessions=1, limit=4)
     assert len(cands) == 4 and len(llm.prompts) == 4
+
+
+# ── grouped intents ───────────────────────────────────────────────────────
+
+def group(**over):
+    base = {"core_steps": ["a", "b"], "optional_steps": ["c"],
+            "variants": [{"steps": ["a", "b"], "sessions": 20, "coverage": 0.8, "occurrences": 20},
+                         {"steps": ["a", "b", "c"], "sessions": 9, "coverage": 0.4, "occurrences": 9}],
+            "sessions": 20, "roles": [{"value": "Agent", "sessions": 20, "calls": 20}],
+            "contested": [], "example_sessions": ["s1"]}
+    base.update(over)
+    return base
+
+
+def test_grouped_candidate_keeps_core_and_optional_counted():
+    from semanticlayer.intent_mining import structural_group
+    c = structural_group(group())
+    assert c.core_steps == ["a", "b"] and c.optional_steps == ["c"]
+    assert len(c.variants) == 2 and c.review_status == "pending"
+
+
+def test_a_group_with_no_shared_step_is_flagged_loudly():
+    """Should not happen with complete linkage, and is worth shouting about if
+    it ever does: variants with nothing in common are not one operation."""
+    from semanticlayer.intent_mining import structural_group
+    c = structural_group(group(core_steps=[]))
+    assert any("may not be one operation" in w for w in c.warnings)
+
+
+def test_group_prompt_states_the_core_optional_split():
+    """It is counted, so the model is told it rather than asked to infer it —
+    and told not to contradict it."""
+    from semanticlayer.intent_mining import render_group_prompt, structural_group, GROUP_SYSTEM
+    p = render_group_prompt(structural_group(group()))
+    assert "core steps (in EVERY variant): a -> b" in p
+    assert "optional steps (in some): c" in p
+    assert "2 observed variant(s)" in p
+    assert "do not contradict it" in GROUP_SYSTEM
+
+
+def test_one_model_call_per_group_not_per_variant():
+    """The whole point of grouping: N shapes of one operation cost one call and
+    yield one candidate, not N near-identical ones."""
+    from semanticlayer.intent_mining import mine_intent_groups
+    llm = _LLM({"intent": "x", "description": "d",
+                "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
+    cands, _ = mine_intent_groups([group(), group()], llm=llm, min_sessions=1)
+    assert len(cands) == 2 and len(llm.prompts) == 2      # 2 groups, 4 variants
+
+
+def test_grouped_llm_failure_degrades_to_the_counted_half():
+    from semanticlayer.intent_mining import infer_group_policy, structural_group
+    out, err = infer_group_policy(structural_group(group()), _LLM("{"))
+    assert err and out.core_steps == ["a", "b"] and out.inferred_policy is None

@@ -874,6 +874,12 @@ class MineIntentsBody(BaseModel):
     # not always one call — "underwrite an application" is four — and mining
     # tool-by-tool reports a process as unrelated operations.
     workflows: list[dict] = []
+    # Runs already GROUPED into candidate intents
+    # (GET /eval/behavior/intents). Preferred over `workflows`: N variants of
+    # one operation become one candidate and one model call, instead of N
+    # candidates with near-identical policies a reviewer must spot as
+    # duplicates.
+    intent_groups: list[dict] = []
     min_sessions: int = 3
     # The LLM names the operation and states the rule the behaviour implies.
     # Off by default: the counted half is useful on its own, is reproducible,
@@ -909,14 +915,23 @@ def mine_intents_endpoint(body: MineIntentsBody):
                    else LLMClient(provider="openai", model=DEFAULT_MINING_MODEL))
         except Exception as e:  # noqa: BLE001 - unconfigured provider is a 400, not a 500
             raise HTTPException(400, f"LLM unavailable for policy inference: {e}")
-    from .intent_mining import mine_workflows
+    from .intent_mining import mine_intent_groups, mine_workflows
 
     candidates, rejected = mine_intents(body.profiles, llm=llm, min_sessions=body.min_sessions)
-    flows, flow_rejected = mine_workflows(body.workflows, llm=llm, min_sessions=body.min_sessions)
+    # Grouped runs supersede ungrouped ones when both are supplied: they say
+    # the same thing, and saying it twice is the duplication grouping exists
+    # to remove.
+    if body.intent_groups:
+        flows, flow_rejected = [], []
+        groups, group_rejected = mine_intent_groups(body.intent_groups, llm=llm, min_sessions=body.min_sessions)
+    else:
+        groups, group_rejected = [], []
+        flows, flow_rejected = mine_workflows(body.workflows, llm=llm, min_sessions=body.min_sessions)
     return {
         "candidates": [c.model_dump() for c in candidates],
         "workflows": [c.model_dump() for c in flows],
-        "rejected": rejected + flow_rejected,
+        "intent_groups": [c.model_dump() for c in groups],
+        "rejected": rejected + flow_rejected + group_rejected,
         "policy_inferred": bool(llm),
         # Said in the payload, not just the docs: a learned catalog cites
         # OBSERVED PRACTICE, never a clause, and cannot express prohibition —

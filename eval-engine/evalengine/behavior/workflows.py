@@ -191,3 +191,122 @@ def _closed(frequent: dict[tuple[str, ...], set[str]]) -> list[tuple[str, ...]]:
         if not redundant:
             kept.append(pat)
     return kept
+
+
+@dataclass(frozen=True)
+class WorkflowGroup:
+    """Several observed runs that look like variants of ONE intent.
+
+    Mining returns runs, but a business intent rarely has exactly one shape:
+    "assess an applicant" appears as find->profile, profile->report,
+    profile->report->score and find->profile->report->score, depending on what
+    the agent already had. Reported separately those are four candidates with
+    four near-identical policies, and a reviewer reads the same thing four
+    times without ever seeing that it is one operation.
+
+    Grouping is DETERMINISTIC and lives here rather than in synthesis, because
+    "these runs share most of their steps" is counting. What the group MEANS is
+    the model's job, and it gets the whole group in one call instead of one
+    call per variant.
+    """
+    variants: tuple[Workflow, ...]
+    sessions: int                     # union across variants, not a sum
+    # Present in EVERY variant vs only some. Counted, never inferred: this is
+    # the group's backbone, and it is what a reviewer would turn into a
+    # precondition, so it must not depend on the model's reading.
+    core_steps: tuple[str, ...]
+    optional_steps: tuple[str, ...]
+    roles: tuple[dict[str, Any], ...]
+    contested: tuple[dict[str, Any], ...]
+    example_sessions: tuple[str, ...]
+
+    @property
+    def longest(self) -> tuple[str, ...]:
+        """The fullest observed shape — the best single label for the group."""
+        return max((v.steps for v in self.variants), key=len)
+
+
+def _similar(a: tuple[str, ...], b: tuple[str, ...], min_overlap: float) -> bool:
+    """Two runs are variants of one intent if they overlap enough in steps.
+
+    Jaccard on the step SETS, plus an explicit containment rule: a run wholly
+    contained in a longer one is always a variant of it, however much the
+    lengths differ. Without that, a two-step run and the six-step run that
+    contains it score low on Jaccard and split into separate groups — which is
+    exactly the case this exists to merge.
+    """
+    sa, sb = set(a), set(b)
+    if sa <= sb or sb <= sa:
+        return True
+    return len(sa & sb) / len(sa | sb) >= min_overlap
+
+
+def group_workflows(since: int = 7 * 86400, app: str = "", min_sessions: int = 3,
+                    max_len: int = 6, min_overlap: float = 0.6) -> list[WorkflowGroup]:
+    """Mine runs, then merge the ones that are variants of the same intent.
+
+    COMPLETE linkage: a run joins a group only if it is similar to EVERY
+    member. Single linkage (similar to ANY member) was tried first and failed
+    outright on real data — A resembles B, B resembles C, C resembles D, and
+    the whole corpus chains into one group. It produced a single 31-variant
+    "intent" spanning applicant lookup, quoting AND loan decisions, with NO
+    step common to all of it. A group with no backbone is not a summary of
+    anything; it is the corpus with a label on it.
+
+    The cost is over-splitting, which is the better failure: two candidates a
+    reviewer merges by eye beats one they must take apart.
+    """
+    ws = frequent_workflows(since, app, min_sessions, 2, max_len)
+    if not ws:
+        return []
+
+    # Greedy complete-linkage. `ws` arrives sorted by support, so each new
+    # group is seeded by the best-evidenced run still unplaced, and weaker
+    # variants attach to it rather than the reverse.
+    groups: list[list[Workflow]] = []
+    for w in ws:
+        for g in groups:
+            if all(_similar(w.steps, m.steps, min_overlap) for m in g):
+                g.append(w)
+                break
+        else:
+            groups.append([w])
+    buckets = {i: g for i, g in enumerate(groups)}
+
+    out: list[WorkflowGroup] = []
+    for members in buckets.values():
+        members.sort(key=lambda w: (-w.sessions, -len(w.steps)))
+        step_sets = [set(m.steps) for m in members]
+        core = set.intersection(*step_sets) if step_sets else set()
+        every = set.union(*step_sets) if step_sets else set()
+        # Order the backbone by where the steps appear in the fullest variant,
+        # so a reviewer reads a sequence rather than an alphabetised set.
+        longest = max((m.steps for m in members), key=len)
+        order = {t: i for i, t in enumerate(longest)}
+        role_count: dict[str, int] = {}
+        contested: dict[str, dict[str, Any]] = {}
+        examples: list[str] = []
+        for m in members:
+            for r in m.roles:
+                role_count[r["value"]] = role_count.get(r["value"], 0) + int(r["sessions"])
+            for c in m.contested:
+                slot = contested.setdefault(c["check_id"], {"check_id": c["check_id"], "sessions": 0, "findings": 0})
+                slot["sessions"] = max(slot["sessions"], c["sessions"])
+                slot["findings"] = max(slot["findings"], c["findings"])
+            examples.extend(m.example_sessions)
+        out.append(WorkflowGroup(
+            variants=tuple(members),
+            # The union of DISTINCT example sessions understates the true union
+            # (examples are capped upstream), so the group's session count is
+            # the largest variant's — a floor, never an inflated sum, since
+            # summing would double-count every session running two variants.
+            sessions=max(m.sessions for m in members),
+            core_steps=tuple(sorted(core, key=lambda t: order.get(t, 99))),
+            optional_steps=tuple(sorted(every - core, key=lambda t: order.get(t, 99))),
+            roles=tuple(sorted(({"value": r, "sessions": n} for r, n in role_count.items()),
+                               key=lambda d: (-d["sessions"], d["value"]))),
+            contested=tuple(sorted(contested.values(), key=lambda d: (-d["sessions"], d["check_id"]))),
+            example_sessions=tuple(dict.fromkeys(examples))[:5],
+        ))
+    out.sort(key=lambda g: (-g.sessions, -len(g.variants)))
+    return out

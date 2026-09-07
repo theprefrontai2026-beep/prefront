@@ -93,3 +93,63 @@ def test_max_len_bounds_the_run(monkeypatch):
     seqs = {f"s{i}": list("abcdefgh") for i in range(3)}
     got = _mine(monkeypatch, seqs, max_len=3)
     assert got and max(len(w.steps) for w in got) == 3
+
+
+# ── grouping variants of one intent ───────────────────────────────────────
+
+def _group(monkeypatch, seqs, **kw):
+    monkeypatch.setattr(wf.ch, "rows", lambda *a, **k: _rows(seqs))
+    monkeypatch.setattr(wf, "_contested_by_tool", lambda *a, **k: {})
+    return wf.group_workflows(min_sessions=kw.pop("min_sessions", 2), **kw)
+
+
+def test_variants_of_one_operation_group_together(monkeypatch):
+    """The same intent appears in several shapes because the agent sometimes
+    already held part of the data. Reported separately they are several
+    candidates with near-identical policies."""
+    seqs = {f"a{i}": ["find", "profile"] for i in range(4)}
+    seqs.update({f"b{i}": ["find", "profile", "report"] for i in range(4)})
+    got = _group(monkeypatch, seqs)
+    assert len(got) == 1
+    assert got[0].core_steps == ("find", "profile")
+    assert got[0].optional_steps == ("report",)
+
+
+def test_containment_merges_however_different_the_lengths(monkeypatch):
+    """A short run wholly inside a long one is a variant of it. On Jaccard
+    alone the length gap sinks the score and they split — the exact case
+    grouping exists to merge."""
+    seqs = {f"a{i}": ["p", "q"] for i in range(3)}
+    seqs.update({f"b{i}": ["p", "q", "r", "s", "t", "u"] for i in range(3)})
+    got = _group(monkeypatch, seqs)
+    assert len(got) == 1 and got[0].core_steps == ("p", "q")
+
+
+def test_unrelated_operations_do_not_chain_into_one_group(monkeypatch):
+    """Single linkage failed here on real data: A resembles B, B resembles C,
+    and the whole corpus chained into one 31-variant 'intent' with no step
+    common to it. A group with no backbone is the corpus with a label on it."""
+    seqs = {}
+    seqs.update({f"a{i}": ["a", "b"] for i in range(3)})
+    seqs.update({f"b{i}": ["b", "c"] for i in range(3)})
+    seqs.update({f"c{i}": ["c", "d"] for i in range(3)})
+    got = _group(monkeypatch, seqs, min_overlap=0.6)
+    assert len(got) > 1, "unrelated runs chained into one group"
+    for g in got:
+        if len(g.variants) > 1:
+            assert g.core_steps, "a group with more than one variant must share a step"
+
+
+def test_group_sessions_is_a_floor_not_a_sum(monkeypatch):
+    """Summing variants double-counts every session that ran two of them."""
+    seqs = {f"s{i}": ["find", "profile", "report"] for i in range(5)}
+    got = _group(monkeypatch, seqs)
+    assert got[0].sessions == 5
+
+
+def test_core_steps_are_ordered_by_the_fullest_variant(monkeypatch):
+    """A reviewer should read a sequence, not an alphabetised set — the order
+    is what makes it a precondition."""
+    seqs = {f"s{i}": ["zeta", "alpha", "mid"] for i in range(3)}
+    got = _group(monkeypatch, seqs)
+    assert got[0].core_steps == ("zeta", "alpha", "mid")

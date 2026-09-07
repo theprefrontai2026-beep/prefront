@@ -415,3 +415,164 @@ def mine_workflows(workflows: list[dict], llm: Optional[LLMClient] = None,
                 rejected.append(err)
         candidates.append(c)
     return candidates, rejected
+
+
+# ── One intent, several observed shapes ───────────────────────────────────
+# A business intent rarely has a single shape: "assess an applicant" appears as
+# find->profile, profile->report, and the full four-step run, depending on what
+# the agent already had. Summarising each variant separately produces several
+# candidates with near-identical policies, and a reviewer reads the same
+# operation repeatedly without ever seeing that it is one. These take the whole
+# GROUP in a single model call.
+
+
+class GroupedIntent(BaseModel):
+    """One candidate intent, summarised from several observed run shapes."""
+    # ── counted ──
+    core_steps: list[str] = Field(default_factory=list)      # in EVERY variant
+    optional_steps: list[str] = Field(default_factory=list)  # in some
+    variants: list[dict] = Field(default_factory=list)
+    sessions: int = 0
+    observed_roles: list[dict] = Field(default_factory=list)
+    contested: list[dict] = Field(default_factory=list)
+    example_sessions: list[str] = Field(default_factory=list)
+    # ── inferred ──
+    intent: str = ""
+    description: str = ""
+    inferred_policy: Optional[InferredPolicy] = None
+    # ── review ──
+    review_status: str = "pending"
+    warnings: list[str] = Field(default_factory=list)
+
+
+GROUP_SYSTEM = """You are reverse-engineering one business intent from several \
+observed variants of it. Each variant is an ordered run of tool calls that \
+recurred across production sessions; they differ because an agent sometimes \
+already had part of the data, or went further.
+
+Summarise them as ONE operation. You are told which steps appear in EVERY \
+variant (the core) and which appear in only some (optional) - that split is \
+counted, not your judgement, so do not contradict it.
+
+What to produce:
+- a name for the operation the variants share;
+- one sentence on what it accomplishes;
+- the policy it appears to encode. Core steps that always precede others are \
+candidate PRECONDITIONS. Optional steps are candidate EXTENSIONS, not \
+requirements. If a variant reaches something the others do not - an export, a \
+write, a decision - say whether it looks like part of the same operation or a \
+DIFFERENT one that happens to share a prefix.
+
+Three hard rules:
+1. NEVER state a prohibition as fact - you see what happened, not what is \
+permitted. Phrase restrictions as "appears to" and put alternatives in caveats.
+2. FREQUENCY IS NOT LEGITIMACY. Integrity violations on the run, or a rare \
+runner, may mean the pattern itself is the problem. Say so.
+3. If the variants do not look like one operation, SAY THAT in the caveats \
+rather than inventing a name that covers them all.
+
+Return STRICT JSON only:
+{"intent": "verb_noun snake_case name",
+ "description": "one sentence",
+ "policy": {"statement": "...", "rationale": "...",
+            "confidence": "high|medium|low", "caveats": ["..."]}}"""
+
+
+def structural_group(g: dict) -> GroupedIntent:
+    """The counted half of a grouped candidate."""
+    sessions = int(g.get("sessions") or 0)
+    roles = _share(g.get("roles") or [], sessions)
+    variants = list(g.get("variants") or [])
+
+    warnings: list[str] = []
+    if sessions < MIN_SESSIONS:
+        warnings.append(f"thin evidence: {sessions} session(s) — below the {MIN_SESSIONS} floor")
+    if not g.get("core_steps") and len(variants) > 1:
+        # Should not happen with complete linkage, and is worth shouting about
+        # if it ever does: a group with no shared step is not one operation.
+        warnings.append("no step is common to every variant — these may not be one operation")
+    best = max((float(v.get("coverage") or 0.0) for v in variants), default=0.0)
+    if best < 0.25:
+        warnings.append(f"low coverage ({int(best * 100)}%): even the strongest variant is one "
+                        f"path among several, not the normal one")
+    if g.get("contested"):
+        warnings.append("steps in these runs carry Family 2 integrity violations: "
+                        + ", ".join(f"{c['check_id']} ({c['sessions']} sessions)" for c in g["contested"]))
+    for r in roles:
+        if r["share"] < MIN_ROLE_SHARE:
+            warnings.append(f"rare runner {r['value']!r} — an outlier to narrow, not a role to bless")
+
+    return GroupedIntent(
+        core_steps=list(g.get("core_steps") or []),
+        optional_steps=list(g.get("optional_steps") or []),
+        variants=variants, sessions=sessions, observed_roles=roles,
+        contested=list(g.get("contested") or []),
+        example_sessions=list(g.get("example_sessions") or [])[:5],
+        warnings=warnings,
+    )
+
+
+def render_group_prompt(c: GroupedIntent) -> str:
+    lines = [
+        "core steps (in EVERY variant): " + (" -> ".join(c.core_steps) or "none"),
+        "optional steps (in some): " + (", ".join(c.optional_steps) or "none"),
+        f"seen in up to {c.sessions} sessions",
+        "runners: " + (", ".join(
+            f"{r['value']} ({int(r['share'] * 100)}%)" for r in c.observed_roles) or "none observed"),
+        f"{len(c.variants)} observed variant(s):",
+    ]
+    for v in c.variants[:8]:
+        lines.append(f"  - {' -> '.join(v.get('steps') or [])}"
+                     f"  ({v.get('sessions')} sessions, coverage {int(float(v.get('coverage') or 0) * 100)}%)")
+    if len(c.variants) > 8:
+        lines.append(f"  - ...and {len(c.variants) - 8} more")
+    if c.contested:
+        lines.append("INTEGRITY VIOLATIONS on these runs: " + ", ".join(
+            f"{x['check_id']} in {x['sessions']} sessions" for x in c.contested))
+    if c.warnings:
+        lines.append("counted warnings: " + " | ".join(c.warnings))
+    return "\n".join(lines)
+
+
+def infer_group_policy(c: GroupedIntent, llm: LLMClient) -> tuple[GroupedIntent, Optional[str]]:
+    label = " -> ".join(c.core_steps) or "group"
+    raw = llm.complete(GROUP_SYSTEM, render_group_prompt(c))
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return c, f"{label}: LLM output was not valid JSON: {e}"
+    if not isinstance(parsed, dict):
+        return c, f"{label}: LLM returned {type(parsed).__name__}, expected an object"
+    pol = parsed.get("policy") or {}
+    try:
+        inferred = InferredPolicy.model_validate(pol) if pol else None
+    except Exception as e:  # noqa: BLE001
+        return c, f"{label}: policy block invalid: {e}"
+    return c.model_copy(update={
+        "intent": str(parsed.get("intent") or "").strip() or label,
+        "description": str(parsed.get("description") or "").strip(),
+        "inferred_policy": inferred,
+    }), None
+
+
+def mine_intent_groups(groups: list[dict], llm: Optional[LLMClient] = None,
+                       min_sessions: int = 3, limit: int = 12) -> tuple[list[GroupedIntent], list[str]]:
+    """Grouped runs in, summarised intents out — ONE model call per group.
+
+    This is the whole point of grouping: N variants of one operation cost one
+    call and yield one candidate, instead of N calls yielding N candidates with
+    near-identical policies that a reviewer has to recognise as duplicates.
+    """
+    out: list[GroupedIntent] = []
+    rejected: list[str] = []
+    for g in groups[:limit]:
+        c = structural_group(g)
+        if c.sessions < min_sessions:
+            rejected.append(f"{' -> '.join(c.core_steps)}: {c.sessions} session(s), below min_sessions={min_sessions}")
+            continue
+        if llm is not None:
+            c, err = infer_group_policy(c, llm)
+            if err:
+                rejected.append(err)
+        out.append(c)
+    return out, rejected
