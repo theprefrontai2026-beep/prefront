@@ -323,7 +323,11 @@ class WorkflowCandidate(BaseModel):
     # Of the sessions that used the FIRST step at all, the share that went on
     # to complete the whole run. The number that separates "this is how that
     # tool is used" from "this is one of several things people do next".
-    coverage: float = 0.0
+    # None means NOT MEASURED, and it is deliberately distinct from 0.0. A
+    # caller with no coverage figure that sends 0 is not being conservative —
+    # it is asserting that almost nobody who started this run finished it, and
+    # the model duly reports a process that is not the norm. Absent is unknown.
+    coverage: Optional[float] = None
     observed_roles: list[dict] = Field(default_factory=list)
     contested: list[dict] = Field(default_factory=list)
     example_sessions: list[str] = Field(default_factory=list)
@@ -367,12 +371,13 @@ def structural_workflow(w: dict) -> WorkflowCandidate:
     """The counted half of a multi-call candidate."""
     sessions = int(w.get("sessions") or 0)
     roles = _share(w.get("roles") or [], sessions)
-    coverage = float(w.get("coverage") or 0.0)
+    raw_cov = w.get("coverage")
+    coverage = None if raw_cov is None else float(raw_cov)
 
     warnings: list[str] = []
     if sessions < MIN_SESSIONS:
         warnings.append(f"thin evidence: {sessions} session(s) — below the {MIN_SESSIONS} floor")
-    if coverage < 0.25:
+    if coverage is not None and coverage < 0.25:
         warnings.append(
             f"low coverage ({int(coverage * 100)}%): most sessions that used "
             f"{(w.get('steps') or ['the first step'])[0]!r} did NOT go on to complete this run, "
@@ -398,8 +403,9 @@ def render_workflow_prompt(c: WorkflowCandidate) -> str:
     parts = [
         "ordered tool run: " + " -> ".join(c.steps),
         f"seen in {c.sessions} sessions ({c.occurrences} occurrences)",
-        f"coverage: {int(c.coverage * 100)}% of sessions that used {c.steps[0]!r} completed this run"
-        if c.steps else "coverage: unknown",
+        (f"coverage: {int(c.coverage * 100)}% of sessions that used {c.steps[0]!r} completed this run"
+         if c.steps and c.coverage is not None
+         else "coverage: not measured for this run — do not infer anything from it"),
         "runners: " + (", ".join(
             f"{r['value']} ({r['sessions']} sessions, {int(r['share'] * 100)}%)" for r in c.observed_roles)
             or "none observed"),

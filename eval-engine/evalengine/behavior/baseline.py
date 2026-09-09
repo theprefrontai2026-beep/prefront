@@ -59,6 +59,22 @@ STABLE_COVERAGE = 0.90
 STABLE_NOVELTY = 0.10
 
 
+def _verdict(episodes: int, shapes: int, status: str, recommendation: str) -> dict[str, Any]:
+    """An early return carrying the SAME keys as a full one.
+
+    A caller reading `distinct_shapes` off a short-circuit payload got a
+    KeyError, and a UI reading it rendered `undefined` — an answer shaped
+    differently from the one it usually gives is worse than a wrong number,
+    because nothing downstream is written to expect it.
+    """
+    return {
+        "observed_episodes": episodes, "distinct_shapes": shapes, "buckets": [],
+        "recent_coverage": 0.0, "recent_novelty": 0.0,
+        "thresholds": {"coverage": STABLE_COVERAGE, "novelty": STABLE_NOVELTY},
+        "ready": False, "status": status, "recommendation": recommendation,
+    }
+
+
 @dataclass(frozen=True)
 class Bucket:
     label: str
@@ -72,9 +88,8 @@ def learning_progress(since: int = 7 * 86400, app: str = "",
     """Bucket the window and measure whether the pattern set has settled."""
     eps = session_episodes(since, app)
     if not eps:
-        return {"observed_episodes": 0, "status": "no_traffic", "buckets": [],
-                "ready": False,
-                "recommendation": "No tool calls in this window — nothing to learn from yet."}
+        return _verdict(0, 0, "no_traffic",
+                        "No tool calls in this window — nothing to learn from yet.")
 
     # BUCKET BY TIME, not by position. Positional bucketing was the first
     # implementation and it could not see convergence at all: every new episode
@@ -91,9 +106,8 @@ def learning_progress(since: int = 7 * 86400, app: str = "",
     # thereby learned anything.
     stamped = [e for e in eps if e.started_at]
     if len(stamped) < 2:
-        return {"observed_episodes": len(eps), "status": "no_traffic", "buckets": [],
-                "ready": False,
-                "recommendation": "Not enough timestamped traffic in this window to judge."}
+        return _verdict(len(eps), 0, "no_traffic",
+                        "Not enough timestamped traffic in this window to judge.")
     stamped.sort(key=lambda e: e.started_at)
     lo, hi = stamped[0].started_at, stamped[-1].started_at
     n_buckets = max(2, min(7, int(since / bucket_seconds) or 2))
@@ -106,10 +120,9 @@ def learning_progress(since: int = 7 * 86400, app: str = "",
         if chunk:
             chunks.append(chunk)
     if len(chunks) < 2:
-        return {"observed_episodes": len(eps), "status": "no_traffic", "buckets": [],
-                "ready": False,
-                "recommendation": "All traffic in this window arrived at once — "
-                                  "observe over a longer period before judging."}
+        return _verdict(len(eps), len({(e.steps, e.closed_by) for e in stamped}), "no_traffic",
+                        "All traffic in this window arrived at once — observe over a "
+                        "longer period before judging.")
 
     seen: set[tuple] = set()
     buckets: list[Bucket] = []

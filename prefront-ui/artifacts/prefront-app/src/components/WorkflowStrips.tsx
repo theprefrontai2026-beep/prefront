@@ -30,6 +30,66 @@ import PatternGraph from "./PatternGraph";
  *  this; the observed set is offered beside the choice, as evidence. */
 export type Approval = { roles: string[] };
 
+export type Policy = { statement: string; rationale: string; confidence: string; caveats: string[] };
+
+const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
+
+/** The model's reading of this workflow.
+ *
+ *  Boxed away from the counted facts and labelled with its confidence, because
+ *  the distinction is the whole epistemics of the page: everything else in the
+ *  row was counted and is reproducible, this was inferred and is advisory. It
+ *  appears here, on the workflow it is about, rather than in a section of its
+ *  own — a summary a reviewer has to go and find somewhere else is a summary
+ *  of nothing in particular. */
+function PolicyBlock({ p }: { p: Policy }) {
+  return (
+    <div className={`pf-li-policy ${CONF_TONE[p.confidence] || "slate"}`}>
+      <div className="pf-li-policy-head">
+        What this looks like
+        <span className="pf-li-conf">{p.confidence} confidence</span>
+        <span className="pf-li-src">read by a model from observed behaviour — not a policy document</span>
+      </div>
+      <div className="pf-li-stmt">{p.statement}</div>
+      {p.rationale && <div className="pf-li-why"><span className="lbl">because</span>{p.rationale}</div>}
+      {p.caveats?.map((c, i) => <div key={i} className="pf-li-caveat">{c}</div>)}
+    </div>
+  );
+}
+
+/** What saying yes would actually permit — recomputed as roles are ticked.
+ *
+ *  Counted, never phrased by a model: this is the sentence the decision rests
+ *  on. Written as a GRANT rather than a description of traffic, because that is
+ *  what approval means — the observed callers become the permitted ones the
+ *  moment someone publishes, and saying so is what gives a reviewer the chance
+ *  to notice a caller they did not intend to bless. */
+function ApprovalSummary({ steps, roles, writes, sessions }: {
+  steps: string[]; roles: string[]; writes: boolean; sessions: number;
+}) {
+  return (
+    <div className="pf-li-approve">
+      <div className="pf-li-approve-h">If approved, this would permit</div>
+      <ul className="pf-li-approve-l">
+        <li>
+          {roles.length
+            ? <strong>{roles.join(", ")}</strong>
+            : <em>nobody explicitly</em>}{" "}
+          to run{" "}
+          {steps.map((t, i) => (
+            <span key={i}><code>{t}</code>{i < steps.length - 1 ? " → " : ""}</span>
+          ))}
+        </li>
+        {writes && <li>…which <strong>changes data</strong></li>}
+        <li className="pf-li-approve-w">
+          on the evidence of <strong>{sessions}</strong> observed session{sessions === 1 ? "" : "s"} —
+          approval turns those observed callers into <em>permitted</em> ones
+        </li>
+      </ul>
+    </div>
+  );
+}
+
 export type Shape = {
   steps: string[]; closed_by: string; episodes: number; sessions: number;
   roles: { value: string; episodes: number }[];
@@ -38,9 +98,10 @@ export type Shape = {
 
 const ROLE_TONES = ["#2563eb", "#0f766e", "#b45309", "#7c3aed", "#be123c"];
 
-function Strip({ s, max, approval, onApprove }: {
+function Strip({ s, max, approval, policy, onApprove }: {
   s: Shape; max: number;
   approval?: Approval;
+  policy?: Policy;
   onApprove: (a: Approval | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -95,6 +156,8 @@ function Strip({ s, max, approval, onApprove }: {
           <PatternGraph steps={s.steps} closedBy={s.closed_by} episodes={s.episodes}
                         subject={s.subject_args[0]} roles={s.roles} />
 
+          {policy && <PolicyBlock p={policy} />}
+
           <div className="pf-ws-approve">
             <div className="pf-ws-approve-h">
               Who may do this? <span>Observed callers are shown as evidence — tick the ones you intend to permit.</span>
@@ -109,6 +172,9 @@ function Strip({ s, max, approval, onApprove }: {
                 </label>
               ))}
             </div>
+            <ApprovalSummary steps={s.steps} roles={approval?.roles || []}
+                             writes={!!s.closed_by} sessions={s.sessions} />
+
             <div className="pf-ws-approve-row">
               <button className={`pf-btn sm${approved ? " reject" : " primary"}`} type="button"
                       onClick={() => onApprove(approved ? null : { roles: [] })}>
@@ -128,11 +194,19 @@ function Strip({ s, max, approval, onApprove }: {
   );
 }
 
+/** How many workflows the list renders. Exported so the caller can ask the
+ *  summariser for exactly this many — a lower server cap leaves visible rows
+ *  that can never receive a reading, with no symptom but a reader wondering
+ *  why some have one and others do not. */
+export const STRIP_LIMIT = 14;
+
 export const shapeKey = (s: Shape) => s.steps.join(">") + "|" + s.closed_by;
 
-export default function WorkflowStrips({ shapes, limit = 14, approvals, onApprove }: {
+export default function WorkflowStrips({ shapes, limit = STRIP_LIMIT, approvals, policies, onApprove }: {
   shapes: Shape[]; limit?: number;
   approvals: Record<string, Approval>;
+  /** Keyed by the workflow's step chain — absent while learning, by design. */
+  policies?: Record<string, Policy>;
   onApprove: (s: Shape, a: Approval | null) => void;
 }) {
   const rows = useMemo(
@@ -150,6 +224,7 @@ export default function WorkflowStrips({ shapes, limit = 14, approvals, onApprov
           const key = shapeKey(s);
           return (
             <Strip key={key} s={s} max={max} approval={approvals[key]}
+                   policy={policies?.[s.steps.join(">")]}
                    onApprove={(a) => onApprove(s, a)} />
           );
         })}

@@ -894,6 +894,11 @@ class MineIntentsBody(BaseModel):
     # out of its absence. Defaulting to learning because assuming a baseline
     # that is not there is the more damaging mistake.
     mode: str = "learning"
+    # How many summaries to ask for. Exposed because the caller knows how many
+    # it will RENDER, and a server cap lower than that silently leaves rows
+    # that can never receive one — a gap with no symptom except a reader
+    # wondering why some workflows have a reading and others do not.
+    limit: int = 12
     # eval-engine's readiness verdict (GET /eval/behavior/baseline), passed
     # through because this service holds no trace store of its own — the same
     # boundary every other aggregate crosses. Inference is REFUSED without it:
@@ -969,7 +974,8 @@ def mine_intents_endpoint(body: MineIntentsBody):
         groups, group_rejected = mine_intent_groups(body.intent_groups, llm=llm, min_sessions=body.min_sessions)
     else:
         groups, group_rejected = [], []
-        flows, flow_rejected = mine_workflows(body.workflows, llm=llm, min_sessions=body.min_sessions)
+        flows, flow_rejected = mine_workflows(body.workflows, llm=llm,
+                                          min_sessions=body.min_sessions, limit=body.limit)
     cohorts, cohort_rejected = mine_cohort_policies(body.cohorts, llm=llm)
     ops, op_rejected = mine_operation_policies(body.episode_shapes, llm=llm, mode=body.mode)
     return {

@@ -17,186 +17,11 @@
  * facts. A reviewer approves a NARROWING, not a rubber stamp.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DemoConfig } from "../demos";
 import ProcessMap from "./ProcessMap";
-import WorkflowStrips, { shapeKey, type Approval, type Shape } from "./WorkflowStrips";
+import WorkflowStrips, { shapeKey, STRIP_LIMIT, type Approval, type Policy, type Shape } from "./WorkflowStrips";
 
-type Counted = { value: string; sessions: number; calls: number; share?: number };
-type Contested = { check_id: string; sessions: number; findings: number };
-type Policy = { statement: string; rationale: string; confidence: string; caveats: string[] };
-
-type Candidate = {
-  tool_name: string; intent: string; description: string;
-  params: string[]; fields: string[]; side_effect: string;
-  observed_roles: Counted[]; observed_channels: Counted[];
-  expected_rows_p99: number | null; mandatory_filters: string[]; closing_obligation: string;
-  support_sessions: number; support_calls: number; example_sessions: string[];
-  contested: Contested[]; warnings: string[];
-  inferred_policy: Policy | null; review_status: string;
-};
-
-type Variant = { steps: string[]; sessions: number; coverage: number; occurrences: number };
-type Grouped = {
-  core_steps: string[]; optional_steps: string[]; variants: Variant[];
-  sessions: number; observed_roles: Counted[]; contested: Contested[];
-  example_sessions: string[]; intent: string; description: string;
-  inferred_policy: Policy | null; review_status: string; warnings: string[];
-};
-
-type Unused = { tool: string; used_by: string[]; others_use_rate: number;
-                silence_by_chance: number; likely_boundary: boolean; this_cohort_sessions: number };
-type CohortRow = {
-  role: string; sessions: number; calls: number;
-  tools: { tool: string; sessions: number; calls: number }[];
-  exclusive_tools: string[]; never_used: Unused[];
-  field_gaps: { tool: string; withheld: string[]; seen_by: string[] }[];
-  has_exposure: boolean; inferred_policy: Policy | null;
-  review_status: string; warnings: string[];
-};
-
-/** An access boundary, inferred from what this cohort does that others do not.
- *
- *  Absence is the weakest evidence and the easiest to over-read, so it is split
- *  here exactly as it is scored: operations whose silence is unlikely by chance
- *  are candidate boundaries; the rest are shown greyed and explicitly labelled
- *  inconclusive, because a long list of rarely-used tools is not evidence and
- *  its LENGTH is the thing most likely to be mistaken for some. */
-function CohortCard({ c }: { c: CohortRow }) {
-  const strong = c.never_used.filter((u) => u.likely_boundary);
-  const weak = c.never_used.filter((u) => !u.likely_boundary);
-  return (
-    <div className="pf-li-card">
-      <div className="pf-li-head">
-        <code className="pf-li-name">{c.role}</code>
-        <span className="pf-li-support">{c.sessions} sessions · {c.tools.length} operations</span>
-        <span className="pf-li-spacer" />
-        {!c.has_exposure && <span className="pf-dash-chip gold">too little traffic to conclude</span>}
-        <span className="pf-dash-chip slate">{c.review_status}</span>
-      </div>
-
-      {c.inferred_policy && <PolicyBlock p={c.inferred_policy} />}
-
-      {c.field_gaps.length > 0 && (
-        <div className="pf-li-grid">
-          <div><span className="lbl">fields withheld from this cohort</span>
-            {c.field_gaps.map((g) => (
-              <div key={g.tool} className="pf-li-warn-row">
-                <code>{g.tool}</code>: {g.withheld.join(", ")} — seen by {g.seen_by.join(", ")}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="pf-li-grid">
-        {c.exclusive_tools.length > 0 && (
-          <div><span className="lbl">only this cohort does</span>
-            {c.exclusive_tools.map((t) => <span key={t} className="pf-li-chip">{t}</span>)}
-          </div>
-        )}
-        {strong.length > 0 && (
-          <div><span className="lbl">never done — unlikely by chance</span>
-            {strong.map((u) => (
-              <span key={u.tool} className="pf-li-chip rare"
-                    title={`others reach it in ${Math.round(u.others_use_rate * 100)}% of their sessions; silence by chance p=${u.silence_by_chance}`}>
-                {u.tool}
-              </span>
-            ))}
-          </div>
-        )}
-        {weak.length > 0 && (
-          <div><span className="lbl">never done — inconclusive, too rare to tell</span>
-            {weak.map((u) => <span key={u.tool} className="pf-li-chip opt-dim">{u.tool}</span>)}
-          </div>
-        )}
-      </div>
-
-      {c.warnings.length > 0 && (
-        <details className="pf-li-warn">
-          <summary>{c.warnings.length} thing{c.warnings.length === 1 ? "" : "s"} to check before approving</summary>
-          {c.warnings.map((w, i) => <div key={i} className="pf-li-warn-row">{w}</div>)}
-        </details>
-      )}
-    </div>
-  );
-}
-
-type OpPath = { before: string[]; episodes: number };
-type Operation = {
-  operation: string; total_episodes: number; bare_episodes: number;
-  paths: OpPath[]; observed_roles: Counted[]; subject_args: string[];
-  example_sessions: string[]; intent: string; description: string;
-  inferred_policy: Policy | null; review_status: string; warnings: string[];
-};
-
-/** One side-effecting operation and every observed way of reaching it.
- *
- *  This is the sharpest evidence on the page, because it is a COMPARISON: the
- *  times evidence was gathered before the act, beside the times it was not.
- *  A rate over co-occurring tools cannot express that. "196 of 241 with
- *  nothing first" is either a missing control or a bypassed one, and which is
- *  a question a reviewer can answer where a miner cannot. */
-function OperationCard({ o }: { o: Operation }) {
-  const bare = o.total_episodes ? o.bare_episodes / o.total_episodes : 0;
-  return (
-    <div className={`pf-li-card${bare > 0.5 ? " contested" : ""}`}>
-      <div className="pf-li-head">
-        <code className="pf-li-name">{o.intent || o.operation}</code>
-        <span className="pf-li-tool">closes on {o.operation}</span>
-        <span className="pf-li-support">{o.total_episodes} times</span>
-        <span className="pf-li-spacer" />
-        {o.bare_episodes > 0 && (
-          <span className={`pf-dash-chip ${bare > 0.5 ? "red" : "gold"}`}
-                title="performed with no preceding calls at all">
-            {Math.round(bare * 100)}% with nothing first
-          </span>
-        )}
-        <span className="pf-dash-chip slate">{o.review_status}</span>
-      </div>
-
-      {o.description && <div className="pf-li-desc">{o.description}</div>}
-      {o.inferred_policy && <PolicyBlock p={o.inferred_policy} />}
-
-      <ApprovalSummary
-        steps={[o.operation]}
-        roles={o.observed_roles}
-        writes={[o.operation]}
-        sessions={o.total_episodes}
-      />
-
-      <div className="pf-li-corelbl">observed paths to it</div>
-      {o.paths.map((pa, i) => {
-        const share = o.total_episodes ? Math.round(pa.episodes / o.total_episodes * 100) : 0;
-        return (
-          <div key={i} className="pf-li-path">
-            <span className="pf-li-vmeta">{pa.episodes}× · {share}%</span>
-            {pa.before.length
-              ? <Steps steps={[...pa.before, o.operation]} />
-              : <div className="pf-li-flow"><span className="pf-li-bare">nothing preceded it →</span>
-                  <span className="pf-li-step"><code>{o.operation}</code></span></div>}
-          </div>
-        );
-      })}
-
-      <div className="pf-li-grid">
-        <div><span className="lbl">performed by</span><Chips items={o.observed_roles} /></div>
-        {o.subject_args.length > 0 && (
-          <div><span className="lbl">subject identified by</span>
-            {o.subject_args.map((a) => <span key={a} className="pf-li-chip">{a}</span>)}
-          </div>
-        )}
-      </div>
-
-      {o.warnings.length > 0 && (
-        <details className="pf-li-warn" open={bare > 0.5}>
-          <summary>{o.warnings.length} thing{o.warnings.length === 1 ? "" : "s"} to check before approving</summary>
-          {o.warnings.map((w, i) => <div key={i} className="pf-li-warn-row">{w}</div>)}
-        </details>
-      )}
-    </div>
-  );
-}
 
 type Baseline = {
   observed_episodes: number; distinct_shapes: number; ready: boolean; status: string;
@@ -238,47 +63,6 @@ function BaselineBanner({ b }: { b: Baseline }) {
         bar = share of each period already explained by patterns learned before it;
         <span className="pf-lb-new"> +n</span> = patterns seen for the first time
       </div>
-    </div>
-  );
-}
-
-/** What saying yes to this candidate would actually permit.
- *
- *  A graph orients; it does not help anyone decide. An approver needs one
- *  bounded thing and a plain statement of the consequence — and that statement
- *  must be COUNTED, never phrased by a model, because it is the sentence the
- *  decision rests on. Everything below is read straight off the aggregates.
- *
- *  Written as a grant ("would permit X to do Y") rather than a description of
- *  the traffic, because that is what approval means and the distinction is
- *  easy to lose: the observed callers become the ALLOWED callers the moment
- *  someone clicks yes. Stating it that way is what gives a reviewer the chance
- *  to notice a caller they did not intend to bless.
- */
-function ApprovalSummary({ steps, roles, writes, fields, sessions }: {
-  steps: string[]; roles: Counted[]; writes?: string[]; fields?: string[]; sessions: number;
-}) {
-  const who = roles.length ? roles.map((r) => r.value).join(", ") : "any caller observed";
-  return (
-    <div className="pf-li-approve">
-      <div className="pf-li-approve-h">If approved, this would permit</div>
-      <ul className="pf-li-approve-l">
-        <li><strong>{who}</strong> to run{" "}
-          {steps.length === 1 ? <code>{steps[0]}</code>
-            : <>this sequence of {steps.length}: {steps.map((t, i) => (
-                <span key={i}><code>{t}</code>{i < steps.length - 1 ? " → " : ""}</span>))}</>}
-        </li>
-        {writes && writes.length > 0 && (
-          <li>…including <strong>{writes.join(", ")}</strong>, which <strong>changes data</strong></li>
-        )}
-        {fields && fields.length > 0 && (
-          <li>returning <span className="pf-li-approve-f">{fields.join(", ")}</span></li>
-        )}
-        <li className="pf-li-approve-w">
-          on the evidence of <strong>{sessions}</strong> observed session{sessions === 1 ? "" : "s"} —
-          approval turns those observed callers into <em>permitted</em> ones
-        </li>
-      </ul>
     </div>
   );
 }
@@ -378,204 +162,18 @@ function PublishBar({ demo, approvals, shapes, state, setState, onPublished }: {
   );
 }
 
-const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
-
-function Steps({ steps, tone = "" }: { steps: string[]; tone?: string }) {
-  return (
-    <div className="pf-li-flow">
-      {steps.map((t, i) => (
-        <span key={`${t}-${i}`} className="pf-li-step">
-          <code className={tone}>{t}</code>
-          {i < steps.length - 1 && <span className="pf-li-arrow">→</span>}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/** One intent, summarised from several observed shapes.
- *
- *  A business intent rarely has one shape — the agent sometimes already held
- *  part of the data, sometimes went further — so the same operation shows up
- *  as several runs. Rendering each separately gave a reviewer the same policy
- *  three times without ever saying they were one thing.
- *
- *  The CORE / OPTIONAL split is counted, not the model's reading, and is drawn
- *  that way: core steps are the backbone a reviewer would turn into a
- *  precondition, optional ones are extensions that must never be presented as
- *  requirements. */
-function GroupCard({ g }: { g: Grouped }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className={`pf-li-card${g.contested.length ? " contested" : ""}`}>
-      <div className="pf-li-head">
-        <code className="pf-li-name">{g.intent || g.core_steps.join(" → ")}</code>
-        <span className="pf-li-support">{g.sessions} sessions · {g.variants.length} observed shape{g.variants.length === 1 ? "" : "s"}</span>
-        <span className="pf-li-spacer" />
-        {g.contested.length > 0 && (
-          <span className="pf-dash-chip red">contested by {g.contested.length} integrity check{g.contested.length === 1 ? "" : "s"}</span>
-        )}
-        <span className="pf-dash-chip slate">{g.review_status}</span>
-      </div>
-
-      <div className="pf-li-corelbl">always</div>
-      <Steps steps={g.core_steps} />
-      {g.optional_steps.length > 0 && (
-        <>
-          <div className="pf-li-corelbl">sometimes also</div>
-          <div className="pf-li-flow">
-            {g.optional_steps.map((t) => <span key={t} className="pf-li-step"><code className="opt">{t}</code></span>)}
-          </div>
-        </>
-      )}
-
-      {g.description && <div className="pf-li-desc">{g.description}</div>}
-      {g.inferred_policy && <PolicyBlock p={g.inferred_policy} />}
-
-      <ApprovalSummary steps={g.core_steps} roles={g.observed_roles} sessions={g.sessions} />
-
-      <div className="pf-li-grid">
-        <div><span className="lbl">who ran it</span><Chips items={g.observed_roles} /></div>
-      </div>
-
-      {g.warnings.length > 0 && (
-        <details className="pf-li-warn" open={g.contested.length > 0}>
-          <summary>{g.warnings.length} thing{g.warnings.length === 1 ? "" : "s"} to check before approving</summary>
-          {g.warnings.map((x, i) => <div key={i} className="pf-li-warn-row">{x}</div>)}
-        </details>
-      )}
-
-      <button className="pf-dash-link" type="button" onClick={() => setOpen((v) => !v)}>
-        {open ? "Hide the observed shapes ▴" : `${g.variants.length} observed shape${g.variants.length === 1 ? "" : "s"} ▾`}
-      </button>
-      {open && (
-        <div className="pf-li-variants">
-          {g.variants.map((v, i) => (
-            <div key={i} className="pf-li-variant">
-              <span className="pf-li-vmeta">{v.sessions} sessions · {Math.round(v.coverage * 100)}% coverage</span>
-              <Steps steps={v.steps} />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PolicyBlock({ p }: { p: Policy }) {
-  return (
-    <div className={`pf-li-policy ${CONF_TONE[p.confidence] || "slate"}`}>
-      <div className="pf-li-policy-head">
-        Inferred policy
-        <span className="pf-li-conf">{p.confidence} confidence</span>
-        <span className="pf-li-src">from observed behaviour — not a policy document</span>
-      </div>
-      <div className="pf-li-stmt">{p.statement}</div>
-      {p.rationale && <div className="pf-li-why"><span className="lbl">because</span>{p.rationale}</div>}
-      {p.caveats?.map((cv, i) => <div key={i} className="pf-li-caveat">{cv}</div>)}
-    </div>
-  );
-}
-
-function Chips({ items, tone = "" }: { items: Counted[]; tone?: string }) {
-  if (!items.length) return <span className="muted">none observed</span>;
-  return (
-    <>
-      {items.map((i) => (
-        // The count travels WITH the value everywhere. "Which roles called
-        // this" is not the reviewer's question; "which roles, how often, and
-        // is the tail an accident" is — and a bare list cannot answer it.
-        <span key={i.value} className={`pf-li-chip ${tone} ${i.share !== undefined && i.share < 0.05 ? "rare" : ""}`}
-              title={`${i.sessions} session(s), ${i.calls} call(s)`}>
-          {i.value}<span className="pf-li-n">{i.sessions}</span>
-        </span>
-      ))}
-    </>
-  );
-}
-
-function CandidateCard({ c }: { c: Candidate }) {
-  const [open, setOpen] = useState(false);
-  const p = c.inferred_policy;
-  return (
-    <div className={`pf-li-card${c.contested.length ? " contested" : ""}`}>
-      <div className="pf-li-head">
-        <code className="pf-li-name">{c.intent || c.tool_name}</code>
-        <span className="pf-li-tool">tool {c.tool_name}</span>
-        <span className={`pf-dash-chip ${c.side_effect === "read" ? "slate" : "gold"}`}>{c.side_effect}</span>
-        <span className="pf-li-support">{c.support_sessions} sessions · {c.support_calls} calls</span>
-        <span className="pf-li-spacer" />
-        {/* Contested is the first thing read, not a footnote: it is the
-            difference between observed practice and observed misbehaviour. */}
-        {c.contested.length > 0 && (
-          <span className="pf-dash-chip red" title={c.contested.map((x) => `${x.check_id}: ${x.sessions} sessions`).join("\n")}>
-            contested by {c.contested.length} integrity check{c.contested.length === 1 ? "" : "s"}
-          </span>
-        )}
-        <span className="pf-dash-chip slate">{c.review_status}</span>
-      </div>
-
-      {c.description && <div className="pf-li-desc">{c.description}</div>}
-
-      {/* The inferred half is boxed away from the counted half on every card:
-          a mined rule cites observed practice, never a clause someone wrote. */}
-      {p && <PolicyBlock p={p} />}
-
-      <div className="pf-li-grid">
-        <div><span className="lbl">callers observed</span><Chips items={c.observed_roles} /></div>
-        <div><span className="lbl">channels</span><Chips items={c.observed_channels} /></div>
-        <div><span className="lbl">arguments</span>
-          {c.params.length ? c.params.map((x) => <span key={x} className="pf-li-chip">{x}</span>) : <span className="muted">none</span>}
-        </div>
-        <div><span className="lbl">fields returned</span>
-          {c.fields.length ? c.fields.map((x) => <span key={x} className="pf-li-chip">{x}</span>) : <span className="muted">none declared</span>}
-        </div>
-      </div>
-
-      <div className="pf-li-facts">
-        {c.expected_rows_p99 !== null && <span>rows p99 <strong>{c.expected_rows_p99}</strong></span>}
-        {c.mandatory_filters.map((f) => <span key={f}>always <code>{f}</code></span>)}
-        {c.closing_obligation && <span>almost always followed by <code>{c.closing_obligation}</code></span>}
-      </div>
-
-      {c.warnings.length > 0 && (
-        <details className="pf-li-warn" open={c.contested.length > 0}>
-          <summary>{c.warnings.length} thing{c.warnings.length === 1 ? "" : "s"} to check before approving</summary>
-          {c.warnings.map((w, i) => <div key={i} className="pf-li-warn-row">{w}</div>)}
-        </details>
-      )}
-
-      <button className="pf-dash-link" type="button" onClick={() => setOpen((v) => !v)}>
-        {open ? "Hide evidence ▴" : `Evidence — ${c.example_sessions.length} example session${c.example_sessions.length === 1 ? "" : "s"} ▾`}
-      </button>
-      {open && (
-        <div className="pf-li-evidence">
-          {c.example_sessions.map((s) => <code key={s}>{s}</code>)}
-          {c.contested.map((x) => (
-            <div key={x.check_id} className="pf-li-warn-row">
-              {x.check_id}: {x.findings} finding(s) across {x.sessions} supporting session(s)
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function LearnedIntents({ demo, active }: { demo: DemoConfig; active?: boolean }) {
   const [days, setDays] = useState(30);
   const [minSessions, setMinSessions] = useState(3);
   const [withLlm, setWithLlm] = useState(false);
-  const [cands, setCands] = useState<Candidate[] | null>(null);
-  const [groups, setGroups] = useState<Grouped[]>([]);
-  const [cohorts, setCohorts] = useState<CohortRow[]>([]);
-  const [ops, setOps] = useState<Operation[]>([]);
-  // The candidate under review; focuses the map and nothing else.
+  // The workflow under review; focuses the map and nothing else.
   const [focus, setFocus] = useState<{ label: string; tools: string[] } | null>(null);
   const [shapes, setShapes] = useState<Shape[]>([]);
-  // Separated workflows is the default view. The merged map is for orienting
-  // yourself once; separating them is what you do every time you review.
-  const [view, setView] = useState<"strips" | "map">("strips");
+  // The model's reading of each workflow, keyed by shape. Kept beside the
+  // shapes rather than inside them: one is counted and always present, the
+  // other is inferred, optional, and gated on the baseline having settled.
+  const [policies, setPolicies] = useState<Record<string, Policy>>({});
   // Approvals live here rather than in the strip list so they survive a
   // re-mine: a reviewer part-way through a set should not lose it because the
   // window changed. Keyed by the pattern's shape, which is stable.
@@ -583,11 +181,24 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [shapeByKey, setShapeByKey] = useState<Record<string, Shape>>({});
   const [pub, setPub] = useState<{ busy: boolean; msg: string; err: string; problems: string[] }>(
     { busy: false, msg: "", err: "", problems: [] });
-  const [explained, setExplained] = useState<{episodes:number;fraction:number;shapes:number}|null>(null);
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "mining" | "error">("idle");
   const [error, setError] = useState("");
+
+  // The learning status is fetched on arrival, not only as a side effect of
+  // mining. Otherwise the model control is disabled on a page you have just
+  // opened for no reason the reader can see, and the only way to discover the
+  // deployment is ready is to run a mine you did not want.
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    fetch(`/eval/behavior/baseline?since=${days * 86400}&app=${encodeURIComponent(demo.id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive) setBaseline(j); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [active, days, demo.id]);
 
   const mine = useCallback(async () => {
     setStatus("mining"); setError("");
@@ -596,52 +207,62 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       // only ClickHouse reader and returns AGGREGATES; semantic-layer owns the
       // catalog schema and the candidate/approve pattern and turns them into
       // candidates. Aggregates cross the boundary, raw spans never do.
-      const q = `since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_sessions=${minSessions}`;
-      // Grouped runs are preferred: N shapes of one operation become one
-      // candidate and one model call, rather than N near-identical policies.
-      const [pr, gr, cr, er, br] = await Promise.all([
-        fetch(`/eval/behavior/tools?${q}`),
-        fetch(`/eval/behavior/intents?${q}`),
-        fetch(`/eval/behavior/cohorts?${q}`),
-        fetch(`/eval/behavior/episodes?since=${days * 86400}&app=${encodeURIComponent(demo.id)}&min_episodes=${minSessions}`),
-        fetch(`/eval/behavior/baseline?since=${days * 86400}&app=${encodeURIComponent(demo.id)}`),
+      const since = days * 86400;
+      const app = encodeURIComponent(demo.id);
+      const [er, br] = await Promise.all([
+        fetch(`/eval/behavior/episodes?since=${since}&app=${app}&min_episodes=${minSessions}`),
+        fetch(`/eval/behavior/baseline?since=${since}&app=${app}`),
       ]);
-      const pj = await pr.json();
-      if (!pr.ok) throw new Error(pj?.error || `${pr.status} reading behaviour`);
-      const profiles = pj.tools || [];
-      const runs = gr.ok ? ((await gr.json()).intents || []) : [];
-      const cos = cr.ok ? ((await cr.json()).cohorts || []) : [];
       const ej = er.ok ? await er.json() : {};
-      const shapes = ej.shapes || [];
-      setShapes(shapes);
-      setExplained(ej.explained || null);
+      const sh: Shape[] = ej.shapes || [];
+      setShapes(sh);
       const bj = br.ok ? await br.json() : null;
       setBaseline(bj);
-      if (!profiles.length) {
-        setCands([]); setGroups([]); setCohorts([]); setOps([]); setExplained(null);
-        setRejected([]); setStatus("idle");
-        return;
-      }
+      if (!sh.length) { setPolicies({}); setRejected([]); setStatus("idle"); return; }
+
+      // The model's reading is asked for ONLY when the reviewer wants it and
+      // the baseline has settled — the server refuses otherwise (409), and
+      // sending the request anyway would just be a round trip to be told no.
+      if (!(withLlm && bj?.ready)) { setPolicies({}); setRejected([]); setStatus("idle"); return; }
+
       const mr = await fetch("/design/semantic/intents/mine", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ profiles, intent_groups: runs, cohorts: cos,
-                               episode_shapes: shapes, min_sessions: minSessions,
-                               // The server enforces the same rule and needs
-                               // the verdict to do it; it holds no trace store.
-                               baseline: bj, infer_policy: withLlm && !!bj?.ready }),
+        body: JSON.stringify({
+          profiles: [],
+          // One summary per WORKFLOW, matching what the rows show. The
+          // per-tool, per-cohort and grouped variants remain on the API for a
+          // caller who wants them; this page asks the one question it renders.
+          workflows: sh.map((x) => ({
+            steps: x.steps, sessions: x.sessions, occurrences: x.episodes,
+            // Deliberately absent, not 0: an episode shape carries no coverage
+            // figure, and sending 0 told the model almost nobody who started
+            // this run finished it — which it then reported as a process that
+            // is not the norm.
+            roles: x.roles.map((r) => ({ value: r.value, sessions: r.episodes })),
+            contested: [], example_sessions: x.example_sessions,
+          })),
+          min_sessions: minSessions,
+          // Matched to what the list renders, so no visible row is left
+          // without a reading for a reason the reader cannot see.
+          limit: STRIP_LIMIT,
+          // The server enforces the same rule and needs the verdict to do it;
+          // it holds no trace store.
+          baseline: bj, infer_policy: true,
+        }),
       });
       const mj = await mr.json();
-      if (!mr.ok) throw new Error(mj?.detail || mj?.error || `${mr.status} mining`);
-      setCands(mj.candidates || []); setGroups(mj.intent_groups || []);
-      setCohorts(mj.cohorts || []); setOps(mj.operations || []);
+      if (!mr.ok) throw new Error(mj?.detail?.error || mj?.detail || mj?.error || `${mr.status} mining`);
+      const byKey: Record<string, Policy> = {};
+      for (const w of (mj.workflows || [])) {
+        if (w.inferred_policy) byKey[(w.steps || []).join(">")] = w.inferred_policy;
+      }
+      setPolicies(byKey);
       setRejected(mj.rejected || []);
       setStatus("idle");
     } catch (e: any) {
       setError(String(e?.message || e)); setStatus("error");
     }
   }, [days, minSessions, withLlm, demo.id]);
-
-  const contested = (cands || []).filter((c) => c.contested.length).length;
 
   return (
     <main>
@@ -701,77 +322,17 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
         {error && <p className="pf-error">{error}</p>}
       </section>
 
-      {cands !== null && (
-        <section className="pf-panel" style={{ marginTop: 14 }}>
-          <div className="pf-tr-summary">
-            <span className="pf-tr-count">{cands.length} candidate{cands.length === 1 ? "" : "s"}</span>
-            {contested > 0 && <span className="pf-dash-chip red">{contested} contested</span>}
-            {rejected.length > 0 && (
-              <span className="pf-dash-chip slate" title={rejected.join("\n")}>{rejected.length} rejected</span>
-            )}
-          </div>
-          {cands.length === 0 && (
-            <div className="pf-dash-feed-status">
-              No tool calls in this window for {demo.label} — run some sessions first, or widen the window.
-            </div>
-          )}
-          {cands.map((c) => <CandidateCard key={c.tool_name} c={c} />)}
-        </section>
-      )}
-
-      {/* The map goes FIRST, before any list. "What does this system do" is
-          the question a reader arrives with, and it is answered by structure;
-          the lists answer "is this particular pattern acceptable", which is a
-          later question and a narrower one. */}
+      {/* The map sits directly under the controls: it is the orientation,
+          and orientation comes before inspection. Below it the workflows are
+          separated one per row, which is where every decision is made. */}
       <section className="pf-panel" style={{ marginTop: 14 }}>
-        <div className="pf-dash-panel-head">
-          <h2>{view === "strips" ? "Observed workflows" : "Observed process map"}</h2>
-          <div className="pf-oob-views">
-            <button className={`pf-oob-view ${view === "strips" ? "active" : ""}`} type="button"
-                    onClick={() => setView("strips")}>Separated</button>
-            <button className={`pf-oob-view ${view === "map" ? "active" : ""}`} type="button"
-                    onClick={() => setView("map")}>Merged map</button>
-          </div>
-        </div>
+        <div className="pf-dash-panel-head"><h2>Observed process map</h2></div>
         <p className="pf-hint" style={{ marginTop: 0 }}>
-          {view === "strips"
-            ? "One workflow per row, ordered by how often it happens, band thickness by volume. Separated rather than merged: on a single graph every workflow is drawn over every other one, so judging any one of them means tracing it out of the tangle first. Click one to see where it sits on the map."
-            : "Every tool called, and every transition observed inside a single operation — sized by how often. Good for orienting yourself; poor for deciding about any one workflow, which is what the separated view is for."}
+          Every tool called, and every transition observed inside a single operation — sized by
+          how often. Nothing here is inferred or arranged: an edge exists because that hop
+          happened, and its thickness is the count.
         </p>
-        {focus && (
-          <div className="pf-li-focus">
-            Showing only <code>{focus.label}</code>
-            <button className="pf-dash-link" type="button" onClick={() => setFocus(null)}>
-              show everything ✕
-            </button>
-          </div>
-        )}
-        {view === "strips"
-          ? <WorkflowStrips
-              shapes={shapes}
-              approvals={approvals}
-              onApprove={(sh, a) => {
-                const k = shapeKey(sh);
-                setShapeByKey((m) => ({ ...m, [k]: sh }));
-                setApprovals((m) => {
-                  const next = { ...m };
-                  if (a === null) delete next[k]; else next[k] = a;
-                  return next;
-                });
-                setPub({ busy: false, msg: "", err: "", problems: [] });
-              }} />
-          : <ProcessMap demo={demo} days={days} active={active} focus={focus?.tools} />}
-
-        {Object.keys(approvals).length > 0 && (
-          <PublishBar
-            demo={demo}
-            approvals={approvals}
-            shapes={shapeByKey}
-            state={pub}
-            setState={setPub}
-            onPublished={() => setApprovals({})}
-          />
-        )}
+        <ProcessMap demo={demo} days={days} active={active} focus={focus?.tools} />
       </section>
 
       {baseline && baseline.observed_episodes > 0 && (
@@ -780,90 +341,33 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
         </section>
       )}
 
-      {ops.length > 0 && (
+      {shapes.length > 0 && (
         <section className="pf-panel" style={{ marginTop: 14 }}>
-          <div className="pf-dash-panel-head">
-            <h2>Call patterns — how each action is reached</h2>
-          </div>
+          <div className="pf-dash-panel-head"><h2>Observed workflows</h2></div>
           <p className="pf-hint" style={{ marginTop: 0 }}>
-How tools are actually called. Sessions are cut into <em>episodes</em> — one operation on one subject, bounded by the
-            subject changing or by a side effect — and grouped by the act that closed them. Each
-            row is therefore every observed way of reaching one write, side by side. That
-            comparison is the evidence: a step present in most paths is a candidate
-            <em> precondition</em>, and a write frequently performed with <strong>nothing first</strong>
-            is either a control that does not exist or one being bypassed — a distinction the
-            traces cannot settle and a reviewer can.
-            {explained && (
-              <> These shapes account for <strong>{Math.round(explained.fraction * 100)}%</strong> of
-              the {explained.episodes} episodes observed.</>
-            )}
+            One workflow per row, ordered by how often it happens. Expand one to see its own
+            diagram, what a model makes of it, and the decision — separated rather than merged,
+            because on a single graph every workflow is drawn over every other and judging any
+            one of them means tracing it out of the tangle first.
           </p>
-          {ops.map((o) => (
-            <div key={o.operation} className="pf-li-selectable"
-                 onClick={() => setFocus({
-                   label: o.intent || o.operation,
-                   // Everything this operation was ever reached through, so
-                   // the map shows the whole neighbourhood being approved.
-                   tools: Array.from(new Set([o.operation, ...o.paths.flatMap((p) => p.before)])),
-                 })}>
-              <OperationCard o={o} />
-            </div>
-          ))}
-        </section>
-      )}
-
-      {cohorts.length > 0 && (
-        <section className="pf-panel" style={{ marginTop: 14 }}>
-          <div className="pf-dash-panel-head"><h2>Access boundaries — what differs between cohorts</h2></div>
-          <p className="pf-hint" style={{ marginTop: 0 }}>
-            An access policy is precisely what makes one group of callers behave differently from
-            another, so the <em>differences</em> are where it is visible — and they appear in no
-            single cohort's profile. Strongest first: a field the same tool returned to others but
-            never to this cohort cannot be explained by what they happened to need. Weakest, and
-            easiest to over-read: never having done something. That is scored per operation against
-            how often other cohorts reach it, so a rarely-used tool is marked
-            <em> inconclusive</em> rather than counted as a restriction.
-          </p>
-          {cohorts.map((c) => <CohortCard key={c.role} c={c} />)}
-        </section>
-      )}
-
-      {groups.length > 0 && (
-        <section className="pf-panel" style={{ marginTop: 14 }}>
-          <div className="pf-dash-panel-head"><h2>Processes — intents that span several calls</h2></div>
-          <p className="pf-hint" style={{ marginTop: 0 }}>
-            Not every intent is one call, and one intent rarely has one shape — the agent
-            sometimes already held part of the data, sometimes went further. Runs that share
-            most of their steps are grouped, so each row below is <em>one operation</em> with
-            every shape it was observed in. <strong>Always</strong> is the backbone present in
-            every shape; <strong>sometimes also</strong> are extensions, never requirements.
-            That split is counted, not inferred. Order is the evidence: a step that consistently
-            precedes another is a candidate <em>precondition</em>.
-          </p>
-          {groups.map((g) => (
-            <div key={g.core_steps.join(">") + g.intent} className="pf-li-selectable"
-                 onClick={() => setFocus({
-                   label: g.intent || g.core_steps.join(" → "),
-                   tools: Array.from(new Set([...g.core_steps, ...g.optional_steps])),
-                 })}>
-              <GroupCard g={g} />
-            </div>
-          ))}
-        </section>
-      )}
-
-      {cands !== null && cands.length > 0 && (
-        <section className="pf-panel" style={{ marginTop: 14 }}>
-          <p className="pf-hint" style={{ margin: 0 }}>
-            {/* No approve button, deliberately. The publish path (approved
-                candidates → build_intent_catalog → the artifacts volume) is
-                not built yet, and a control that looks like it approves
-                something while doing nothing is worse than its absence. */}
-            <strong>Review only.</strong> Approving and publishing a mined catalog is not wired
-            yet — these candidates are a proposal to read, not a change to accept. A learned
-            catalog also cannot express prohibition: absence of evidence is not evidence that
-            something is forbidden, so it complements a policy document rather than replacing one.
-          </p>
+          <WorkflowStrips
+            shapes={shapes}
+            policies={policies}
+            approvals={approvals}
+            onApprove={(sh, a) => {
+              const k = shapeKey(sh);
+              setShapeByKey((m) => ({ ...m, [k]: sh }));
+              setApprovals((m) => {
+                const next = { ...m };
+                if (a === null) delete next[k]; else next[k] = a;
+                return next;
+              });
+              setPub({ busy: false, msg: "", err: "", problems: [] });
+            }} />
+          {Object.keys(approvals).length > 0 && (
+            <PublishBar demo={demo} approvals={approvals} shapes={shapeByKey}
+                        state={pub} setState={setPub} onPublished={() => setApprovals({})} />
+          )}
         </section>
       )}
     </main>

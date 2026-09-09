@@ -422,3 +422,24 @@ def test_mine_functions_run_the_counted_half_with_no_model():
     # ...and the counted structure is all there.
     assert ops[0].paths and ops[0].total_episodes == 5
     assert cands[0].fields == ["a"]
+
+
+def test_unmeasured_coverage_is_not_reported_as_low():
+    """Absent is not zero. A caller with no coverage figure that sends 0 is not
+    being conservative — it asserts almost nobody who started the run finished
+    it, and the model duly reports a process that is not the norm. That is a
+    fabricated finding, and it reached a screenshot before it was caught."""
+    from semanticlayer.intent_mining import render_workflow_prompt, structural_workflow
+    w = flow(); w.pop("coverage")
+    c = structural_workflow(w)
+    assert c.coverage is None
+    assert not any("low coverage" in x for x in c.warnings)
+    assert "not measured" in render_workflow_prompt(c)
+
+
+def test_a_real_zero_coverage_is_still_reported():
+    """The distinction only helps if a measured zero still warns."""
+    from semanticlayer.intent_mining import structural_workflow
+    c = structural_workflow(flow(coverage=0.0))
+    assert c.coverage == 0.0
+    assert any("low coverage" in x for x in c.warnings)
