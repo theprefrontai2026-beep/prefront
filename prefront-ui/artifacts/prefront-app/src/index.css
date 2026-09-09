@@ -2752,3 +2752,49 @@ td.pf-tr-share { width: 34px; text-align: right; }
 }
 .pf-ws-box.write { border-color: var(--red); background: #fffaf9; color: #991b1b; }
 .pf-ws-band { display: inline-block; width: 26px; background: var(--blue); opacity: 0.45; margin: 0 2px; border-radius: 1px; }
+
+/* ── Per-pattern graph + approval (PatternGraph / WorkflowStrips) ─────────
+   A reviewer deciding about one pattern should not have to find it inside a
+   diagram of every other one, so each row carries its own graph and its own
+   decision. */
+.pf-pg { display: block; margin: 4px 0 10px; }
+.pf-pg-box { fill: var(--surface); stroke: var(--line); }
+.pf-pg-box.write { fill: #fffaf9; stroke: var(--red); }
+.pf-pg-name { font-size: 11px; font-family: var(--app-font-mono); fill: var(--ink); }
+.pf-pg-sub { font-size: 9px; fill: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.pf-pg-scope { font-size: 9px; fill: var(--muted); font-style: italic; }
+.pf-pg-foot { font-size: 10px; fill: var(--muted); }
+
+.pf-ws-caret { color: var(--muted); width: 12px; display: inline-block; }
+.pf-ws-strip.open { background: var(--surface-alt); border-color: var(--line); }
+/* An approved pattern is marked on the row, so the set is visible while
+   scrolling rather than only in the footer. */
+.pf-ws-strip.approved { border-left: 3px solid var(--green); background: #f6fdf9; }
+.pf-ws-detail { padding: 4px 4px 8px 22px; }
+.pf-ws-approve { border-top: 1px dashed var(--line); padding-top: 8px; }
+.pf-ws-approve-h { font-size: 12px; font-weight: 600; color: var(--ink); }
+.pf-ws-approve-h span { font-weight: 400; color: var(--muted); margin-left: 6px; font-size: 11px; }
+.pf-ws-roles-pick { display: flex; gap: 10px; flex-wrap: wrap; margin: 7px 0; }
+.pf-ws-roles-pick label {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer;
+}
+.pf-ws-roles-pick label.on { border-color: var(--green); background: #f0fdf4; }
+.pf-ws-roles-pick input { width: auto; }
+.pf-ws-obs { font-size: 10px; color: var(--muted); }
+.pf-ws-approve-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pf-ws-warn { font-size: 11px; color: var(--amber); max-width: 62ch; }
+
+/* The approved set and the one control that installs it. */
+.pf-pub {
+  position: sticky; bottom: 0; margin-top: 12px; padding: 10px 12px;
+  border: 1px solid var(--blue); border-radius: var(--radius);
+  background: #f8fbff; box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.06);
+}
+.pf-pub-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.pf-pub-warn { font-size: 11px; color: var(--amber); }
+.pf-pub-ok { font-size: 12px; color: #166534; margin: 6px 0 0; }
+.pf-pub-yaml {
+  margin-top: 8px; max-height: 260px; overflow: auto; font-size: 11px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+}

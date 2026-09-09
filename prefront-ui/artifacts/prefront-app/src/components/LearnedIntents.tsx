@@ -20,7 +20,7 @@
 import { useCallback, useState } from "react";
 import type { DemoConfig } from "../demos";
 import ProcessMap from "./ProcessMap";
-import WorkflowStrips, { type Shape } from "./WorkflowStrips";
+import WorkflowStrips, { shapeKey, type Approval, type Shape } from "./WorkflowStrips";
 
 type Counted = { value: string; sessions: number; calls: number; share?: number };
 type Contested = { check_id: string; sessions: number; findings: number };
@@ -283,6 +283,101 @@ function ApprovalSummary({ steps, roles, writes, fields, sessions }: {
   );
 }
 
+/** The approved set, and the one control that turns it into a real artifact.
+ *
+ *  Deliberately a two-step: DRY RUN renders the exact YAML and every problem
+ *  without writing anything, and only then is publishing offered. The artifact
+ *  this writes is the same file the hand-authored path produces and the same
+ *  one Family 3 grades against, so "see precisely what you are about to
+ *  install" is not a nicety here.
+ */
+function PublishBar({ demo, approvals, shapes, state, setState, onPublished }: {
+  demo: DemoConfig;
+  approvals: Record<string, Approval>;
+  shapes: Record<string, Shape>;
+  state: { busy: boolean; msg: string; err: string; problems: string[] };
+  setState: (s: { busy: boolean; msg: string; err: string; problems: string[] }) => void;
+  onPublished: () => void;
+}) {
+  const [preview, setPreview] = useState("");
+  const keys = Object.keys(approvals);
+  const noRoles = keys.filter((k) => (approvals[k]?.roles || []).length === 0).length;
+
+  const payload = (overwrite: boolean, dryRun: boolean) => ({
+    datasource_id: demo.id,
+    overwrite, dry_run: dryRun,
+    approved: keys.map((k) => {
+      const sh = shapes[k];
+      return {
+        // The terminal step names the operation: the earlier ones are the
+        // evidence gathered for it, not its identity.
+        intent: sh?.steps[sh.steps.length - 1] || k,
+        steps: sh?.steps || [],
+        side_effect: sh?.closed_by ? "write" : "read",
+        approved_roles: approvals[k].roles,
+        expected_rows_p99: null,
+      };
+    }),
+  });
+
+  const call = async (overwrite: boolean, dryRun: boolean) => {
+    setState({ busy: true, msg: "", err: "", problems: [] });
+    try {
+      const r = await fetch("/design/semantic/intents/publish", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload(overwrite, dryRun)),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        const d = j?.detail;
+        setState({ busy: false, msg: "", problems: d?.problems || [],
+                   err: typeof d === "string" ? d : (d?.error || `${r.status} ${r.statusText}`) });
+        return;
+      }
+      if (dryRun) {
+        setPreview(j.yaml || "");
+        setState({ busy: false, msg: `${j.intents} intent(s) would be written to ${j.path}`,
+                   err: "", problems: j.problems || [] });
+      } else {
+        setPreview("");
+        setState({ busy: false, msg: `Published ${j.intents} intent(s) to ${j.path}. ${j.next || ""}`,
+                   err: "", problems: j.problems || [] });
+        onPublished();
+      }
+    } catch (e: any) {
+      setState({ busy: false, msg: "", err: String(e?.message || e), problems: [] });
+    }
+  };
+
+  return (
+    <div className="pf-pub">
+      <div className="pf-pub-row">
+        <strong>{keys.length} pattern{keys.length === 1 ? "" : "s"} in the approved set</strong>
+        {noRoles > 0 && (
+          <span className="pf-pub-warn">{noRoles} with no caller ticked</span>
+        )}
+        <span className="pf-li-spacer" />
+        <button className="pf-btn sm" type="button" disabled={state.busy}
+                onClick={() => call(false, true)}>Preview the catalogue</button>
+        <button className="pf-btn sm primary" type="button" disabled={state.busy || !preview}
+                onClick={() => call(true, false)}
+                title={preview ? "Write it to the artifacts volume" : "Preview it first"}>
+          {state.busy ? "Working…" : "Publish"}
+        </button>
+      </div>
+      <p className="pf-hint" style={{ margin: "6px 0 0" }}>
+        Publishing writes <code>intent_catalog.yaml</code> for {demo.label} — the same artifact a
+        hand-authored catalogue produces, and the one Family 3 grades against. Preview first;
+        publishing replaces any existing catalogue.
+      </p>
+      {state.err && <p className="pf-error">{state.err}</p>}
+      {state.msg && <p className="pf-pub-ok">{state.msg}</p>}
+      {state.problems.map((p, i) => <div key={i} className="pf-li-warn-row">{p}</div>)}
+      {preview && <pre className="pf-pub-yaml">{preview}</pre>}
+    </div>
+  );
+}
+
 const CONF_TONE: Record<string, string> = { high: "green", medium: "amber", low: "slate" };
 
 function Steps({ steps, tone = "" }: { steps: string[]; tone?: string }) {
@@ -481,6 +576,13 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   // Separated workflows is the default view. The merged map is for orienting
   // yourself once; separating them is what you do every time you review.
   const [view, setView] = useState<"strips" | "map">("strips");
+  // Approvals live here rather than in the strip list so they survive a
+  // re-mine: a reviewer part-way through a set should not lose it because the
+  // window changed. Keyed by the pattern's shape, which is stable.
+  const [approvals, setApprovals] = useState<Record<string, Approval>>({});
+  const [shapeByKey, setShapeByKey] = useState<Record<string, Shape>>({});
+  const [pub, setPub] = useState<{ busy: boolean; msg: string; err: string; problems: string[] }>(
+    { busy: false, msg: "", err: "", problems: [] });
   const [explained, setExplained] = useState<{episodes:number;fraction:number;shapes:number}|null>(null);
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [rejected, setRejected] = useState<string[]>([]);
@@ -645,15 +747,31 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
           </div>
         )}
         {view === "strips"
-          ? <WorkflowStrips shapes={shapes}
-                            picked={focus ? focus.label : undefined}
-                            onPick={(sh) => {
-                              if (!sh) { setFocus(null); return; }
-                              setView("map");
-                              setFocus({ label: sh.steps.join(">") + "|" + sh.closed_by,
-                                         tools: Array.from(new Set(sh.steps)) });
-                            }} />
+          ? <WorkflowStrips
+              shapes={shapes}
+              approvals={approvals}
+              onApprove={(sh, a) => {
+                const k = shapeKey(sh);
+                setShapeByKey((m) => ({ ...m, [k]: sh }));
+                setApprovals((m) => {
+                  const next = { ...m };
+                  if (a === null) delete next[k]; else next[k] = a;
+                  return next;
+                });
+                setPub({ busy: false, msg: "", err: "", problems: [] });
+              }} />
           : <ProcessMap demo={demo} days={days} active={active} focus={focus?.tools} />}
+
+        {Object.keys(approvals).length > 0 && (
+          <PublishBar
+            demo={demo}
+            approvals={approvals}
+            shapes={shapeByKey}
+            state={pub}
+            setState={setPub}
+            onPublished={() => setApprovals({})}
+          />
+        )}
       </section>
 
       {baseline && baseline.observed_episodes > 0 && (

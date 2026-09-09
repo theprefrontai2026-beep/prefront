@@ -7,12 +7,14 @@
 > |---|---|---|
 > | L1 | behavioural aggregates, no LLM | `eval-engine/evalengine/behavior/`, `GET /eval/behavior/{tools,sequences,invariants,labels}` |
 > | L2 | candidate synthesis + inferred policy | `semantic-layer/semanticlayer/intent_mining.py`, `POST /design/semantic/intents/mine` |
-> | L3 | review surface (read-only) | `prefront-app`'s **Learned Intents** tab, `/learned` |
+> | L3 | review, approve AND publish | `prefront-app`'s **Learned Intents** tab, `/learned`; `semanticlayer/intent_publish.py`, `POST /design/semantic/intents/publish` |
 > | L4-L5 | impact preview, drift watch | not built |
 >
-> L3 is PARTIAL on purpose: candidates are shown with their evidence, but
-> approve/publish is not wired, and the page says so rather than offering a
-> control that does nothing.
+> L3 is COMPLETE: a reviewer approves a pattern, names who may run it, previews
+> the exact YAML, and publishes it as `intent_catalog.yaml` — the same artifact
+> the hand-authored path produces, into the same shared volume, loaded by the
+> same Family 3 loader. Verified end to end: published, then loaded through
+> `evalengine.family3.catalog.load` with roles and side effects intact.
 >
 > §6's holdout experiment has been RUN; its results are in §6.1 below.
 
@@ -397,6 +399,31 @@ Three things worth keeping:
 Not yet measured: §6 step 3, running the graded harness against the MINED
 catalog to see how much governance survives. That needs L3's approve-and-publish
 path, which does not exist yet.
+
+### 3.3 Approval is the moment observation becomes permission
+
+Everywhere upstream the vocabulary is observational, because while learning
+that is what is true: these are the callers who DID run this. Publishing
+inverts it — the observed callers become the `allowed_callers` a runtime
+enforces — and the whole safety property of the review screen is that the
+inversion is made by a human, explicitly, one pattern at a time:
+
+- `approved_roles` **defaults to empty and is never pre-filled** from the
+  observed set. The observed roles are shown beside the choice, as evidence,
+  with their counts. Pre-ticking them would turn approval into a rubber stamp
+  on whatever happened to occur, which is the exact failure §2 exists to stop.
+- An empty approved set is **flagged loudly**, because Family 3 treats it as
+  unrestricted on some paths: it is the widest possible grant wearing the
+  narrowest look.
+- Publishing is **two steps** — preview the exact YAML and every problem, then
+  write — and refuses to overwrite an existing catalog without `overwrite`,
+  since the target may be a hand-authored one that findings are already graded
+  against.
+- **The model's reading never reaches the artifact.** An inferred policy
+  sentence is a reading for a human; it is not a fact and has no business in a
+  file the runtime enforces. `policy:` is empty on every mined entry by
+  construction, and the file's header says so — a learned catalog cites
+  observed practice, never a clause.
 
 ## 7. Open questions for a human
 

@@ -18,7 +18,17 @@
  * for nothing.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import PatternGraph from "./PatternGraph";
+
+/** What a reviewer decided about one pattern.
+ *
+ *  `roles` starts EMPTY rather than pre-filled from the observed set, and that
+ *  is the whole safety property of this screen: the observed callers are not
+ *  the permitted callers, and pre-ticking them would turn approval into a
+ *  rubber stamp on whatever happened to occur. A reviewer names who may do
+ *  this; the observed set is offered beside the choice, as evidence. */
+export type Approval = { roles: string[] };
 
 export type Shape = {
   steps: string[]; closed_by: string; episodes: number; sessions: number;
@@ -28,18 +38,28 @@ export type Shape = {
 
 const ROLE_TONES = ["#2563eb", "#0f766e", "#b45309", "#7c3aed", "#be123c"];
 
-function Strip({ s, max, onPick, picked }: {
-  s: Shape; max: number; onPick?: () => void; picked?: boolean;
+function Strip({ s, max, approval, onApprove }: {
+  s: Shape; max: number;
+  approval?: Approval;
+  onApprove: (a: Approval | null) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const approved = !!approval;
   // Thickness carries volume, so the eye ranks the workflows before reading a
   // single label. Floored, because a hairline reads as "broken" rather than
   // "rare" and a reviewer still has to be able to see it.
   const h = Math.max(6, Math.round((s.episodes / Math.max(1, max)) * 26));
   const total = s.roles.reduce((a, r) => a + r.episodes, 0) || 1;
 
+  const toggleRole = (r: string) => {
+    const cur = approval?.roles || [];
+    onApprove({ roles: cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r] });
+  };
+
   return (
-    <div className={`pf-ws-strip${picked ? " picked" : ""}`} onClick={onPick}>
-      <div className="pf-ws-head">
+    <div className={`pf-ws-strip${approved ? " approved" : ""}${open ? " open" : ""}`}>
+      <div className="pf-ws-head" onClick={() => setOpen((v) => !v)}>
+        <span className="pf-ws-caret">{open ? "▾" : "▸"}</span>
         <span className="pf-ws-n">{s.episodes}×</span>
         {s.closed_by && <span className="pf-ws-write">changes data</span>}
         {s.subject_args.length > 0 && <span className="pf-ws-subj">per {s.subject_args[0]}</span>}
@@ -54,7 +74,7 @@ function Strip({ s, max, onPick, picked }: {
           ))}
         </span>
       </div>
-      <div className="pf-ws-flow">
+      <div className="pf-ws-flow" onClick={() => setOpen((v) => !v)}>
         {s.steps.map((t, i) => {
           const last = i === s.steps.length - 1;
           const isWrite = last && !!s.closed_by;
@@ -66,13 +86,54 @@ function Strip({ s, max, onPick, picked }: {
           );
         })}
       </div>
+
+      {open && (
+        <div className="pf-ws-detail">
+          {/* Its own graph, in its own row. A reviewer deciding about this
+              pattern should not have to find it inside a diagram of every
+              other one. */}
+          <PatternGraph steps={s.steps} closedBy={s.closed_by} episodes={s.episodes}
+                        subject={s.subject_args[0]} roles={s.roles} />
+
+          <div className="pf-ws-approve">
+            <div className="pf-ws-approve-h">
+              Who may do this? <span>Observed callers are shown as evidence — tick the ones you intend to permit.</span>
+            </div>
+            <div className="pf-ws-roles-pick">
+              {s.roles.length === 0 && <span className="muted">no role was recorded on these calls</span>}
+              {s.roles.map((r) => (
+                <label key={r.value} className={approval?.roles.includes(r.value) ? "on" : ""}>
+                  <input type="checkbox" checked={approval?.roles.includes(r.value) || false}
+                         onChange={() => toggleRole(r.value)} />
+                  {r.value}<span className="pf-ws-obs">observed {r.episodes}×</span>
+                </label>
+              ))}
+            </div>
+            <div className="pf-ws-approve-row">
+              <button className={`pf-btn sm${approved ? " reject" : " primary"}`} type="button"
+                      onClick={() => onApprove(approved ? null : { roles: [] })}>
+                {approved ? "Remove from the set" : "Add to the approved set"}
+              </button>
+              {approved && approval!.roles.length === 0 && (
+                // Loud, because an empty role list is the widest possible grant
+                // wearing the narrowest look.
+                <span className="pf-ws-warn">no caller ticked — this would publish an entry
+                  permitting nobody explicitly, which is not the same as denying everybody</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-export default function WorkflowStrips({ shapes, limit = 14, picked, onPick }: {
-  shapes: Shape[]; limit?: number; picked?: string;
-  onPick?: (s: Shape | null) => void;
+export const shapeKey = (s: Shape) => s.steps.join(">") + "|" + s.closed_by;
+
+export default function WorkflowStrips({ shapes, limit = 14, approvals, onApprove }: {
+  shapes: Shape[]; limit?: number;
+  approvals: Record<string, Approval>;
+  onApprove: (s: Shape, a: Approval | null) => void;
 }) {
   const rows = useMemo(
     () => [...shapes].sort((a, b) => b.episodes - a.episodes).slice(0, limit),
@@ -86,10 +147,10 @@ export default function WorkflowStrips({ shapes, limit = 14, picked, onPick }: {
     <>
       <div className="pf-ws">
         {rows.map((s) => {
-          const key = s.steps.join(">") + "|" + s.closed_by;
+          const key = shapeKey(s);
           return (
-            <Strip key={key} s={s} max={max} picked={picked === key}
-                   onPick={() => onPick?.(picked === key ? null : s)} />
+            <Strip key={key} s={s} max={max} approval={approvals[key]}
+                   onApprove={(a) => onApprove(s, a)} />
           );
         })}
       </div>

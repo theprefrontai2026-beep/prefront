@@ -995,6 +995,74 @@ def mine_intents_endpoint(body: MineIntentsBody):
     }
 
 
+class PublishIntentsBody(BaseModel):
+    """Approved mined candidates, to be published as a real intent catalog."""
+    datasource_id: str
+    approved: list[dict]
+    version: int = 1
+    # Refuses to overwrite unless set. The target may be a HAND-AUTHORED
+    # catalog — LoanPro's is, and it is the artifact Family 3 grades against —
+    # so silently replacing it would swap a curated contract for a mined one
+    # and the only symptom would be findings changing shape.
+    overwrite: bool = False
+    # Renders the YAML and reports problems without writing anything.
+    dry_run: bool = False
+
+
+@app.post("/design/semantic/intents/publish")
+def publish_mined_intents(body: PublishIntentsBody):
+    """Publish approved mined candidates as `<datasource>/intent_catalog.yaml`.
+
+    The last step of the mining path, and the one that makes the rest of it
+    worth anything: until a candidate can be approved and published, everything
+    upstream is a report nobody can act on.
+
+    It writes the SAME artifact the hand-authored path produces, into the same
+    shared volume, so a learned catalog is held to the identical Family 3 gate
+    — same schema, same validator, same loader. Nothing in the runtime knows or
+    cares where a catalog came from, which is the only way this stays honest.
+
+    Two refusals rather than conveniences. It will not overwrite an existing
+    catalog without `overwrite` (the target may be a curated one that findings
+    are already graded against), and it reports every problem — a duplicate
+    intent name, an entry with no approved caller — rather than resolving them
+    quietly."""
+    from .intent_publish import ApprovedIntent, build_from_approved, render
+
+    if not body.approved:
+        raise HTTPException(400, "nothing approved: publish at least one candidate")
+    try:
+        approved = [ApprovedIntent.model_validate(a) for a in body.approved]
+    except Exception as e:  # noqa: BLE001 - caller-supplied shape
+        raise HTTPException(400, f"invalid approved candidate: {type(e).__name__}: {e}")
+
+    catalog, problems = build_from_approved(approved, version=body.version)
+    text = render(catalog, f"{len(catalog.intents)} intent(s) approved from mined behaviour.")
+    path = _functions_artifact_path(body.datasource_id).parent / "intent_catalog.yaml"
+
+    if body.dry_run:
+        return {"published": False, "dry_run": True, "path": str(path),
+                "intents": len(catalog.intents), "problems": problems, "yaml": text}
+    if path.exists() and not body.overwrite:
+        raise HTTPException(409, {
+            "error": f"{path} already exists — pass overwrite=true to replace it",
+            "problems": problems,
+            # Said explicitly: the file that would be replaced may be the
+            # curated contract a demo's grading baseline depends on.
+            "note": "an existing catalog may be hand-authored and graded against; "
+                    "replacing it changes what every Family 3 check enforces",
+        })
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    log.info("published mined intent catalog: %s (%d intents, %d problem(s))",
+             path, len(catalog.intents), len(problems))
+    return {"published": True, "path": str(path), "intents": len(catalog.intents),
+            "problems": problems,
+            "next": "eval-engine reloads its catalog on mtime; Family 3 will grade "
+                    "against these intents on the next evaluation."}
+
+
 @app.post("/design/semantic/preflight/generate")
 def preflight_generate(body: PreflightBody):
     """autonomous_build.md step 19: an LLM proposes candidate adversarial
