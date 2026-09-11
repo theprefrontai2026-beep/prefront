@@ -295,10 +295,12 @@ services:
       # default to naming a demo).
       SEMANTICLAYER_KEEP_DATASOURCES: ${SEMANTICLAYER_KEEP_DATASOURCES:-}
       # Summarise findings in plain language as eval-engine writes them
-      # (finding_explain.ExplainWorker, gpt-4o-mini by default - override with
-      # SEMANTICLAYER_EXPLAIN_MODEL). Set to empty to stop it; findings are
+      # (finding_explain.ExplainWorker). Set to empty to stop it; findings are
       # then only summarised when opened in the UI.
       SEMANTICLAYER_EXPLAIN_EVAL_URL: ${SEMANTICLAYER_EXPLAIN_EVAL_URL-http://eval-engine:8120}
+      # The OpenAI model that writes them. Changing it re-summarises every
+      # finding once (the model is part of the cache key).
+      SEMANTICLAYER_EXPLAIN_MODEL: ${SEMANTICLAYER_EXPLAIN_MODEL:-gpt-4.1-nano}
     volumes:
       - semanticlayer_data:/data
       - artifacts:/artifacts          # publish writes the approved templates here

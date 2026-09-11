@@ -33,8 +33,14 @@ from .logutil import get_logger
 log = get_logger(__name__)
 
 # A small model on purpose: this rewrites text it is handed, and needs no
-# reasoning the check has not already done.
-DEFAULT_EXPLAIN_MODEL = os.environ.get("SEMANTICLAYER_EXPLAIN_MODEL", "gpt-4o-mini")
+# reasoning the check has not already done. gpt-4.1-nano, chosen for cost over
+# gpt-4o-mini. Known weakness, measured side by side on 8 LoanPro findings: it
+# can confuse identifiers — it named the application number (7003) where the
+# check compared an applicant id (5003), and called a recommendation an
+# approval, even with the rules below; gpt-4o-mini got both right. Set
+# SEMANTICLAYER_EXPLAIN_MODEL=gpt-4o-mini if exact ids matter more than cost.
+# Changing it re-summarises every finding once — the model is in the cache key.
+DEFAULT_EXPLAIN_MODEL = os.environ.get("SEMANTICLAYER_EXPLAIN_MODEL") or "gpt-4.1-nano"
 
 
 class FindingIn(BaseModel):
@@ -79,6 +85,12 @@ Rules:
 snake_case field names - say "the date of birth", not "date_of_birth".
 - Use ONLY facts in the input. Do not guess who the user was, what the agent \
 intended, or what happened afterwards.
+- Numbers and identifiers: use only values that appear in the check's wording \
+or evidence, copied exactly. Never substitute one identifier for another - a \
+number from the user's question is not the one the check compared against. \
+If you are unsure which number is which, leave the number out.
+- Describe the agent's action exactly as the input does. Do not upgrade it: a \
+recommendation is not an approval, and reading data is not sharing it.
 - Do not soften or exaggerate. A violated check is a violation, not a \
 suggestion; an indeterminate one means the check could not tell.
 
