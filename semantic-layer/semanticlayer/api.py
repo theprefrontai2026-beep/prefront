@@ -905,6 +905,12 @@ class MineIntentsBody(BaseModel):
     # see the endpoint.
     baseline: Optional[dict] = None
     min_sessions: int = 3
+    # Summarise only workflows of at least this many calls. Counting still
+    # uses every run — see mine_workflows.
+    min_steps: int = 1
+    # Summarise `workflows` as ONE candidate per terminal call (returned as
+    # `goals`) instead of one per run shape — see mine_goal_intents.
+    group_by_goal: bool = False
     # The LLM names the operation and states the rule the behaviour implies.
     # Off by default: the counted half is useful on its own, is reproducible,
     # and costs nothing, so spending a model call per tool should be asked for.
@@ -962,29 +968,37 @@ def mine_intents_endpoint(body: MineIntentsBody):
                    else LLMClient(provider="openai", model=DEFAULT_MINING_MODEL))
         except Exception as e:  # noqa: BLE001 - unconfigured provider is a 400, not a 500
             raise HTTPException(400, f"LLM unavailable for policy inference: {e}")
-    from .intent_mining import (mine_cohort_policies, mine_intent_groups,
+    from .intent_mining import (mine_cohort_policies, mine_goal_intents, mine_intent_groups,
                                 mine_operation_policies, mine_workflows)
 
     candidates, rejected = mine_intents(body.profiles, llm=llm, min_sessions=body.min_sessions)
     # Grouped runs supersede ungrouped ones when both are supplied: they say
     # the same thing, and saying it twice is the duplication grouping exists
     # to remove.
+    goals, goal_rejected = [], []
     if body.intent_groups:
         flows, flow_rejected = [], []
         groups, group_rejected = mine_intent_groups(body.intent_groups, llm=llm, min_sessions=body.min_sessions)
+    elif body.group_by_goal:
+        flows, flow_rejected = [], []
+        groups, group_rejected = [], []
+        goals, goal_rejected = mine_goal_intents(body.workflows, llm=llm, min_sessions=body.min_sessions,
+                                                 limit=body.limit, min_steps=body.min_steps)
     else:
         groups, group_rejected = [], []
         flows, flow_rejected = mine_workflows(body.workflows, llm=llm,
-                                          min_sessions=body.min_sessions, limit=body.limit)
+                                          min_sessions=body.min_sessions, limit=body.limit,
+                                          min_steps=body.min_steps)
     cohorts, cohort_rejected = mine_cohort_policies(body.cohorts, llm=llm)
     ops, op_rejected = mine_operation_policies(body.episode_shapes, llm=llm, mode=body.mode)
     return {
         "candidates": [c.model_dump() for c in candidates],
         "workflows": [c.model_dump() for c in flows],
+        "goals": [g.model_dump() for g in goals],
         "intent_groups": [c.model_dump() for c in groups],
         "cohorts": [c.model_dump() for c in cohorts],
         "operations": [o.model_dump() for o in ops],
-        "rejected": rejected + flow_rejected + group_rejected + cohort_rejected + op_rejected,
+        "rejected": rejected + flow_rejected + goal_rejected + group_rejected + cohort_rejected + op_rejected,
         "policy_inferred": bool(llm),
         "mode": body.mode,
         # Said in the payload, not just the docs: a learned catalog cites

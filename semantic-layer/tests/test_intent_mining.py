@@ -247,11 +247,67 @@ def test_cross_run_support_without_the_whole_set_is_not_measured():
     assert "outside this one: not measured" in render_workflow_prompt(c)
 
 
+def test_hidden_single_call_runs_still_count_but_are_not_summarised():
+    """Hiding a goal called on its own must not remove it from the evidence:
+    without it, 'the credit report was read first in 60%' becomes 'always'.
+    And a hidden run must not spend the cap a shown one needed."""
+    from semanticlayer.intent_mining import mine_workflows
+    llm = _LLM({"intent": "x", "description": "d",
+                "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
+    runs = [flow(steps=["c"], occurrences=4),
+            flow(steps=["a", "c"], occurrences=6)]
+    cands, _ = mine_workflows(runs, llm=llm, min_sessions=1, limit=1, min_steps=2)
+    assert [c.steps for c in cands] == [["a", "c"]] and len(llm.prompts) == 1
+    assert cands[0].goal_runs == 10
+    assert cands[0].prerequisite_support == [{"step": "a", "runs": 6, "share": 0.6}]
+
+
 def test_a_single_call_run_has_no_prerequisites():
     from semanticlayer.intent_mining import render_workflow_prompt, structural_workflow
     c = structural_workflow(flow(steps=["c"]))
     assert (c.goal, c.prerequisites) == ("c", [])
     assert "called on its own" in render_workflow_prompt(c)
+
+
+def test_workflow_title_and_description_are_kept():
+    """They lead the row on the page; the tool calls move behind a click."""
+    from semanticlayer.intent_mining import infer_workflow_policy, structural_workflow
+    llm = _LLM({"intent": "assess_risk", "title": "Assess applicant risk",
+                "description": "Scores an applicant before a decision.",
+                "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
+    out, err = infer_workflow_policy(structural_workflow(flow()), llm)
+    assert err is None
+    assert (out.title, out.description) == ("Assess applicant risk", "Scores an applicant before a decision.")
+    assert '"title"' in llm.prompts[0][0]
+
+
+def _goal_runs():
+    return [flow(steps=["a", "b", "c"], occurrences=6), flow(steps=["b", "c"], occurrences=3),
+            flow(steps=["c"], occurrences=1), flow(steps=["x"], occurrences=9)]
+
+
+def test_goals_group_every_way_of_reaching_the_same_call():
+    """Keyed by the counted terminal call, never the model's title. A goal only
+    ever called on its own is hidden under min_steps=2, but a kept goal keeps
+    its direct-call variant — it is one of the ways the goal is reached."""
+    from semanticlayer.intent_mining import goals_from_workflows
+    gs = goals_from_workflows(_goal_runs(), min_steps=2)
+    assert [g.goal for g in gs] == ["c"]
+    g = gs[0]
+    assert g.variant_runs == 10 and [v["runs"] for v in g.variants] == [6, 3, 1]
+    assert g.goal_runs == 10
+    assert g.prerequisite_support[0] == {"step": "b", "runs": 9, "share": 0.9}
+
+
+def test_one_model_call_per_goal_not_per_variant():
+    from semanticlayer.intent_mining import mine_goal_intents
+    llm = _LLM({"intent": "x", "title": "Do the thing", "description": "d",
+                "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
+    out, _ = mine_goal_intents(_goal_runs(), llm=llm, min_sessions=1, min_steps=2)
+    assert len(out) == 1 and len(llm.prompts) == 1 and out[0].title == "Do the thing"
+    user = llm.prompts[0][1]
+    assert "b: 9 of 10 runs (90%)" in user
+    assert "a -> b -> the goal   [6 runs]" in user and "directly, nothing read first   [1 runs]" in user
 
 
 def test_workflow_llm_failure_degrades_to_the_counted_half():

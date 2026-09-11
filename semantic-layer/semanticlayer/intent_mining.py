@@ -346,6 +346,7 @@ class WorkflowCandidate(BaseModel):
     prerequisite_support: list[dict] = Field(default_factory=list)  # {step, runs, share}
     # ── inferred ──
     intent: str = ""
+    title: str = ""        # a few words for the reviewer; leads the row
     description: str = ""
     inferred_policy: Optional[InferredPolicy] = None
     # ── review ──
@@ -416,7 +417,12 @@ it at all.
 
 Return STRICT JSON only:
 {"intent": "verb_noun snake_case name for the goal",
- "description": "one sentence on what the goal accomplishes",
+ "title": "2-5 words naming it for a reviewer, business terms, sentence case, \
+no tool names - e.g. \\"Assess applicant risk\\"",
+ "description": "under 12 words saying what sets THIS pattern apart from \
+other ways of reaching the same goal: what it reads first, in business terms - \
+e.g. \\"After the applicant's profile and credit report.\\" or \\"Directly, with \
+nothing read first.\\" Never start with 'This', no tool names, no counts",
  "policy": {"statement": "...", "rationale": "...",
             "confidence": "high|medium|low", "caveats": ["..."]}}"""
 
@@ -556,24 +562,32 @@ def infer_workflow_policy(c: WorkflowCandidate, llm: LLMClient) -> tuple[Workflo
         return c, f"{label}: policy block invalid: {e}"
     return c.model_copy(update={
         "intent": str(parsed.get("intent") or "").strip() or "_".join(c.steps[:2]),
+        "title": str(parsed.get("title") or "").strip()[:80],
         "description": str(parsed.get("description") or "").strip(),
         "inferred_policy": inferred,
     }), None
 
 
 def mine_workflows(workflows: list[dict], llm: Optional[LLMClient] = None,
-                   min_sessions: int = 3, limit: int = 12) -> tuple[list[WorkflowCandidate], list[str]]:
+                   min_sessions: int = 3, limit: int = 12,
+                   min_steps: int = 1) -> tuple[list[WorkflowCandidate], list[str]]:
     """Runs in, process candidates out.
 
     `limit` bounds the LLM spend and, more importantly, the reading: a mined
     corpus yields dozens of overlapping runs, and a reviewer handed all of them
     reviews none. The aggregate arrives ranked by support, so the cap keeps the
     best-evidenced ones.
+
+    `min_steps` narrows what is SUMMARISED, never what is counted: a goal
+    called on its own is still a way of reaching that goal, and dropping it
+    from goal_support would turn a 60% habit into an "always". It applies
+    before `limit`, so hidden runs do not spend the cap.
     """
     candidates: list[WorkflowCandidate] = []
     rejected: list[str] = []
     support = goal_support(workflows)
-    for w in workflows[:limit]:
+    shown = [w for w in workflows if len(w.get("steps") or []) >= min_steps]
+    for w in shown[:limit]:
         c = structural_workflow(w, support)
         if c.sessions < min_sessions:
             rejected.append(f"{' -> '.join(c.steps)}: {c.sessions} session(s), below min_sessions={min_sessions}")
@@ -584,6 +598,172 @@ def mine_workflows(workflows: list[dict], llm: Optional[LLMClient] = None,
                 rejected.append(err)
         candidates.append(c)
     return candidates, rejected
+
+
+# ── One intent per GOAL ───────────────────────────────────────────────────
+# Summarised one by one, workflows gave the same intent several rows: five ways
+# of reaching the risk profile read as five "Assess applicant risk" candidates,
+# and publishing — which names an intent by its terminal call — kept one and
+# dropped the rest. Grouping by that terminal call makes the unit on the page
+# the unit in the catalogue. The key is a counted fact (the goal), never the
+# model's title, which can differ from one run to the next.
+
+
+class GoalIntent(BaseModel):
+    """One goal, and every observed way of reaching it."""
+    # ── counted ──
+    goal: str
+    variants: list[dict] = Field(default_factory=list)   # {steps, runs}: patterns ENDING at the goal
+    variant_runs: int = 0
+    sessions: int = 0
+    writes: bool = False
+    # Every run that reached the goal by any pattern, including ones that went
+    # on to something else — the denominator for "how often is X read first".
+    goal_runs: int = 0
+    prerequisite_support: list[dict] = Field(default_factory=list)  # {step, runs, share}
+    # ── inferred ──
+    intent: str = ""
+    title: str = ""
+    description: str = ""
+    inferred_policy: Optional[InferredPolicy] = None
+    # ── review ──
+    review_status: str = "pending"
+    warnings: list[str] = Field(default_factory=list)
+
+
+GOAL_SYSTEM = """You are naming one business INTENT from production traces.
+
+Its GOAL is one tool call - what the caller set out to get or do. You are \
+shown every observed way of reaching it and, across every run that reached \
+it, how often each other call was read before it. Those counts are your \
+evidence; do not contradict them.
+
+THE STATEMENT, in this shape:
+  "An intent to <the goal, as a business outcome>. It always requires <reads \
+at 95% or more> to be read first, and usually <reads at 50-94%>."
+- Say "always" only at 100%; at 95-99% say "requires".
+- Leave out reads below 50%.
+- If no read reaches 95%, say nothing is always read first, then what usually is.
+- If the goal is mostly called with nothing read first, say that plainly.
+- Name every call by the thing it reads, as a noun phrase ("the credit \
+report", "the applicant's profile") - never a tool name or a verb lifted from one.
+
+THE RATIONALE cites the figures given, e.g. "The credit report was read first \
+in 81% of the 178 runs that reached the risk profile." Never a generic reason.
+
+CAVEATS: if the ways of reaching it look like DIFFERENT operations that happen \
+to end on the same call, say so. Never caveat on a figure you were not given.
+
+Hard rules:
+1. NEVER state a prohibition as fact. Phrase restrictions as "appears to".
+2. FREQUENCY IS NOT LEGITIMACY. The most common way may be the wrong one.
+
+Return STRICT JSON only:
+{"intent": "verb_noun snake_case name",
+ "title": "2-5 words naming it for a reviewer, business terms, sentence case, \
+no tool names - e.g. \\"Assess applicant risk\\"",
+ "description": "under 12 words on what it accomplishes, business terms. Never \
+start with 'This', no tool names, no counts",
+ "policy": {"statement": "...", "rationale": "...",
+            "confidence": "high|medium|low", "caveats": ["..."]}}"""
+
+
+def _support_rows(goal: str, support: dict[str, dict]) -> tuple[int, list[dict]]:
+    s = support.get(goal)
+    if not s or not s["runs"]:
+        return 0, []
+    n = s["runs"]
+    return n, sorted(({"step": t, "runs": k, "share": round(k / n, 3)} for t, k in s["before"].items()),
+                     key=lambda x: (-x["runs"], x["step"]))
+
+
+def goals_from_workflows(workflows: list[dict], min_steps: int = 1) -> list[GoalIntent]:
+    """Group runs by their terminal call. A goal is kept if ANY way of reaching
+    it has at least `min_steps` calls; once kept, its direct-call variant stays
+    in the list, because "201 times with nothing read first" is part of what
+    the goal is. Counting always uses every run."""
+    support = goal_support(workflows)
+    by_goal: dict[str, list[dict]] = {}
+    for w in workflows:
+        steps = list(w.get("steps") or [])
+        if steps:
+            by_goal.setdefault(steps[-1], []).append(w)
+    out: list[GoalIntent] = []
+    for goal, ws in by_goal.items():
+        if not any(len(w.get("steps") or []) >= min_steps for w in ws):
+            continue
+        variants = sorted(({"steps": list(w["steps"]), "runs": _runs(w)} for w in ws),
+                          key=lambda v: -v["runs"])
+        goal_runs, prereq = _support_rows(goal, support)
+        out.append(GoalIntent(
+            goal=goal, variants=variants, variant_runs=sum(v["runs"] for v in variants),
+            sessions=sum(int(w.get("sessions") or 0) for w in ws),
+            writes=any(bool(w.get("closed_by")) for w in ws),
+            goal_runs=goal_runs, prerequisite_support=prereq,
+        ))
+    out.sort(key=lambda g: -g.variant_runs)
+    return out
+
+
+def render_goal_prompt(g: GoalIntent) -> str:
+    # The tool name appears once, on the goal line; everywhere else it is "the
+    # goal", because whatever the prompt names, the model copies.
+    lines = [f"goal: {g.goal}" + ("  (changes data)" if g.writes else "")]
+    if g.goal_runs:
+        lines.append(f"reached in {g.goal_runs} runs in total, by any pattern")
+        lines.append("read before the goal, across those runs:")
+        shown = [p for p in g.prerequisite_support if p["share"] >= 0.05][:8]
+        lines += [f"  - {p['step']}: {p['runs']} of {g.goal_runs} runs ({int(p['share'] * 100)}%)"
+                  for p in shown] or ["  - nothing, in any of them"]
+    lines.append(f"observed ways of reaching it ({len(g.variants)}):")
+    for v in g.variants[:8]:
+        before = " -> ".join(v["steps"][:-1])
+        lines.append(f"  - {before + ' -> the goal' if before else 'directly, nothing read first'}"
+                     f"   [{v['runs']} runs]")
+    if len(g.variants) > 8:
+        lines.append(f"  - ...and {len(g.variants) - 8} more")
+    return "\n".join(lines)
+
+
+def infer_goal_policy(g: GoalIntent, llm: LLMClient) -> tuple[GoalIntent, Optional[str]]:
+    """Same contract as infer_policy: degrade to the counted half on failure."""
+    raw = llm.complete(GOAL_SYSTEM, render_goal_prompt(g))
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return g, f"{g.goal}: LLM output was not valid JSON: {e}"
+    if not isinstance(parsed, dict):
+        return g, f"{g.goal}: LLM returned {type(parsed).__name__}, expected an object"
+    pol = parsed.get("policy") or {}
+    try:
+        inferred = InferredPolicy.model_validate(pol) if pol else None
+    except Exception as e:  # noqa: BLE001
+        return g, f"{g.goal}: policy block invalid: {e}"
+    return g.model_copy(update={
+        "intent": str(parsed.get("intent") or "").strip() or g.goal,
+        "title": str(parsed.get("title") or "").strip()[:80],
+        "description": str(parsed.get("description") or "").strip(),
+        "inferred_policy": inferred,
+    }), None
+
+
+def mine_goal_intents(workflows: list[dict], llm: Optional[LLMClient] = None,
+                      min_sessions: int = 3, limit: int = 12,
+                      min_steps: int = 1) -> tuple[list[GoalIntent], list[str]]:
+    """Runs in, one candidate per goal out — ONE model call per goal, however
+    many ways it was reached."""
+    out: list[GoalIntent] = []
+    rejected: list[str] = []
+    for g in goals_from_workflows(workflows, min_steps)[:limit]:
+        if g.sessions < min_sessions:
+            rejected.append(f"{g.goal}: {g.sessions} session(s), below min_sessions={min_sessions}")
+            continue
+        if llm is not None:
+            g, err = infer_goal_policy(g, llm)
+            if err:
+                rejected.append(err)
+        out.append(g)
+    return out, rejected
 
 
 # ── One intent, several observed shapes ───────────────────────────────────
