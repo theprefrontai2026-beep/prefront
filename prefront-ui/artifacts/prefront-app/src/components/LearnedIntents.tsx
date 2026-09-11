@@ -17,7 +17,7 @@
  * facts. A reviewer approves a NARROWING, not a rubber stamp.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DemoConfig } from "../demos";
 import ProcessMap from "./ProcessMap";
 import WorkflowStrips, { shapeKey, STRIP_LIMIT, type Approval, type Policy, type Shape } from "./WorkflowStrips";
@@ -185,6 +185,63 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
   const [rejected, setRejected] = useState<string[]>([]);
   const [status, setStatus] = useState<"idle" | "mining" | "error">("idle");
   const [error, setError] = useState("");
+  // When the shown run was mined, and with what settings — the controls can
+  // be changed afterwards without re-mining, so they cannot be trusted to say.
+  const [minedAt, setMinedAt] = useState<string | null>(null);
+  const [minedWith, setMinedWith] = useState<{ days: number; minSessions: number; withLlm: boolean } | null>(null);
+
+  // The run is saved server-side and restored on arrival: the model's readings
+  // cost a metered call each and the approvals are a reviewer's work, and both
+  // used to vanish on reload. Saving is enabled only once the saved run for
+  // THIS demo has loaded, or the empty initial state would overwrite it.
+  const [hydratedFor, setHydratedFor] = useState<string | null>(null);
+  const lastSaved = useRef<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    lastSaved.current = null;
+    setHydratedFor(null);
+    const done = (run: any) => {
+      if (!alive) return;
+      const p = run?.params || {};
+      setShapes(run?.shapes || []);
+      setPolicies(run?.policies || {});
+      setRejected(run?.rejected || []);
+      setApprovals(run?.approvals || {});
+      setShapeByKey(run?.approvalShapes || {});
+      setMinedAt(run?.minedAt ?? null);
+      setMinedWith(run ? p : null);
+      if (p.days) setDays(p.days);
+      if (p.minSessions) setMinSessions(p.minSessions);
+      if (typeof p.withLlm === "boolean") setWithLlm(p.withLlm);
+      setHydratedFor(demo.id);
+    };
+    fetch(`/api/learned/workflows?demo=${encodeURIComponent(demo.id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => done(j?.run ?? null))
+      .catch(() => done(null));
+    return () => { alive = false; };
+  }, [demo.id]);
+
+  useEffect(() => {
+    if (hydratedFor !== demo.id) return;
+    const body = JSON.stringify({
+      demo: demo.id, params: minedWith ?? { days, minSessions, withLlm },
+      shapes, policies, rejected, approvals, approvalShapes: shapeByKey, minedAt,
+    });
+    // The first pass after loading is the loaded run itself; writing it back
+    // would only bump its timestamp.
+    if (lastSaved.current === null) { lastSaved.current = body; return; }
+    if (body === lastSaved.current) return;
+    const t = setTimeout(() => {
+      fetch("/api/learned/workflows", { method: "PUT", headers: { "content-type": "application/json" }, body })
+        .then((r) => { if (r.ok) lastSaved.current = body; })
+        .catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+    // days/minSessions/withLlm are deliberately absent: changing a control is
+    // not a new result, and minedWith already records what this run used.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydratedFor, demo.id, shapes, policies, rejected, approvals, shapeByKey, minedAt, minedWith]);
 
   // The learning status is fetched on arrival, not only as a side effect of
   // mining. Otherwise the model control is disabled on a page you have just
@@ -216,6 +273,8 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const ej = er.ok ? await er.json() : {};
       const sh: Shape[] = ej.shapes || [];
       setShapes(sh);
+      setMinedAt(new Date().toISOString());
+      setMinedWith({ days, minSessions, withLlm });
       const bj = br.ok ? await br.json() : null;
       setBaseline(bj);
       if (!sh.length) { setPolicies({}); setRejected([]); setStatus("idle"); return; }
@@ -350,6 +409,16 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             because on a single graph every workflow is drawn over every other and judging any
             one of them means tracing it out of the tangle first.
           </p>
+          {minedAt && minedWith && (
+            <p className="pf-hint">
+              Saved run: mined {new Date(minedAt).toLocaleString()} over the last {minedWith.days} day
+              {minedWith.days === 1 ? "" : "s"}, minimum {minedWith.minSessions} sessions
+              {minedWith.withLlm ? ", with model summaries" : ""}. It stays across reloads, approvals
+              included — mine again to refresh it.
+              {(minedWith.days !== days || minedWith.minSessions !== minSessions) &&
+                " The settings above have changed since; mine again to apply them."}
+            </p>
+          )}
           <WorkflowStrips
             shapes={shapes}
             policies={policies}

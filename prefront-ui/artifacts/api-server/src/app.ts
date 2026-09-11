@@ -26,7 +26,9 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
+// Above the 100kb default: a saved Learned Intents run carries every mined
+// workflow with its model reading, which outgrows it on a busy deployment.
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
