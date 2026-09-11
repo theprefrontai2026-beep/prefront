@@ -17,10 +17,16 @@
  * facts. A reviewer approves a NARROWING, not a rubber stamp.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DemoConfig } from "../demos";
 import ProcessMap from "./ProcessMap";
-import WorkflowStrips, { shapeKey, STRIP_LIMIT, type Approval, type Policy, type Shape } from "./WorkflowStrips";
+import WorkflowStrips, { groupByGoal, STRIP_LIMIT, type Approval, type Policy, type Shape } from "./WorkflowStrips";
+
+// A goal only ever called on its own is a tool, not a workflow — nothing is
+// read first, so there is no dependency to show. Hidden and not summarised;
+// the counts still include those runs. Fixed rather than a toggle for now —
+// see TODO.md entry 23.
+const MIN_STEPS = 2;
 
 
 type Baseline = {
@@ -67,6 +73,40 @@ function BaselineBanner({ b }: { b: Baseline }) {
   );
 }
 
+/** The funnel the page is about, as three numbers: every tool call observed,
+ *  the distinct sequences they fall into, and the intents those sequences
+ *  reach. Stat tiles rather than a chart — three headline counts are the
+ *  whole message, and a bar chart of them would compare magnitudes that are
+ *  not the point. `null` renders as a dash, never as 0. */
+function InsightRow({ calls, tools, sequences, operations, intents }: {
+  calls: number | null; tools: number | null;
+  sequences: number | null; operations: number | null;
+  intents: number | null;
+}) {
+  const fmt = (n: number | null) =>
+    n == null ? "—" : n >= 10000 ? `${(n / 1000).toFixed(1)}K` : n.toLocaleString();
+  const tiles = [
+    { label: "Tool calls", value: calls, sub: tools != null ? `across ${tools} tools` : "" },
+    { label: "Sequences", value: sequences,
+      sub: operations != null ? `distinct, in ${operations.toLocaleString()} operations` : "" },
+    { label: "Intents", value: intents, sub: intents != null ? "goals those sequences reach" : "mine to count" },
+  ];
+  return (
+    <div className="pf-li-kpis">
+      {tiles.map((t, i) => (
+        <Fragment key={t.label}>
+          {i > 0 && <span className="pf-li-kpi-arrow" aria-hidden="true">›</span>}
+          <div className="pf-li-kpi">
+            <div className="lbl">{t.label}</div>
+            <div className="val">{fmt(t.value)}</div>
+            <div className="sub">{t.sub}</div>
+          </div>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
 /** The approved set, and the one control that turns it into a real artifact.
  *
  *  Deliberately a two-step: DRY RUN renders the exact YAML and every problem
@@ -85,7 +125,9 @@ function PublishBar({ demo, approvals, shapes, state, setState, onPublished }: {
 }) {
   const [preview, setPreview] = useState("");
   const keys = Object.keys(approvals);
-  const noRoles = keys.filter((k) => (approvals[k]?.roles || []).length === 0).length;
+  // Callers are not chosen on this page, so the server's "no roles" note would
+  // appear on every entry and say nothing the reviewer can act on here.
+  const shown = (ps: string[]) => ps.filter((p) => !/no roles approved|no allowed_callers\.roles/.test(p));
 
   const payload = (overwrite: boolean, dryRun: boolean) => ({
     datasource_id: demo.id,
@@ -137,9 +179,6 @@ function PublishBar({ demo, approvals, shapes, state, setState, onPublished }: {
     <div className="pf-pub">
       <div className="pf-pub-row">
         <strong>{keys.length} pattern{keys.length === 1 ? "" : "s"} in the approved set</strong>
-        {noRoles > 0 && (
-          <span className="pf-pub-warn">{noRoles} with no caller ticked</span>
-        )}
         <span className="pf-li-spacer" />
         <button className="pf-btn sm" type="button" disabled={state.busy}
                 onClick={() => call(false, true)}>Preview the catalogue</button>
@@ -156,7 +195,7 @@ function PublishBar({ demo, approvals, shapes, state, setState, onPublished }: {
       </p>
       {state.err && <p className="pf-error">{state.err}</p>}
       {state.msg && <p className="pf-pub-ok">{state.msg}</p>}
-      {state.problems.map((p, i) => <div key={i} className="pf-li-warn-row">{p}</div>)}
+      {shown(state.problems).map((p, i) => <div key={i} className="pf-li-warn-row">{p}</div>)}
       {preview && <pre className="pf-pub-yaml">{preview}</pre>}
     </div>
   );
@@ -166,10 +205,17 @@ function PublishBar({ demo, approvals, shapes, state, setState, onPublished }: {
 export default function LearnedIntents({ demo, active }: { demo: DemoConfig; active?: boolean }) {
   const [days, setDays] = useState(30);
   const [minSessions, setMinSessions] = useState(3);
-  const [withLlm, setWithLlm] = useState(false);
+  // Always on, with no control on the page: the rows lead with the model's
+  // title and one-liner. mine() still asks only once the baseline has settled
+  // — the server refuses otherwise (409) — and falls back to counts before.
+  const withLlm = true;
   // The workflow under review; focuses the map and nothing else.
   const [focus, setFocus] = useState<{ label: string; tools: string[] } | null>(null);
   const [shapes, setShapes] = useState<Shape[]>([]);
+  // Counted the same way the list groups them, so the tile and the rows agree.
+  const intentCount = useMemo(
+    () => (shapes.length ? groupByGoal(shapes, MIN_STEPS).length : null), [shapes]);
+  const [toolStats, setToolStats] = useState<{ calls: number; tools: number } | null>(null);
   // The model's reading of each workflow, keyed by shape. Kept beside the
   // shapes rather than inside them: one is counted and always present, the
   // other is inferred, optional, and gated on the baseline having settled.
@@ -206,13 +252,17 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       setShapes(run?.shapes || []);
       setPolicies(run?.policies || {});
       setRejected(run?.rejected || []);
-      setApprovals(run?.approvals || {});
-      setShapeByKey(run?.approvalShapes || {});
+      // Approvals are keyed by goal now. One saved under the old per-shape key
+      // matches no row, so it could not be seen or removed — yet it would
+      // still publish. Dropped rather than carried.
+      const byGoal = <T,>(m: Record<string, T> | undefined) =>
+        Object.fromEntries(Object.entries(m || {}).filter(([k]) => k.startsWith("goal:")));
+      setApprovals(byGoal<Approval>(run?.approvals));
+      setShapeByKey(byGoal<Shape>(run?.approvalShapes));
       setMinedAt(run?.minedAt ?? null);
       setMinedWith(run ? p : null);
       if (p.days) setDays(p.days);
       if (p.minSessions) setMinSessions(p.minSessions);
-      if (typeof p.withLlm === "boolean") setWithLlm(p.withLlm);
       setHydratedFor(demo.id);
     };
     fetch(`/api/learned/workflows?demo=${encodeURIComponent(demo.id)}`)
@@ -254,6 +304,22 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (alive) setBaseline(j); })
       .catch(() => {});
+    return () => { alive = false; };
+  }, [active, days, demo.id]);
+
+  // Tool-call totals for the first tile, over the same window as the
+  // baseline. Per-tool profiles are the one aggregate that counts calls.
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    fetch(`/eval/behavior/tools?since=${days * 86400}&app=${encodeURIComponent(demo.id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive) return;
+        const ts: { calls?: number }[] = j?.tools || [];
+        setToolStats(j ? { calls: ts.reduce((a, t) => a + (t.calls || 0), 0), tools: ts.length } : null);
+      })
+      .catch(() => { if (alive) setToolStats(null); });
     return () => { alive = false; };
   }, [active, days, demo.id]);
 
@@ -299,8 +365,13 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             // is not the norm.
             roles: x.roles.map((r) => ({ value: r.value, sessions: r.episodes })),
             contested: [], example_sessions: x.example_sessions,
+            closed_by: x.closed_by,
           })),
           min_sessions: minSessions,
+          min_steps: MIN_STEPS,
+          // One summary per GOAL, matching the rows: every way of reaching
+          // the same call is one intent, and one model call.
+          group_by_goal: true,
           // Matched to what the list renders, so no visible row is left
           // without a reading for a reason the reader cannot see.
           limit: STRIP_LIMIT,
@@ -312,8 +383,12 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
       const mj = await mr.json();
       if (!mr.ok) throw new Error(mj?.detail?.error || mj?.detail || mj?.error || `${mr.status} mining`);
       const byKey: Record<string, Policy> = {};
-      for (const w of (mj.workflows || [])) {
-        if (w.inferred_policy) byKey[(w.steps || []).join(">")] = w.inferred_policy;
+      for (const g of (mj.goals || [])) {
+        // The model's name and one-liner ride along with its reading: they
+        // lead the row, and the tool calls move behind a click.
+        if (g.inferred_policy) byKey[g.goal] = {
+          ...g.inferred_policy, title: g.title || "", description: g.description || "",
+        };
       }
       setPolicies(byKey);
       setRejected(mj.rejected || []);
@@ -334,23 +409,6 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
             </button>
           </div>
         </div>
-        <p className="pf-hint" style={{ marginTop: 0 }}>
-          The onboarding path for a deployment with <strong>no policy document</strong>. Every
-          session already records who called which tool, with what arguments, what came back and
-          in what order — most of an intent catalog, sitting in the trace store. This reads those
-          traces and proposes candidates.
-        </p>
-        <p className="pf-hint">
-          <strong>This is observation, not assessment.</strong> While a baseline is forming, the
-          job is to learn how tools are actually called and in what patterns — nothing below is a
-          finding, and nothing here is wrong. Judging traffic before there is an approved shape to
-          compare against manufactures problems out of the absence of one.
-          <br /><br />
-          When you do come to approve: <strong>frequency is not legitimacy.</strong> Observed
-          callers are not permitted callers, and an agent that has been leaking for months makes
-          leaking look normal — so every pattern carries the integrity violations found on the
-          sessions supporting it. You approve a <em>narrowing</em>. Nothing here is published.
-        </p>
 
         <div className="pf-fields">
           <label>Window
@@ -358,26 +416,11 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
               {[1, 7, 30, 90].map((d) => <option key={d} value={d}>last {d} day{d === 1 ? "" : "s"}</option>)}
             </select>
           </label>
-          <label>Minimum sessions
-            <input type="number" min={1} value={minSessions}
-                   onChange={(e) => setMinSessions(Math.max(1, Number(e.target.value)))} />
-          </label>
-          {/* Disabled, not merely defaulted off. The server refuses it too
-              (409) — the UI is not the only caller, and "never run the model
-              while learning" is a rule about the system, not a preference. */}
-          <label className={`pf-li-toggle${baseline?.ready ? "" : " off"}`}>
-            <input type="checkbox" checked={withLlm && !!baseline?.ready}
-                   disabled={!baseline?.ready}
-                   onChange={(e) => setWithLlm(e.target.checked)} />
-            Summarise the patterns with a model
-            {!baseline?.ready && <span className="pf-li-locked">available once the baseline settles</span>}
-          </label>
         </div>
-        <p className="pf-hint">
-          {baseline?.ready
-            ? "The pattern set has settled, so summarising is now meaningful: a model can name each pattern and read the rule it implies, for you to approve."
-            : "No model runs while learning. Learning the patterns is counting — reproducible, auditable and free. Summarising is what you do once the pattern set has settled and you are naming things to approve; asking a model to read a rule out of traffic that is still surprising us produces a confident statement about a pattern that may not be the pattern."}
-        </p>
+        <InsightRow
+          calls={toolStats?.calls ?? null} tools={toolStats?.tools ?? null}
+          sequences={baseline?.distinct_shapes ?? null} operations={baseline?.observed_episodes ?? null}
+          intents={intentCount} />
         {error && <p className="pf-error">{error}</p>}
       </section>
 
@@ -404,10 +447,9 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
         <section className="pf-panel" style={{ marginTop: 14 }}>
           <div className="pf-dash-panel-head"><h2>Observed workflows</h2></div>
           <p className="pf-hint" style={{ marginTop: 0 }}>
-            One workflow per row, ordered by how often it happens. Expand one to see its own
-            diagram, what a model makes of it, and the decision — separated rather than merged,
-            because on a single graph every workflow is drawn over every other and judging any
-            one of them means tracing it out of the tangle first.
+            One intent per row — every observed way of reaching the same goal, together — ordered
+            by how often it happens. Expand one to see what is read before it and each way it was
+            reached.
           </p>
           {minedAt && minedWith && (
             <p className="pf-hint">
@@ -421,10 +463,10 @@ export default function LearnedIntents({ demo, active }: { demo: DemoConfig; act
           )}
           <WorkflowStrips
             shapes={shapes}
+            minSteps={MIN_STEPS}
             policies={policies}
             approvals={approvals}
-            onApprove={(sh, a) => {
-              const k = shapeKey(sh);
+            onApprove={(k, sh, a) => {
               setShapeByKey((m) => ({ ...m, [k]: sh }));
               setApprovals((m) => {
                 const next = { ...m };

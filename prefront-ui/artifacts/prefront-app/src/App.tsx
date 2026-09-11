@@ -67,7 +67,9 @@ const TABS = [
   // which is what the nav entry is for.
   { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconSplit },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
-  { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
+  // Intent Flows hidden for the demo, the same way as Semantic Layer above:
+  // its tab body stays mounted below, so re-enabling it is restoring this line.
+  // { id: "flows",    label: "Intent Flows",    sub: "Per-user intent sequences",icon: IconFlow },
   { id: "oob",      label: "Observability",   sub: "Traces, LLM, cost (OOB)",   icon: IconPulse },
   { id: "compliance", label: "Compliance",    sub: "Framework evidence",        icon: IconCheckShield },
 ];
@@ -320,6 +322,15 @@ export default function App() {
     setCallerScopeText(demo.defaultCallerScope);
   }, [demoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Sidebar: an icon rail by default, expandable to show each tab's name.
+  // Remembered per browser — a layout preference, not shared state.
+  const [navOpen, setNavOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("prefront.nav.open") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("prefront.nav.open", navOpen ? "1" : "0"); } catch { /* ignore */ }
+  }, [navOpen]);
+
   const completedTabs = new Set<string>();
   if (schema?.datasourceId) completedTabs.add("data");
   if (rules.some(r => r.review_status === "approved")) completedTabs.add("policy");
@@ -336,7 +347,7 @@ export default function App() {
   return (
     <>
     <DemoChooser />
-    <div className="pf-shell">
+    <div className={`pf-shell${navOpen ? " nav-open" : ""}`}>
       {/* ── Left icon sidebar ── */}
       <aside className="pf-sidebar">
         {/* Logo — "pf" wordmark (p solid, f outline) */}
@@ -370,6 +381,7 @@ export default function App() {
               title={t.label}
             >
               <Icon />
+              <span className="pf-nav-label">{t.label}</span>
             </button>
           );
         })}
@@ -378,8 +390,17 @@ export default function App() {
 
         {/* Bottom utility icons */}
         <div className="pf-sidebar-bottom">
-          <button className="pf-nav-item" title="Notifications"><IconBell /></button>
-          <button className={`pf-nav-item ${tab === "settings" ? "active" : ""}`} title="Settings" onClick={() => navTo(lastPath.current.settings ?? TAB_PATH.settings)}><IconSettings /></button>
+          <button className="pf-nav-item" title="Notifications"><IconBell /><span className="pf-nav-label">Notifications</span></button>
+          <button className={`pf-nav-item ${tab === "settings" ? "active" : ""}`} title="Settings" onClick={() => navTo(lastPath.current.settings ?? TAB_PATH.settings)}><IconSettings /><span className="pf-nav-label">Settings</span></button>
+          <button className="pf-nav-item pf-nav-toggle" type="button" aria-expanded={navOpen}
+                  title={navOpen ? "Collapse sidebar" : "Expand sidebar"}
+                  onClick={() => setNavOpen((v) => !v)}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M13 17l5-5-5-5" /><path d="M6 17l5-5-5-5" />
+            </svg>
+            <span className="pf-nav-label">Collapse</span>
+          </button>
         </div>
       </aside>
 

@@ -199,6 +199,27 @@
   display: flex; flex-direction: column; align-items: center; gap: 4px;
 }
 
+/* Expanded sidebar: the same rail, wider, with each tab's name beside its
+   icon. Only --sidebar-w changes, so the content's margin follows it. */
+.pf-shell.nav-open { --sidebar-w: 212px; }
+.pf-sidebar { transition: width 0.16s ease; }
+.pf-content { transition: margin-left 0.16s ease; }
+.pf-nav-label { display: none; }
+.pf-shell.nav-open .pf-sidebar { align-items: stretch; padding-left: 12px; padding-right: 12px; }
+.pf-shell.nav-open .pf-sidebar-divider { width: auto; }
+.pf-shell.nav-open .pf-sidebar-bottom { align-items: stretch; }
+.pf-shell.nav-open .pf-nav-item { width: 100%; justify-content: flex-start; gap: 12px; padding: 0 10px; }
+.pf-shell.nav-open .pf-nav-label {
+  display: inline; font-family: var(--app-font-sans); font-size: 13px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The names are on screen, so the hover tooltip would only repeat them. */
+.pf-shell.nav-open .pf-nav-item[title]:hover::before { display: none; }
+.pf-shell.nav-open .pf-demo-pill { width: 100%; flex-direction: row; gap: 8px; padding: 8px 10px; }
+.pf-shell.nav-open .pf-demo-pill-label { font-size: 12px; max-width: none; }
+.pf-nav-toggle svg { transition: transform 0.16s ease; }
+.pf-shell.nav-open .pf-nav-toggle svg { transform: rotate(180deg); }
+
 /* ── Main content ────────────────────────────────────────────────────────── */
 .pf-content {
   flex: 1;
@@ -2784,6 +2805,76 @@ td.pf-tr-share { width: 34px; text-align: right; }
 .pf-ws-obs { font-size: 10px; color: var(--muted); }
 .pf-ws-approve-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pf-ws-warn { font-size: 11px; color: var(--amber); max-width: 62ch; }
+
+/* Row, simplified: a name and one line on the left, its numbers as marks on
+   the right — a bar for volume, a ring for its share of every run reaching the
+   same goal. The tool calls live behind the expand, shown once. */
+.pf-ws-head { align-items: flex-start; }
+.pf-ws-name { flex: 1; min-width: 0; }
+.pf-ws-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.pf-ws-desc { margin-top: 2px; font-size: 12px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-ws-stats { display: flex; align-items: center; gap: 14px; flex-shrink: 0; padding-top: 2px; }
+.pf-ws-vol { display: inline-flex; align-items: center; gap: 6px; }
+.pf-ws-vol .bar { display: block; width: 90px; height: 6px; border-radius: 3px; background: #eef1f5; overflow: hidden; }
+.pf-ws-vol .bar i { display: block; height: 100%; background: var(--blue); border-radius: 3px; }
+.pf-ws-vol .n { font-family: var(--app-font-mono); font-size: 11px; color: var(--ink); min-width: 26px; text-align: right; }
+.pf-ws-ring { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-soft); font-family: var(--app-font-mono); }
+.pf-ws-ring svg { display: block; }
+.pf-ws-ring circle { fill: none; stroke-width: 4; }
+.pf-ws-ring .bg { stroke: #eef1f5; }
+.pf-ws-ring .fg { stroke: var(--teal); stroke-linecap: round; }
+.pf-ws-key { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 6px; }
+.pf-ws-key .pf-ws-vol .bar { width: 28px; }
+.pf-ws-key .pf-ws-ring { margin-left: 10px; }
+.pf-ws-detail { cursor: default; }
+.pf-ws-stmt { font-size: 13px; color: var(--ink); margin: 2px 0 10px; }
+.pf-ws-steps { display: flex; align-items: flex-start; flex-wrap: wrap; row-gap: 8px; }
+.pf-ws-stepwrap { display: inline-flex; align-items: flex-start; }
+.pf-ws-step {
+  display: inline-flex; flex-direction: column; gap: 4px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px;
+}
+.pf-ws-step code { font-size: 11px; }
+.pf-ws-step.goal { border-color: var(--blue); background: #f0f7ff; }
+.pf-ws-step.write { border-color: var(--red); background: #fffaf9; }
+.pf-ws-meter { display: flex; align-items: center; gap: 5px; }
+.pf-ws-meter .bar { width: 56px; height: 4px; border-radius: 2px; background: #eef1f5; overflow: hidden; }
+.pf-ws-meter .bar i { display: block; height: 100%; background: var(--teal); }
+.pf-ws-meter .pct { font-size: 10px; font-family: var(--app-font-mono); color: var(--muted); }
+.pf-ws-goal-tag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--blue); }
+.pf-ws-arrow { color: var(--muted); padding: 6px 6px 0; }
+.pf-ws-legend { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.pf-ws-why { margin: 10px 0 0; font-size: 12px; color: var(--ink-soft); }
+.pf-ws-why summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
+.pf-ws-why p { margin: 4px 0 0 14px; }
+.pf-ws-why p.caveat { color: var(--amber); }
+.pf-ws-detail .pf-ws-approve-row { margin-top: 10px; }
+
+/* Grouped by goal: the volume bar is split by the ways the goal is reached,
+   and the expanded row lists each of them. */
+.pf-ws-vol .bar .fill { display: flex; height: 100%; border-radius: 3px; overflow: hidden; }
+.pf-ws-vol .bar .fill i { border-radius: 0; box-shadow: inset -1px 0 0 #fff; }
+.pf-ws-sub { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 12px 0 6px; }
+.pf-ws-muted { font-size: 12px; color: var(--muted); padding-top: 6px; }
+.pf-ws-variants { display: flex; flex-direction: column; gap: 4px; }
+.pf-ws-var { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+.pf-ws-var .bar { width: 70px; height: 5px; border-radius: 3px; background: #eef1f5; overflow: hidden; flex-shrink: 0; }
+.pf-ws-var .bar i { display: block; height: 100%; background: var(--blue); }
+.pf-ws-var .n { font-family: var(--app-font-mono); min-width: 26px; text-align: right; color: var(--ink); }
+.pf-ws-var .chain { font-family: var(--app-font-mono); color: var(--ink-soft); }
+.pf-ws-var .chain em { color: var(--muted); }
+
+/* Learned Intents insight row: tool calls › sequences › intents. Stat tiles —
+   the number is the chart. Proportional figures at display size. */
+.pf-li-kpis { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.pf-li-kpi {
+  flex: 1; min-width: 170px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px;
+}
+.pf-li-kpi .lbl { font-size: 12px; color: var(--muted); }
+.pf-li-kpi .val { font-size: 28px; font-weight: 600; color: var(--ink); line-height: 1.2; margin-top: 4px; }
+.pf-li-kpi .sub { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; min-height: 1em; }
+.pf-li-kpi-arrow { align-self: center; color: var(--muted); font-size: 20px; }
 
 /* The approved set and the one control that installs it. */
 .pf-pub {

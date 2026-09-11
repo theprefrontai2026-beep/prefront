@@ -581,3 +581,38 @@ module vs. sourced from the existing design docs so it doesn't drift), and
 that any demo-specific wording stays UI-layer, not engine code (Hard Rule 1).
 This is `prefront-ui` work only — no engine change. See `prefront-ui/CLAUDE.md`
 for the tab architecture.
+
+---
+
+## 23. Learned Intents: single-call goals are hidden, with no way to show them
+
+Hidden for the demo, with the "Hide single-call patterns" toggle removed from
+the page. A goal that is only ever called on its own (no read before it) is
+treated as a tool, not a workflow, so it gets no row and no model summary.
+Now fixed at `MIN_STEPS = 2` in
+`prefront-ui/artifacts/prefront-app/src/components/LearnedIntents.tsx`, sent as
+`min_steps` to `POST /design/semantic/intents/mine`
+(`semanticlayer/api.py` `MineIntentsBody.min_steps`, applied in
+`intent_mining.goals_from_workflows` and `mine_workflows`). The server still
+defaults to `min_steps=1`, and `WorkflowStrips` still takes `minSteps`, so
+bringing the toggle back is UI-only.
+
+What is and isn't lost:
+
+- **Counts are unaffected.** `goal_support` (server) and `goalSupport` (UI)
+  count every run, so a goal's "read before it" meters still include runs that
+  called it directly. A kept goal also keeps its direct-call variant in its
+  "ways it was reached" list.
+- **A goal that is ONLY ever called alone is invisible and cannot be
+  approved.** Measured on LoanPro's 30-day window (shapes with ≥3 episodes):
+  four goals are hidden — `get_application` (81 runs), `list_applications`
+  (64), `send_decision_notice` (30), `get_internal_metrics` (20) — against 11
+  shown.
+- **Consequence to review before relying on a mined catalogue:** Family 3's
+  `catalog_membership` treats a call to an intent absent from the catalogue as
+  off-catalogue. A catalogue published from this page therefore flags every
+  call to a hidden single-call goal. Either restore the toggle, publish
+  single-call goals automatically as their own entries, or state that a mined
+  catalogue covers workflows only.
+
+Decide which, then restore a control or remove this note.
