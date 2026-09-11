@@ -331,6 +331,19 @@ class WorkflowCandidate(BaseModel):
     observed_roles: list[dict] = Field(default_factory=list)
     contested: list[dict] = Field(default_factory=list)
     example_sessions: list[str] = Field(default_factory=list)
+    # A run is FOR its last call: an episode closes on its side effect, or
+    # ends on the read the caller came for. Everything before it is what was
+    # read first. Summarising the run as "a, then b, then c" narrates the order
+    # and says nothing about it; "an intent to c, which requires a and b" is
+    # the reading a reviewer can adopt or reject.
+    goal: str = ""
+    prerequisites: list[str] = Field(default_factory=list)
+    # Counted across EVERY run the caller sent that reached `goal`, not just
+    # this one — "always requires" is a claim about all of them, and this run
+    # alone is always 100% by construction. goal_runs == 0 means not measured.
+    goal_runs: int = 0
+    goal_runs_with_reads: int = 0   # of goal_runs, those that read anything first
+    prerequisite_support: list[dict] = Field(default_factory=list)  # {step, runs, share}
     # ── inferred ──
     intent: str = ""
     description: str = ""
@@ -340,35 +353,121 @@ class WorkflowCandidate(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-WORKFLOW_SYSTEM = """You are reverse-engineering a business PROCESS from \
+WORKFLOW_SYSTEM = """You are reverse-engineering a business INTENT from \
 production traces. You are given an ordered run of tool calls that recurs \
 across many sessions, with how often it happens and who ran it.
 
-Name the process and state the policy it appears to encode. The order is the \
-evidence: a step that consistently precedes another is a candidate \
-PRECONDITION, and a step that consistently follows one is a candidate \
-OBLIGATION. Say which you think each is.
+Every run is FOR something. Its last call is the GOAL - what the caller set \
+out to get or do - and the calls before it are what this pattern reads first \
+to get there. You are told both, and you are also told every observed run \
+that reached the same goal by any pattern, with how often each other call \
+came before it.
 
-Three hard rules:
+THE STATEMENT describes THIS pattern, in this shape:
+  "An intent to <the goal, as a business outcome>. It always requires \
+<every call listed as read first in this run> to be read first."
+  or, when nothing was read first:
+  "An intent to <the goal, as a business outcome>, performed on its own with \
+nothing read first."
+- The prerequisites are EXACTLY the calls listed as "read first in this run" \
+- all of them, none added, none dropped.
+- Name every call by the thing it reads, as a noun phrase ("the credit \
+report", "the applicant's profile", "the applicant search"), everywhere - \
+statement, rationale and caveats. Never a tool name, and never a verb lifted \
+from one ("get the applicant's profile", "find the applicant", "the get \
+credit report").
+- Do NOT narrate the order ("first..., then..., finally..."). The point is \
+which reads the goal depends on, not the sequence they happened in.
+
+THE RATIONALE cites this pattern's own count and its share of all runs that \
+reached the goal, using the figures given, e.g. "Seen in 24 runs, 13% of the \
+178 runs that reached the risk profile." Never a generic reason such as "a \
+structured approach".
+
+THE WIDER PICTURE decides one thing: whether this pattern's reads are how the \
+goal is always reached, or only how this pattern reaches it.
+- This applies ONLY to this pattern's own prerequisites. When this pattern \
+reads nothing first, do not list what other patterns read; at most note the \
+share of runs that did read something first.
+- For any of this pattern's prerequisites read first in under 95% of all runs \
+that reached the goal, add ONE caveat stating it with the numbers, e.g. "Across all 178 runs \
+that reached the risk profile, the credit report was read first in 80% and \
+the applicant's profile in 66%, so this is one way of reaching it, not the \
+only one."
+- If every prerequisite is at 95% or more, say in the rationale that the \
+requirement holds across every way the goal is reached.
+- A pattern that is a large share of all runs reaching its goal IS the usual \
+way of doing it. Never call it non-standard.
+
+Hard rules:
 
 1. NEVER state a prohibition as fact. You see what happened, not what is \
 permitted. Phrase restrictions as "appears to" and put alternatives in caveats.
 2. FREQUENCY IS NOT LEGITIMACY. If the run carries integrity violations, or \
 its coverage is low, the sequence may be a workaround or an exfiltration \
 pattern rather than an approved process. Say so plainly.
-3. LOW COVERAGE MEANS IT IS NOT THE NORM. If only a small share of sessions \
-that started this way finished it, this is one path among many, not "the" \
-process, and confidence should be low.
+3. LOW COVERAGE MEANS IT IS NOT THE NORM. If coverage is given and only a \
+small share of sessions that started this way finished it, this is one path \
+among many, not "the" process, and confidence should be low.
+4. Caveats are about the evidence you were given - one role ran it, a \
+requirement rests on few runs, the order may be the agent's habit rather than \
+a business rule. Never caveat on a figure marked not measured; do not mention \
+it at all.
 
 Return STRICT JSON only:
-{"intent": "verb_noun snake_case process name",
- "description": "one sentence on what the process accomplishes",
+{"intent": "verb_noun snake_case name for the goal",
+ "description": "one sentence on what the goal accomplishes",
  "policy": {"statement": "...", "rationale": "...",
             "confidence": "high|medium|low", "caveats": ["..."]}}"""
 
 
-def structural_workflow(w: dict) -> WorkflowCandidate:
-    """The counted half of a multi-call candidate."""
+def _runs(w: dict) -> int:
+    return int(w.get("occurrences") or w.get("sessions") or 0)
+
+
+def goal_support(workflows: list[dict]) -> dict[str, dict]:
+    """For every call that ends some run: how many runs reached it at all, and
+    how many of those read each other call before it.
+
+    Over the WHOLE set the caller sent, including runs beyond the summarising
+    cap and runs where the goal is mid-way rather than last — they are all
+    evidence about what the goal depends on. Episode shapes partition episodes,
+    so nothing is counted twice.
+    """
+    goals = {w["steps"][-1] for w in workflows if w.get("steps")}
+    out: dict[str, dict] = {}
+    for goal in goals:
+        total, with_reads, before = 0, 0, {}
+        for w in workflows:
+            steps = list(w.get("steps") or [])
+            if goal not in steps:
+                continue
+            n = _runs(w)
+            total += n
+            prior = set(steps[:steps.index(goal)]) - {goal}
+            if prior:
+                with_reads += n
+            for s in prior:
+                before[s] = before.get(s, 0) + n
+        out[goal] = {"runs": total, "with_reads": with_reads, "before": before}
+    return out
+
+
+def structural_workflow(w: dict, support: Optional[dict[str, dict]] = None) -> WorkflowCandidate:
+    """The counted half of a multi-call candidate. `support` is goal_support()
+    over the caller's whole set; without it the cross-run figures are not
+    measured, never guessed from this one run."""
+    steps = list(w.get("steps") or [])
+    goal = steps[-1] if steps else ""
+    prerequisites = list(dict.fromkeys(s for s in steps[:-1] if s != goal))
+    goal_runs, with_reads, prereq_support = 0, 0, []
+    if support and goal in support:
+        goal_runs = support[goal]["runs"]
+        with_reads = support[goal].get("with_reads", 0)
+        prereq_support = sorted(
+            ({"step": s, "runs": n, "share": round(n / goal_runs, 3) if goal_runs else 0.0}
+             for s, n in support[goal]["before"].items()),
+            key=lambda x: (-x["runs"], x["step"]))
     sessions = int(w.get("sessions") or 0)
     roles = _share(w.get("roles") or [], sessions)
     raw_cov = w.get("coverage")
@@ -391,7 +490,8 @@ def structural_workflow(w: dict) -> WorkflowCandidate:
                             f"an outlier to narrow, not a role to bless")
 
     return WorkflowCandidate(
-        steps=list(w.get("steps") or []),
+        steps=steps, goal=goal, prerequisites=prerequisites,
+        goal_runs=goal_runs, goal_runs_with_reads=with_reads, prerequisite_support=prereq_support,
         sessions=sessions, occurrences=int(w.get("occurrences") or 0), coverage=coverage,
         observed_roles=roles, contested=list(w.get("contested") or []),
         example_sessions=list(w.get("example_sessions") or [])[:5],
@@ -402,10 +502,31 @@ def structural_workflow(w: dict) -> WorkflowCandidate:
 def render_workflow_prompt(c: WorkflowCandidate) -> str:
     parts = [
         "ordered tool run: " + " -> ".join(c.steps),
+        f"goal (the call this run is for): {c.goal or 'unknown'}",
+        "read first in this run: " + (", ".join(c.prerequisites) or "nothing - the goal was called on its own"),
+    ]
+    # Cross-run figures for THIS pattern's reads only. Handed the whole list, the
+    # model recites other patterns' reads as caveats on a run that has none.
+    # "the goal", not its tool name: whatever the prompt names, the model copies.
+    if c.goal_runs:
+        mine = _runs({"occurrences": c.occurrences, "sessions": c.sessions})
+        parts.append(f"this pattern: {mine} runs, {int(mine / c.goal_runs * 100)}% of the "
+                     f"{c.goal_runs} runs that reached the goal")
+        if c.prerequisites:
+            parts.append(f"across all {c.goal_runs} observed runs that reached the goal, "
+                         "how often each of this pattern's reads came before it:")
+            parts += [f"  - {p['step']}: {p['runs']} of {c.goal_runs} runs ({int(p['share'] * 100)}%)"
+                      for p in c.prerequisite_support if p["step"] in c.prerequisites]
+        else:
+            parts.append(f"of all {c.goal_runs} runs that reached the goal, "
+                         f"{c.goal_runs_with_reads} read something first")
+    else:
+        parts.append(f"runs reaching {c.goal or 'the goal'} outside this one: not measured")
+    parts += [
         f"seen in {c.sessions} sessions ({c.occurrences} occurrences)",
         (f"coverage: {int(c.coverage * 100)}% of sessions that used {c.steps[0]!r} completed this run"
          if c.steps and c.coverage is not None
-         else "coverage: not measured for this run — do not infer anything from it"),
+         else "coverage: not measured - do not mention coverage"),
         "runners: " + (", ".join(
             f"{r['value']} ({r['sessions']} sessions, {int(r['share'] * 100)}%)" for r in c.observed_roles)
             or "none observed"),
@@ -451,8 +572,9 @@ def mine_workflows(workflows: list[dict], llm: Optional[LLMClient] = None,
     """
     candidates: list[WorkflowCandidate] = []
     rejected: list[str] = []
+    support = goal_support(workflows)
     for w in workflows[:limit]:
-        c = structural_workflow(w)
+        c = structural_workflow(w, support)
         if c.sessions < min_sessions:
             rejected.append(f"{' -> '.join(c.steps)}: {c.sessions} session(s), below min_sessions={min_sessions}")
             continue

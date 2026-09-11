@@ -192,6 +192,68 @@ def test_workflow_prompt_carries_order_and_coverage():
     assert "a -> b -> c" in p and "80%" in p
 
 
+def test_a_run_is_read_as_its_goal_and_what_was_read_first():
+    """'a, then b, then c' narrates the order; 'an intent to c, which requires
+    a and b' is the reading a reviewer can adopt. The split is counted."""
+    from semanticlayer.intent_mining import render_workflow_prompt, structural_workflow
+    c = structural_workflow(flow())
+    assert (c.goal, c.prerequisites) == ("c", ["a", "b"])
+    p = render_workflow_prompt(c)
+    assert "goal (the call this run is for): c" in p and "read first in this run: a, b" in p
+
+
+def test_prerequisite_support_is_counted_across_every_run_reaching_the_goal():
+    """'Always requires' is a claim about every run that reached the goal, not
+    the one being summarised — which is 100% by construction. A run where the
+    goal is mid-way still reached it, and one beyond the cap is still evidence."""
+    from semanticlayer.intent_mining import mine_workflows
+    llm = _LLM({"intent": "x", "description": "d",
+                "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
+    runs = [flow(steps=["a", "b", "c"], occurrences=6),
+            flow(steps=["b", "c", "d"], occurrences=3),   # reaches c mid-way
+            flow(steps=["c"], occurrences=1)]             # past the cap below
+    cands, _ = mine_workflows(runs, llm=llm, min_sessions=1, limit=1)
+    c = cands[0]
+    assert c.goal_runs == 10
+    assert c.prerequisite_support == [{"step": "b", "runs": 9, "share": 0.9},
+                                      {"step": "a", "runs": 6, "share": 0.6}]
+    user = llm.prompts[0][1]
+    assert "this pattern: 6 runs, 60% of the 10 runs that reached the goal" in user
+    assert "across all 10 observed runs that reached the goal" in user
+    assert "b: 9 of 10 runs (90%)" in user
+
+
+def test_a_run_with_nothing_first_is_not_handed_other_patterns_reads():
+    """Given the whole list, the model recited other patterns' reads as a
+    caveat on a run that reads nothing first. It gets one figure instead."""
+    from semanticlayer.intent_mining import mine_workflows
+    llm = _LLM({"intent": "x", "description": "d",
+                "policy": {"statement": "s", "rationale": "r", "confidence": "low"}})
+    runs = [flow(steps=["c"], occurrences=1),
+            flow(steps=["a", "b", "c"], occurrences=6),
+            flow(steps=["b", "c", "d"], occurrences=3)]
+    mine_workflows(runs, llm=llm, min_sessions=1, limit=1)
+    user = llm.prompts[0][1]
+    assert "of all 10 runs that reached the goal, 9 read something first" in user
+    assert "9 of 10 runs" not in user and "6 of 10 runs" not in user
+
+
+def test_cross_run_support_without_the_whole_set_is_not_measured():
+    """Summarised alone, a run cannot say what else reaches its goal; saying
+    100% because this run is all it can see would be a fabricated 'always'."""
+    from semanticlayer.intent_mining import render_workflow_prompt, structural_workflow
+    c = structural_workflow(flow())
+    assert c.goal_runs == 0 and c.prerequisite_support == []
+    assert "outside this one: not measured" in render_workflow_prompt(c)
+
+
+def test_a_single_call_run_has_no_prerequisites():
+    from semanticlayer.intent_mining import render_workflow_prompt, structural_workflow
+    c = structural_workflow(flow(steps=["c"]))
+    assert (c.goal, c.prerequisites) == ("c", [])
+    assert "called on its own" in render_workflow_prompt(c)
+
+
 def test_workflow_llm_failure_degrades_to_the_counted_half():
     from semanticlayer.intent_mining import infer_workflow_policy, structural_workflow
     out, err = infer_workflow_policy(structural_workflow(flow()), _LLM("nonsense"))
