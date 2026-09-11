@@ -21,7 +21,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from . import prefront_tracing as tracing
@@ -1027,6 +1027,71 @@ class PublishIntentsBody(BaseModel):
     overwrite: bool = False
     # Renders the YAML and reports problems without writing anything.
     dry_run: bool = False
+
+
+@app.post("/design/semantic/findings/explain")
+def explain_finding(body: dict):
+    """A plain-language headline + two sentences for one eval-engine finding.
+
+    Advisory text for the reader, never an input to anything: eval-engine's
+    verdict, effect and severity are untouched, and the UI shows the check's
+    own wording beside it. Cached by content in the local store, so opening
+    the same finding again costs nothing. See finding_explain.py.
+    """
+    from .finding_explain import DEFAULT_EXPLAIN_MODEL, FindingIn, cache_key, explain
+    from .llm import LLMClient
+
+    try:
+        finding = FindingIn.model_validate(body)
+    except Exception as e:  # noqa: BLE001 - caller-supplied shape
+        raise HTTPException(400, f"invalid finding: {e}")
+    key = cache_key(finding, DEFAULT_EXPLAIN_MODEL)
+    hit = store().get_explanation(key)
+    if hit:
+        if finding.event_id:
+            store().link_explanation(finding.app_id, finding.event_id, key)
+        return {**hit, "cached": True}
+    try:
+        # Provider pinned to the one serving the default model, as for mining.
+        llm = LLMClient(provider="openai", model=DEFAULT_EXPLAIN_MODEL)
+    except Exception as e:  # noqa: BLE001 - unconfigured provider is a 400, not a 500
+        raise HTTPException(400, f"LLM unavailable for explanations: {e}")
+    try:
+        ex = explain(finding, llm)
+    except Exception as e:  # noqa: BLE001 - bad model output is reported, never guessed around
+        raise HTTPException(502, f"could not explain this finding: {type(e).__name__}: {e}")
+    store().put_explanation(key, ex.headline, ex.explanation, DEFAULT_EXPLAIN_MODEL)
+    if finding.event_id:
+        store().link_explanation(finding.app_id, finding.event_id, key)
+    return {"headline": ex.headline, "explanation": ex.explanation,
+            "model": DEFAULT_EXPLAIN_MODEL, "cached": False}
+
+
+@app.get("/design/semantic/findings/explanations")
+def finding_explanations(app_id: str = Query("", alias="app")):
+    """event_id -> {headline, explanation} for an app's findings that have one.
+    Read-only: never calls a model, so the Findings table can poll it."""
+    return {"app": app_id, "explanations": store().explanations_for_app(app_id)}
+
+
+@app.on_event("startup")
+def _start_finding_explainer() -> None:
+    """Summarise findings as eval-engine writes them. Off unless
+    SEMANTICLAYER_EXPLAIN_EVAL_URL names the eval-engine to read — which
+    deployment has one is config, not engine code."""
+    url = os.environ.get("SEMANTICLAYER_EXPLAIN_EVAL_URL", "").strip()
+    if not url:
+        return
+    import threading
+
+    from .finding_explain import DEFAULT_EXPLAIN_MODEL, ExplainWorker
+    from .llm import LLMClient
+
+    worker = ExplainWorker(
+        store(), lambda: LLMClient(provider="openai", model=DEFAULT_EXPLAIN_MODEL),
+        eval_url=url, poll_seconds=int(os.environ.get("SEMANTICLAYER_EXPLAIN_POLL_SECONDS", "30")))
+    threading.Thread(target=worker.run_forever, name="finding-explainer", daemon=True).start()
+    log.info("finding explainer polling %s", url)
 
 
 @app.post("/design/semantic/intents/publish")

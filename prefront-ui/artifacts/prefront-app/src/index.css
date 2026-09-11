@@ -1795,6 +1795,12 @@ td.pf-tr-share { width: 34px; text-align: right; }
 }
 .pf-find-quote cite { display: block; margin-top: 3px; font-style: normal; font-size: 10.5px; color: var(--muted); }
 .pf-find-cite { font-size: 11px; }
+/* A model's plain-language reading of the finding (Observability.tsx's
+   FindingExplanation), with the check's own wording kept beneath it. */
+.pf-find-explain-body { margin: 4px 0 0; font-size: 13px; color: var(--ink); line-height: 1.5; }
+.pf-find-explain-loading { font-size: 12.5px; color: var(--muted); font-style: italic; }
+.pf-find-explain-raw { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
+.pf-find-explain-raw code { font-size: 11px; color: var(--ink-soft); white-space: normal; word-break: break-word; }
 
 /* Every Findings table column is width-capped so long content (a user
    query, a detail sentence) never blows out the table - the full value is

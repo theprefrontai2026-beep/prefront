@@ -61,6 +61,25 @@ CREATE TABLE IF NOT EXISTS datasources (
   config_json    TEXT,
   updated_at     TEXT DEFAULT (datetime('now'))
 );
+
+-- Plain-language explanations of eval-engine findings (finding_explain.py),
+-- keyed by a hash of the finding's content + model so each is paid for once.
+CREATE TABLE IF NOT EXISTS finding_explanations (
+  cache_key    TEXT PRIMARY KEY,
+  headline     TEXT NOT NULL,
+  explanation  TEXT NOT NULL,
+  model        TEXT,
+  created_at   TEXT DEFAULT (datetime('now'))
+);
+
+-- Which finding (by eval-engine's app + event id) each explanation belongs to,
+-- so the Findings table can show headlines without asking per row.
+CREATE TABLE IF NOT EXISTS finding_explanation_events (
+  app_id     TEXT NOT NULL,
+  event_id   TEXT NOT NULL,
+  cache_key  TEXT NOT NULL,
+  PRIMARY KEY (app_id, event_id)
+);
 """
 
 
@@ -96,6 +115,35 @@ class Store:
             except Exception:
                 self._conn.rollback()
                 raise
+
+    # ── finding explanations ─────────────────────────────────────────────
+    def get_explanation(self, key: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT headline, explanation, model FROM finding_explanations WHERE cache_key = ?",
+                (key,)).fetchone()
+        return dict(r) if r else None
+
+    def put_explanation(self, key: str, headline: str, explanation: str, model: str) -> None:
+        with self._tx() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO finding_explanations (cache_key, headline, explanation, model) "
+                "VALUES (?, ?, ?, ?)", (key, headline, explanation, model))
+
+    def link_explanation(self, app_id: str, event_id: str, key: str) -> None:
+        with self._tx() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO finding_explanation_events (app_id, event_id, cache_key) "
+                "VALUES (?, ?, ?)", (app_id, event_id, key))
+
+    def explanations_for_app(self, app_id: str) -> dict[str, dict[str, str]]:
+        """event_id -> {headline, explanation} for every linked finding of an app."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT e.event_id, x.headline, x.explanation FROM finding_explanation_events e "
+                "JOIN finding_explanations x ON x.cache_key = e.cache_key WHERE e.app_id = ?",
+                (app_id,)).fetchall()
+        return {r["event_id"]: {"headline": r["headline"], "explanation": r["explanation"]} for r in rows}
 
     @staticmethod
     def _row_to_template(r: sqlite3.Row) -> dict[str, Any]:

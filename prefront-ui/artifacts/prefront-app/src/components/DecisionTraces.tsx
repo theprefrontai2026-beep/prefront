@@ -109,7 +109,31 @@ function findingWhen(iso: string): string {
 // policy-quote corroboration lives in the flyout now (SessionDetail's
 // findingDetail/findingSource, opened by clicking the row), not repeated
 // here where every column is deliberately kept narrow.
-function WhatWentWrong({ r }: { r: EvalVerdict }) {
+/** Model headlines for this app's findings, keyed by event id. Written in the
+ *  background as findings appear (semantic-layer's finding explainer); the
+ *  read never calls a model. A finding without one shows the check's own
+ *  wording, so a missing or stopped explainer degrades to what was here. */
+function useFindingHeadlines(app: string): Record<string, string> {
+  const [m, setM] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      fetch(`/design/semantic/findings/explanations?app=${encodeURIComponent(app)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (!alive || !j) return;
+          const ex: Record<string, { headline?: string }> = j.explanations || {};
+          setM(Object.fromEntries(Object.entries(ex).map(([k, v]) => [k, String(v.headline || "")])));
+        })
+        .catch(() => {});
+    load();
+    const id = window.setInterval(load, 30000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [app]);
+  return m;
+}
+
+function WhatWentWrong({ r, headline }: { r: EvalVerdict; headline?: string }) {
   // A satisfied row isn't "wrong" - it's positive evidence, so state the
   // policy/rule the clean session was checked against and satisfied: the cited
   // section (Family 1 Policy / Family 3 Conformance) or, when there's no
@@ -119,8 +143,13 @@ function WhatWentWrong({ r }: { r: EvalVerdict }) {
     const text = r.detail || (section ? `§${section}` : r.check_id);
     return <div className="pf-tr-truncate pf-find-detail" title={r.detail || section || r.check_id}>✓ {text}</div>;
   }
+  // The model's headline when one has been written; the check's own wording
+  // is always on hover, and is what shows until then.
   return (
-    <div className="pf-tr-truncate pf-find-detail" title={r.detail}>{r.detail}</div>
+    <div className="pf-tr-truncate pf-find-detail"
+         title={headline ? `${headline}\n\nThe check's own wording: ${r.detail}` : r.detail}>
+      {headline || r.detail}
+    </div>
   );
 }
 
@@ -397,6 +426,8 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
   useEffect(() => { setSeverity(initialSeverity); if (initialSeverity) setRange(null); }, [initialSeverity]);
 
   const sevOf = useCallback((r: EvalVerdict): SeverityLevel => severityOf({ family: r.family, effect: r.effect }, rules), [rules]);
+
+  const headlines = useFindingHeadlines(app);
 
   const fetchVerdicts = useCallback(async (): Promise<{ verdicts: EvalVerdict[]; disabled: string[] }> => {
     // The most recent 1000 (server-sorted by evaluated_at DESC), filtered
@@ -834,7 +865,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
                   <td className="pf-tr-truncate" title={famOf(r)}>{famOf(r)}</td>
                   <td>{r.effect ? <span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span> : <span className="muted">—</span>}</td>
                   <td className="pf-tr-truncate" title={r.user_query || undefined}>{r.user_query || <span className="muted">—</span>}</td>
-                  <td><WhatWentWrong r={r} /></td>
+                  <td><WhatWentWrong r={r} headline={r.event_id ? headlines[r.event_id] : undefined} /></td>
                   {/* Share THIS event — the link opens straight into its flyout. */}
                   <td className="pf-tr-share"><CopyLink href={findingHref(r.session_id, r.event_id, r.evidence_span_ids?.[0] ?? null)}
                                                         title="Copy a link to this event" /></td>

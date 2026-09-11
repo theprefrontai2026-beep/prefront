@@ -129,6 +129,8 @@ export type EvalVerdict = {
   // routes other than /eval/findings that don't populate it (only that one
   // does the join).
   user_query: string;
+  // The application the verdict belongs to (stamped by eval-engine).
+  app_id?: string;
 };
 export type ConformanceTag = {
   session_id: string; check_id: string; rule_id: string; policy_document: string;
@@ -843,6 +845,74 @@ const FAMILY_ORIGIN: Record<string, { what: string; envVar: string; version: (v:
   family3: { what: "the approved-intent catalog", envVar: "EVAL_INTENT_CATALOG_PATH", version: (v) => v.catalog_version },
 };
 
+/** A model's plain-language reading of one finding, above the check's own
+ *  wording. The check writes its `detail` for exactness ("rule R-X: restricted
+ *  field(s) [...] surfaced on turn 0's answer"), which is reproducible and hard
+ *  to act on; a small model rewrites it (semantic-layer's
+ *  /findings/explain). Advisory only: the verdict, effect and severity stay
+ *  the check's, and its sentence stays visible underneath. Fetched on open and
+ *  cached here and on the server, so a finding costs one small-model call
+ *  ever. Any failure falls back to the check's sentence alone. */
+const explainCache = new Map<string, { headline: string; explanation: string }>();
+
+function FindingExplanation({ verdict, detail, waiting }: {
+  verdict: EvalVerdict | null; detail: string;
+  /** A shared link opens before the finding's own row has loaded; asking then
+   *  would explain it from half its context and pay for it twice. */
+  waiting: boolean;
+}) {
+  const key = verdict?.event_id ? `${verdict.session_id}:${verdict.event_id}` : detail;
+  const [ex, setEx] = useState(() => explainCache.get(key) || null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+    const hit = explainCache.get(key);
+    if (hit) { setEx(hit); return; }
+    setEx(null);
+    if (waiting) return;
+    let alive = true;
+    const v = verdict;
+    fetch("/design/semantic/findings/explain", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        check_id: v?.check_id || "", rule_id: v?.rule_id || "", family_label: v?.family_label || "",
+        status: v?.status || "", effect: v?.effect || "", detail: v?.detail || detail,
+        evidence_excerpt: v?.evidence_excerpt || "", source: v?.source || "", user_query: v?.user_query || "",
+        // Same fields as the background explainer sends, so both land on one cache entry.
+        indeterminate_reason: v?.indeterminate_reason || "",
+        // Links this finding to its summary, for the Findings table.
+        event_id: v?.event_id || "", app_id: v?.app_id || "",
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j) => {
+        if (!alive) return;
+        const e = { headline: String(j.headline || ""), explanation: String(j.explanation || "") };
+        explainCache.set(key, e);
+        setEx(e);
+      })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, waiting]);
+
+  if (failed) return <div className="pf-find-flyout-oneliner">{detail}</div>;
+  return (
+    <div className="pf-find-explain">
+      {ex ? (
+        <>
+          <div className="pf-find-flyout-oneliner">{ex.headline}</div>
+          <p className="pf-find-explain-body">{ex.explanation}</p>
+        </>
+      ) : <div className="pf-find-explain-loading">Summarising…</div>}
+      <div className="pf-find-explain-raw">
+        <span>{ex ? "Summarised by a model from the check's own wording:" : "The check's own wording:"}</span>
+        <code>{detail}</code>
+      </div>
+    </div>
+  );
+}
+
 export function SessionDetail({ sessionId, refreshKey, initialSpanId, eventId, findingDetail, findingSource, findingStatus, findingVerdict, onClose }: {
   sessionId: string; refreshKey: number; initialSpanId?: string | null;
   // The open finding's event id, when opened from a Decision-evidence row —
@@ -999,11 +1069,14 @@ export function SessionDetail({ sessionId, refreshKey, initialSpanId, eventId, f
           <span className="pf-oob-convo-who pf-find-flyout-label">
             {findingStatus === "satisfied" ? "Satisfied policy / rule" : "What was wrong"}
           </span>
-          {(findingDetail || findingStatus === "satisfied") && (
+          {findingStatus === "satisfied" ? (
             <div className="pf-find-flyout-oneliner">
               {findingDetail || "This session was checked against the rule below and satisfied it."}
             </div>
-          )}
+          ) : findingDetail ? (
+            <FindingExplanation verdict={openVerdict} detail={findingDetail}
+                                waiting={!openVerdict && !!eventId} />
+          ) : null}
           {findingSrc?.text && (
             <blockquote className="pf-find-quote">
               “{findingSrc.text.trim()}”
