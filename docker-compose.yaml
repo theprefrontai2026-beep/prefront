@@ -300,7 +300,7 @@ services:
       SEMANTICLAYER_EXPLAIN_EVAL_URL: ${SEMANTICLAYER_EXPLAIN_EVAL_URL-http://eval-engine:8120}
       # The OpenAI model that writes them. Changing it re-summarises every
       # finding once (the model is part of the cache key).
-      SEMANTICLAYER_EXPLAIN_MODEL: ${SEMANTICLAYER_EXPLAIN_MODEL:-gpt-4.1-nano}
+      SEMANTICLAYER_EXPLAIN_MODEL: ${SEMANTICLAYER_EXPLAIN_MODEL:-gpt-4o-mini}
     volumes:
       - semanticlayer_data:/data
       - artifacts:/artifacts          # publish writes the approved templates here

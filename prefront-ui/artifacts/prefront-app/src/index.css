@@ -1788,6 +1788,8 @@ td.pf-tr-share { width: 34px; text-align: right; }
    (.pf-find-quote/.pf-find-cite) only renders in the flyout's top summary
    now (Observability.tsx's SessionDetail, findingDetail/findingSource). */
 .pf-find-detail { font-size: 12.5px; color: var(--ink-soft); }
+/* The second or two between a finding arriving and its summary being written. */
+.pf-find-summarising { color: var(--muted); font-style: italic; }
 .pf-find-quote {
   margin: 0; padding: 6px 10px; border-left: 3px solid var(--blue);
   background: var(--surface-alt); border-radius: 0 6px 6px 0;

@@ -1089,7 +1089,7 @@ def _start_finding_explainer() -> None:
 
     worker = ExplainWorker(
         store(), lambda: LLMClient(provider="openai", model=DEFAULT_EXPLAIN_MODEL),
-        eval_url=url, poll_seconds=int(os.environ.get("SEMANTICLAYER_EXPLAIN_POLL_SECONDS", "30")))
+        eval_url=url, poll_seconds=int(os.environ.get("SEMANTICLAYER_EXPLAIN_POLL_SECONDS", "10")))
     threading.Thread(target=worker.run_forever, name="finding-explainer", daemon=True).start()
     log.info("finding explainer polling %s", url)
 

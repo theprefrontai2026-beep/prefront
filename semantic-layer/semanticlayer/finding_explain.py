@@ -24,6 +24,7 @@ import os
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel
@@ -33,14 +34,18 @@ from .logutil import get_logger
 log = get_logger(__name__)
 
 # A small model on purpose: this rewrites text it is handed, and needs no
-# reasoning the check has not already done. gpt-4.1-nano, chosen for cost over
-# gpt-4o-mini. Known weakness, measured side by side on 8 LoanPro findings: it
-# can confuse identifiers — it named the application number (7003) where the
-# check compared an applicant id (5003), and called a recommendation an
-# approval, even with the rules below; gpt-4o-mini got both right. Set
-# SEMANTICLAYER_EXPLAIN_MODEL=gpt-4o-mini if exact ids matter more than cost.
+# reasoning the check has not already done. gpt-4o-mini rather than the
+# cheaper gpt-4.1-nano: side by side on 8 LoanPro findings, nano named the
+# application number (7003) where the check compared an applicant id (5003)
+# and called a recommendation an approval, even with the rules below;
+# gpt-4o-mini got both right. The saving was cents at this volume.
 # Changing it re-summarises every finding once — the model is in the cache key.
-DEFAULT_EXPLAIN_MODEL = os.environ.get("SEMANTICLAYER_EXPLAIN_MODEL") or "gpt-4.1-nano"
+DEFAULT_EXPLAIN_MODEL = os.environ.get("SEMANTICLAYER_EXPLAIN_MODEL") or "gpt-4o-mini"
+
+# Bump whenever EXPLAIN_SYSTEM changes. It is part of the cache key, so a
+# changed prompt re-summarises every finding instead of leaving the old
+# wording in place for everything already cached.
+PROMPT_VERSION = 2
 
 
 class FindingIn(BaseModel):
@@ -126,13 +131,13 @@ def render(f: FindingIn) -> str:
 
 def cache_key(f: FindingIn, model: str) -> str:
     """Content-addressed: the same finding content explains once, and any change
-    to what the check said — or a different model — is a different entry."""
+    to what the check said — or a different model or prompt — is a different
+    entry."""
     parts = [model, f.check_id, f.rule_id, f.status, f.effect, f.detail,
              f.evidence_excerpt, f.source, f.user_query]
-    # Appended only when set, so every key written before this field existed
-    # (all violations, which never carry one) is unchanged.
     if f.indeterminate_reason:
         parts.append(f.indeterminate_reason)
+    parts.append(f"prompt:{PROMPT_VERSION}")
     payload = json.dumps(parts, ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -186,8 +191,8 @@ class ExplainWorker:
     def __init__(self, store, llm_factory: Callable[[], Any], model: str = DEFAULT_EXPLAIN_MODEL,
                  eval_url: str = "", fetch: Optional[Feed] = None,
                  feeds: Optional[list[Feed]] = None,
-                 poll_seconds: int = 30, backfill_seconds: int = 30 * 86400, per_poll: int = 25,
-                 page_size: int = 500, max_rows: int = 10000) -> None:
+                 poll_seconds: int = 10, backfill_seconds: int = 30 * 86400, per_poll: int = 60,
+                 concurrency: int = 6, page_size: int = 500, max_rows: int = 10000) -> None:
         self.store = store
         self.llm_factory = llm_factory
         self.model = model
@@ -195,6 +200,7 @@ class ExplainWorker:
         self.poll_seconds = poll_seconds
         self.backfill_seconds = backfill_seconds
         self.per_poll = per_poll
+        self.concurrency = concurrency
         self.page_size = page_size
         self.max_rows = max_rows
         self.backfilling = True
@@ -212,34 +218,47 @@ class ExplainWorker:
                 offset += self.page_size
 
     def poll_once(self) -> int:
-        """One round. Returns how many model calls it made."""
+        """One round. Returns how many model calls it made.
+
+        The calls run CONCURRENTLY: they are independent, each takes a couple
+        of seconds, and done one after another a round of 25 kept a reader
+        waiting over a minute for a summary of something that had already
+        happened.
+        """
         since = self.backfill_seconds if self.backfilling else max(self.poll_seconds * 4, 600)
-        calls, over_budget = 0, False
+        rows, todo = [], {}
         for row in self._findings(since):
             if row.get("status") == "satisfied" or not row.get("detail"):
                 continue
             f = FindingIn.model_validate({k: str(row.get(k) or "") for k in _FIELDS})
+            rows.append(f)
             key = cache_key(f, self.model)
-            if not self.store.get_explanation(key):
-                if self.failures.get(key, 0) >= 3:
-                    continue
-                if calls >= self.per_poll:
-                    over_budget = True
-                    continue
-                if self._llm is None:
-                    self._llm = self.llm_factory()
-                calls += 1
-                try:
-                    ex = explain(f, self._llm)
-                except Exception as e:  # noqa: BLE001 - one bad finding must not stop the round
-                    self.failures[key] = self.failures.get(key, 0) + 1
-                    log.warning("could not explain finding %s: %s", f.event_id, e)
-                    continue
-                self.store.put_explanation(key, ex.headline, ex.explanation, self.model)
-            if f.event_id:
-                self.store.link_explanation(f.app_id, f.event_id, key)
+            if self.store.get_explanation(key) or self.failures.get(key, 0) >= 3:
+                continue
+            todo.setdefault(key, f)      # one call per distinct content
+
+        over_budget = len(todo) > self.per_poll
+        batch = list(todo.items())[:self.per_poll]
+        if batch:
+            if self._llm is None:
+                self._llm = self.llm_factory()
+            with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+                futures = {pool.submit(explain, f, self._llm): (key, f) for key, f in batch}
+                for fut in as_completed(futures):
+                    key, f = futures[fut]
+                    try:
+                        ex = fut.result()
+                    except Exception as e:  # noqa: BLE001 - one bad finding must not stop the round
+                        self.failures[key] = self.failures.get(key, 0) + 1
+                        log.warning("could not explain finding %s: %s", f.event_id, e)
+                        continue
+                    self.store.put_explanation(key, ex.headline, ex.explanation, self.model)
+
+        for f in rows:                   # link every event whose summary now exists
+            if f.event_id and self.store.get_explanation(cache_key(f, self.model)):
+                self.store.link_explanation(f.app_id, f.event_id, cache_key(f, self.model))
         self.backfilling = over_budget
-        return calls
+        return len(batch)
 
     def run_forever(self) -> None:
         while True:

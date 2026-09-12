@@ -130,15 +130,17 @@ def test_worker_reads_indeterminate_verdicts_too(tmp_path):
     assert "why the check could not tell: no symbol x" in llm.prompts[1][1]
 
 
-def test_an_empty_indeterminate_reason_leaves_existing_keys_unchanged():
-    """Every summary written before the field existed must still be found."""
-    import hashlib
-    f = finding()
-    old = hashlib.sha256(json.dumps(["m", f.check_id, f.rule_id, f.status, f.effect, f.detail,
-                                     f.evidence_excerpt, f.source, f.user_query],
-                                    ensure_ascii=False).encode("utf-8")).hexdigest()
-    assert cache_key(f, "m") == old
-    assert cache_key(finding(indeterminate_reason="why"), "m") != old
+def test_the_indeterminate_reason_only_changes_the_key_when_set():
+    assert cache_key(finding(), "m") == cache_key(finding(indeterminate_reason=""), "m")
+    assert cache_key(finding(indeterminate_reason="why"), "m") != cache_key(finding(), "m")
+
+
+def test_a_prompt_change_is_a_new_cache_entry(monkeypatch):
+    """Otherwise a better prompt only ever reaches findings not yet cached."""
+    import semanticlayer.finding_explain as fe
+    before = fe.cache_key(finding(), "m")
+    monkeypatch.setattr(fe, "PROMPT_VERSION", fe.PROMPT_VERSION + 1)
+    assert fe.cache_key(finding(), "m") != before
 
 
 def test_event_and_app_ids_are_not_part_of_the_cache_key():

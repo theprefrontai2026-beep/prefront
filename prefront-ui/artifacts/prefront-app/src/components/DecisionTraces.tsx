@@ -109,31 +109,104 @@ function findingWhen(iso: string): string {
 // policy-quote corroboration lives in the flyout now (SessionDetail's
 // findingDetail/findingSource, opened by clicking the row), not repeated
 // here where every column is deliberately kept narrow.
-/** Model headlines for this app's findings, keyed by event id. Written in the
- *  background as findings appear (semantic-layer's finding explainer); the
- *  read never calls a model. A finding without one shows the check's own
- *  wording, so a missing or stopped explainer degrades to what was here. */
-function useFindingHeadlines(app: string): Record<string, string> {
+/** Model headlines for this app's findings, keyed by event id.
+ *
+ *  Two ways in, because neither alone is enough. The background explainer
+ *  (semantic-layer) writes them as findings appear, and `headlines` polls that
+ *  store — a read that never calls a model. But a finding created a moment ago
+ *  has not been reached yet, and a reader looking straight at it should not
+ *  have to wait for a poll, so `ensure` asks for the rows ON SCREEN now. Both
+ *  land in the same server-side cache, so neither pays twice, and a finding
+ *  with no summary either way shows the check's own wording. */
+const HEADLINE_FILL_MAX = 20;
+
+function useFindingHeadlines(app: string): {
+  headlines: Record<string, string>;
+  ensure: (rows: EvalVerdict[]) => void;
+  /** Rows whose summary is being written right now, so the cell can say so
+   *  rather than showing the rule text the summary is about to replace. */
+  pending: Set<string>;
+} {
   const [m, setM] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  const inFlight = useRef<Set<string>>(new Set());
+  // Mirrors of state for `ensure`, which must not re-run when they change:
+  // depending on the map would rebuild the callback on every fill and re-fire
+  // the effect that calls it.
+  const have = useRef<Record<string, string>>({});
+  const asked = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     let alive = true;
+    have.current = {};
+    asked.current = new Set();
+    inFlight.current = new Set();
+    setM({});
+    setPending(new Set());
     const load = () =>
       fetch(`/design/semantic/findings/explanations?app=${encodeURIComponent(app)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => {
           if (!alive || !j) return;
           const ex: Record<string, { headline?: string }> = j.explanations || {};
-          setM(Object.fromEntries(Object.entries(ex).map(([k, v]) => [k, String(v.headline || "")])));
+          const next = Object.fromEntries(Object.entries(ex).map(([k, v]) => [k, String(v.headline || "")]));
+          have.current = { ...have.current, ...next };
+          setM(have.current);
         })
         .catch(() => {});
     load();
-    const id = window.setInterval(load, 30000);
+    // Matched to the explainer's own poll: a summary written in the background
+    // should reach the table in about the time it took to write.
+    const id = window.setInterval(load, 10000);
     return () => { alive = false; window.clearInterval(id); };
   }, [app]);
-  return m;
+
+  const ensure = useCallback((rows: EvalVerdict[]) => {
+    const wanted = rows
+      .filter((r) => r.event_id && r.status !== "satisfied" && r.detail
+                     && !have.current[r.event_id] && !asked.current.has(r.event_id))
+      .slice(0, HEADLINE_FILL_MAX);
+    if (!wanted.length) return;
+    for (const r of wanted) {
+      asked.current.add(r.event_id);
+      inFlight.current.add(r.event_id);
+    }
+    setPending(new Set(inFlight.current));
+    const settle = (id: string) => {
+      inFlight.current.delete(id);
+      setPending(new Set(inFlight.current));
+    };
+    for (const r of wanted) {
+      fetch("/design/semantic/findings/explain", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          check_id: r.check_id, rule_id: r.rule_id, family_label: r.family_label || "",
+          status: r.status, effect: r.effect, detail: r.detail,
+          evidence_excerpt: r.evidence_excerpt, source: r.source, user_query: r.user_query,
+          indeterminate_reason: r.indeterminate_reason || "",
+          event_id: r.event_id, app_id: r.app_id || app,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+        .then((j) => {
+          const headline = String(j.headline || "");
+          if (!headline) return;
+          have.current = { ...have.current, [r.event_id]: headline };
+          setM(have.current);
+        })
+        // Left for the background explainer and the next poll; the row falls
+        // back to the check's own wording meanwhile.
+        .catch(() => { asked.current.delete(r.event_id); })
+        .finally(() => settle(r.event_id));
+    }
+  }, [app]);
+
+  return { headlines: m, ensure, pending };
 }
 
-function WhatWentWrong({ r, headline }: { r: EvalVerdict; headline?: string }) {
+function WhatWentWrong({ r, headline, summarising }: {
+  r: EvalVerdict; headline?: string; summarising?: boolean;
+}) {
   // A satisfied row isn't "wrong" - it's positive evidence, so state the
   // policy/rule the clean session was checked against and satisfied: the cited
   // section (Family 1 Policy / Family 3 Conformance) or, when there's no
@@ -142,6 +215,13 @@ function WhatWentWrong({ r, headline }: { r: EvalVerdict; headline?: string }) {
     const section = parseSource(r.source)?.section || "";
     const text = r.detail || (section ? `§${section}` : r.check_id);
     return <div className="pf-tr-truncate pf-find-detail" title={r.detail || section || r.check_id}>✓ {text}</div>;
+  }
+  // A newly arrived finding is on screen before its summary exists — the
+  // summary is one model call behind the row. Say so for that second or two
+  // rather than showing the rule text it is about to replace; the check's own
+  // wording is on hover throughout, and returns if the summary fails.
+  if (!headline && summarising) {
+    return <div className="pf-tr-truncate pf-find-detail pf-find-summarising" title={r.detail}>Summarising…</div>;
   }
   // The model's headline when one has been written; the check's own wording
   // is always on hover, and is what shows until then.
@@ -427,7 +507,7 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
 
   const sevOf = useCallback((r: EvalVerdict): SeverityLevel => severityOf({ family: r.family, effect: r.effect }, rules), [rules]);
 
-  const headlines = useFindingHeadlines(app);
+  const { headlines, ensure: ensureHeadlines, pending: pendingHeadlines } = useFindingHeadlines(app);
 
   const fetchVerdicts = useCallback(async (): Promise<{ verdicts: EvalVerdict[]; disabled: string[] }> => {
     // The most recent 1000 (server-sorted by evaluated_at DESC), filtered
@@ -653,6 +733,12 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
     [displayed, fresh],
   );
 
+  // A finding on screen without a summary is asked for NOW rather than waited
+  // for: the background explainer reaches it within seconds, but a reader
+  // looking at a brand-new finding would otherwise watch the check's raw
+  // wording until the next poll. Bounded and de-duplicated inside `ensure`.
+  useEffect(() => { ensureHeadlines(displayed); }, [displayed, ensureHeadlines]);
+
   // The open finding, resolved from the URL (see useLinkedFinding above).
   const flyout = useLinkedFinding(openSession, openEvent, loc.query.get("span"), rows, status);
 
@@ -865,7 +951,8 @@ function FindingsSection({ initialEffect = "", initialSeverity = "", rules, acti
                   <td className="pf-tr-truncate" title={famOf(r)}>{famOf(r)}</td>
                   <td>{r.effect ? <span className={`pf-dash-chip ${r.effect === "block" ? "red" : r.effect === "approval_required" ? "amber" : "teal"}`}>{r.effect}</span> : <span className="muted">—</span>}</td>
                   <td className="pf-tr-truncate" title={r.user_query || undefined}>{r.user_query || <span className="muted">—</span>}</td>
-                  <td><WhatWentWrong r={r} headline={r.event_id ? headlines[r.event_id] : undefined} /></td>
+                  <td><WhatWentWrong r={r} headline={r.event_id ? headlines[r.event_id] : undefined}
+                                     summarising={!!r.event_id && pendingHeadlines.has(r.event_id)} /></td>
                   {/* Share THIS event — the link opens straight into its flyout. */}
                   <td className="pf-tr-share"><CopyLink href={findingHref(r.session_id, r.event_id, r.evidence_span_ids?.[0] ?? null)}
                                                         title="Copy a link to this event" /></td>
