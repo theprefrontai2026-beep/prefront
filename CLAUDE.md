@@ -730,7 +730,10 @@ side-effect call happens, whether it is permitted — from a signed human
 approval the model cannot reach.
 
 **Status: the decision core, offline and tested (93 tests). No service, no
-gateway, no transport.** `warrant/README.md` carries the design rationale and
+gateway, no transport** — so it runs as a library or via
+`python -m warrant demo` (five calls through one Mission: allow, argument
+rewrite, counterparty step-up, injected instruction, sub-agent escalation;
+`--json` for the raw `Decision` payloads). `warrant/README.md` carries the design rationale and
 the table of what the spec's Phase 1 still needs (gateway, token service,
 consent screen, evidence store, step-up delivery, runtime adapters).
 

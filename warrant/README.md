@@ -60,6 +60,28 @@ one branch and shows a human the specific delta under their original
 instruction. Denying those outright is what teaches users to approve Missions
 with an empty counterparty list, which removes the control entirely.
 
+## Running it
+
+There is no service yet, so there are two ways to run it.
+
+```bash
+cd warrant
+VIRTUAL_ENV=.venv uv venv && VIRTUAL_ENV=.venv uv pip install -r requirements-dev.txt
+
+VIRTUAL_ENV=.venv .venv/bin/python -m warrant demo    # watch it decide
+VIRTUAL_ENV=.venv .venv/bin/python -m warrant demo --json   # the raw Decision payloads
+```
+
+`demo` builds one Mission, puts five calls through it, and prints the decision
+and reasons for each: an in-scope read (allow), arguments rewritten in flight
+(deny), a counterparty nobody approved (step-up), a web page telling the agent
+to move money (deny), and a sub-agent reaching past what its parent delegated
+(deny). It also shows that five decisions consumed no budget — the PDS reads
+state and mutates none.
+
+Or drive it as a library; `tests/conftest.py`'s `world` fixture is the smallest
+complete wiring (Authority, registry, tree, Binder, PDS) and is about 30 lines.
+
 ## What the tests are
 
 `warrant/tests/` is organised by the attack each case stops, not by method, so

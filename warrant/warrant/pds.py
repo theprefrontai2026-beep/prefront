@@ -381,7 +381,7 @@ class PolicyDecisionService:
                 status="violated",
                 detail=(
                     f"action {att.action!r} is permitted by the Mission but not by "
-                    f"node {node.node_id!r}'s narrowed grant: a sub-agent cannot "
+                    f"node {node.node_id}'s narrowed grant: a sub-agent cannot "
                     "recover a permission its parent declined to delegate"
                 ),
                 on_violation="deny",
