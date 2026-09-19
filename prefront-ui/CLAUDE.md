@@ -13,7 +13,7 @@ Package/workspace shape (pnpm workspace, the `verdict` second app, the shared
 
 ## Tab architecture (`artifacts/prefront-app/src/`)
 
-`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Learned Intents → Business Graph → Data Graph → Semantic Layer → Runtime → Decision Traces → Intent Flows → Observability → Compliance**. **Runtime is always in the nav, but its BODY is conditional** on `demo.runtimeDiff` — whether the demo's orchestrator serves the two-sided `{ungoverned, governed}` diff (SecureBank does; LoanPro's `/api/diff` is an alias of `/api/run` and returns a session). It was first shipped filtered OUT of the nav for a demo that lacks it, which was wrong and reported immediately: the app opens on LoanPro, so the tab was simply absent — nothing to click, nothing to discover, and no way to tell a missing feature from a broken build. The body says "Not available for <demo>", explains that this demo's before/after is a whole governed session (Verdict's job), and offers a switch. Hide the CONTENT of a capability a demo lacks, never its entry point. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
+`App.tsx` **derives** the active tab from the URL — `tabFromPath(useLoc().segs)`, not a `useState` (it held one until routing was added). `TABS` is still the source of truth for nav order. All tab bodies are mounted on first visit and toggled via `tab-hidden` CSS (not unmounted), so tab state survives navigation. Current nav order: **Overview → Data Connector → Policy Studio → Learned Intents → Business Graph → Data Graph → Semantic Layer → Evaluator → Decision Traces → Intent Flows → Observability → Compliance**. The Runtime tab is **labelled "Evaluator"**; its id and `/runtime` path are unchanged, so existing links and the remembered per-tab paths keep working — everything below calls it the Runtime tab, which is still what it is called in the code. **Runtime is always in the nav, but its BODY is conditional** on `demo.runtimeDiff` — whether the demo's orchestrator serves the two-sided `{ungoverned, governed}` diff (SecureBank does; LoanPro's `/api/diff` is an alias of `/api/run` and returns a session). It was first shipped filtered OUT of the nav for a demo that lacks it, which was wrong and reported immediately: the app opens on LoanPro, so the tab was simply absent — nothing to click, nothing to discover, and no way to tell a missing feature from a broken build. The body says "Not available for <demo>", explains that this demo's before/after is a whole governed session (the scenario runner's job — `ScenarioRunner.tsx`, in this same tab), and offers a switch. Hide the CONTENT of a capability a demo lacks, never its entry point. `completedTabs` in `App.tsx` drives the progress indicators (checkmarks).
 
 
 ## Routing & shareable links (`lib/router.ts`, `routes.ts`, `components/CopyLink.tsx`)
@@ -225,8 +225,8 @@ observability" section. What follows is the UI over it.
   same label appears next to `satisfied` verdicts. `DecisionTraces.tsx`'s
   `famOf()` renders and filters on it (falling back to the raw value), and
   `useOverviewData.ts`'s `byFamily` groups on it. Not to be confused with the
-  demo's SCENARIO families (`F1/F2/F3/POP/BASE`) that Verdict's `SessionRunner`
-  and OOB's `SessionRow.family` use - a separate vocabulary.
+  demo's SCENARIO families (`F1/F2/F3/POP/BASE`) that `ScenarioRunner` (the
+  Runtime tab) and OOB's `SessionRow.family` use - a separate vocabulary.
 - **"User query" is the session's first user turn** - joined in from the
   shared `spans` table at READ time, not a stored `eval_verdicts` column:
   `ch.py`'s `_first_user_messages(session_ids)` (eval-engine) runs one extra
@@ -494,9 +494,10 @@ The in-band before/after: one request answered twice — a realistic app-layer
 agent with typed business functions and no authorization policy, versus the
 identical request through the Prefront runtime with identity injected and
 policy enforced. Both components were deleted in `d40aab1` when the Runtime
-tab moved to Verdict, and restored from `origin/main` because that move was
-wrong for SecureBank: Verdict drives a scenario CATALOGUE and reports
-out-of-band findings, which is LoanPro's story, not this one.
+tab moved to the since-retired Verdict app, and restored from `origin/main`
+because that move was wrong for SecureBank: that runner (now
+`ScenarioRunner.tsx`, back in this same tab) drives a scenario CATALOGUE and
+reports out-of-band findings, which is LoanPro's story, not this one.
 
 - **The contrast is three things, not just the verdict**: the rows (SSNs in the
   clear on the left, `***` on the right — `RowsTable` styles a masked cell

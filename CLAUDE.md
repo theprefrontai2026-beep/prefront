@@ -96,7 +96,7 @@ This now extends to the DEPLOYMENT layer too: the engine's `docker-compose.yaml`
 
 **Databases in the stack** (three distinct Postgres instances by default):
 - `skill-builder-db` — SQLAlchemy/psycopg3, design-time docs/rules/atoms (`:5432` inside Docker)
-- `api-db` — Drizzle, `rule_audit_log` + the decision-trace tables (`decision_trace`, `decision_stat`, `decision_agent`, `decision_policy`, `decision_intent`); schema is applied by `drizzle-kit push-force` on api-server start (no migration files) (`:5432` inside Docker, different named volume)
+- `api-db` — Drizzle, `rule_audit_log`, the decision-trace tables (`decision_trace`, `decision_stat`, `decision_agent`, `decision_policy`, `decision_intent`) and `learned_workflow_run` (the Learned Intents tab's saved run, per demo — `routes/learned.ts`, `GET`/`PUT /api/learned/workflows`); schema is applied by `drizzle-kit push-force` on api-server start (no migration files) (`:5432` inside Docker, different named volume)
 - **SecureBank** Postgres inside Docker at `:5434` — the in-repo runtime/demo datasource (`securebank-demo/db/`)
 
 The `semantic-layer` LLM mapper is the **only** agentic step; everything it emits is candidate output gated by schema validation + human approval. The runtime loads only published YAML.
@@ -107,7 +107,7 @@ In the UI, both the LLM-generate and dbt-import paths are unified in one **Seman
 
 ## UI layout (`prefront-ui/`)
 
-The UI is a **pnpm workspace** (`pnpm-workspace.yaml`) with packages under `artifacts/` (the React SPA, api-server, and `verdict` — see below) and `lib/` (shared: `api-spec`, `api-zod`, `api-client-react`, `db`). The React SPA lives at `prefront-ui/artifacts/prefront-app/src/`.
+The UI is a **pnpm workspace** (`pnpm-workspace.yaml`) with packages under `artifacts/` (the React SPA `prefront-app`, `api-server`, and `mockup-sandbox` — a Replit scaffold that arrived with the original stack import and is wired to nothing; `verdict` is gone, see below) and `lib/` (shared: `api-spec`, `api-zod`, `api-client-react`, `db`). The React SPA lives at `prefront-ui/artifacts/prefront-app/src/`.
 
 **There was a second front-end, `artifacts/verdict` (:5180), and it is gone.** It was a standalone Vite/React app that ran LoanPro's scenario catalogue, sharing no code or stylesheet with `prefront-app` — so every change meant for both had to be made twice, by hand. Its runner is now `prefront-app`'s Runtime tab (`ScenarioRunner.tsx`), which made the second app pure duplication with nothing left only it could do, so it was retired: the package, `Dockerfile.verdict`, `verdict-nginx.conf` and the `verdict` compose service all removed, and `pnpm-lock.yaml` regenerated (removing a workspace package invalidates it, and both images build `--frozen-lockfile`).
 
@@ -129,7 +129,7 @@ docker compose -f loanpro-demo/docker-compose.yml up --build -d
 # lane: loanpro-mcp :8101 (Prefront proxying the app's tools) + loanpro-governed
 # :8099 (the same agent image pointed at it). Nothing is profile-gated here now.
 
-# One scenario, ungoverned only (what the grading harness and Verdict drive):
+# One scenario, ungoverned only (what the grading harness and the Runtime tab drive):
 curl 'localhost:8098/api/run?only=F1-04'
 # The same scenario through BOTH lanes — adds a `governed` key beside it:
 curl 'localhost:8098/api/run?only=F1-04&mode=both'
@@ -218,7 +218,7 @@ Runtime tab.
   app, tools, database, model and prompt are held constant and any difference
   is attributable to Prefront. `GET /api/run?only=…&mode=both` returns the
   ungoverned run with a `governed` key beside it; the default is still
-  ungoverned-only, because that is what the grading harness and Verdict drive.
+  ungoverned-only, because that is what the grading harness and the Runtime tab drive.
   `policy.yaml`/`query_templates.yaml` are **regenerated** — 17 `kind="mcp"`
   templates from the deterministic MCP connector, keyed by APPROVED INTENT name
   (the app stamps `app.intent` with it and Family 3's catalog is keyed by it, so
@@ -267,7 +267,7 @@ It demonstrates the before/after governance contrast using the same engine:
 
 - **`securebank-ungoverned`** (`:8096`) — real LLM + raw SQL (`gpt-4o-mini` with a `run_sql` tool); reads can leak, writes are attempted but rolled back via read-only transaction
 - **`securebank-mcp`** (`:8100`) — same `semantic-mcp-server` image pointed at `securebank-demo/policy/`; identity resolved per-connection from `X-Prefront-Act-As`. **This is the one inline governance runtime that starts by default anywhere**, and since it now sets `PREFRONT_RULE_PACK_PATH`/`PREFRONT_INTENT_CATALOG_PATH` (a direct `./policy` bind mount, NOT the seed-once `artifacts` volume — that has the documented staleness trap) it is also the only place eval-engine's inline reuse actually runs on a plain bring-up
-- **`securebank-orchestrator`** (`:8095`) — fans each scenario out to both, merges results. Driven by the main app's **Runtime tab** (`RuntimeDiff.tsx`, `/runtime`), which is back: it was removed when Verdict took over LoanPro, but Verdict drives a scenario CATALOGUE and reports out-of-band findings, whereas SecureBank's whole point is the in-band before/after — the same request with and without Prefront, side by side, with the five-stage decision trace under the governed half (`DecisionTrace.tsx`). The tab is offered only for a demo whose orchestrator serves that two-sided shape (`runtimeDiff` in `lib/apps/registry.ts`; LoanPro's `/api/diff` is an alias of `/api/run` and returns a session, not a pair). Also reachable by its own HTTP API (`curl`, or `POST /api/decisions/refresh` below)
+- **`securebank-orchestrator`** (`:8095`) — fans each scenario out to both, merges results. Driven by the main app's **Runtime tab** (`RuntimeDiff.tsx`, `/runtime`), which is back: it was removed when the since-retired Verdict app took over LoanPro, but that runner (now `ScenarioRunner.tsx`, in this same tab) drives a scenario CATALOGUE and reports out-of-band findings, whereas SecureBank's whole point is the in-band before/after — the same request with and without Prefront, side by side, with the five-stage decision trace under the governed half (`DecisionTrace.tsx`). The tab is offered only for a demo whose orchestrator serves that two-sided shape (`runtimeDiff` in `lib/apps/registry.ts`; LoanPro's `/api/diff` is an alias of `/api/run` and returns a session, not a pair). Also reachable by its own HTTP API (`curl`, or `POST /api/decisions/refresh` below)
 
 The curated artifacts (`securebank-demo/policy/query_templates.yaml`, `policy.yaml`) are committed. The `securebank-seed` one-shot service copies them into the shared `artifacts` volume at startup. Two MORE artifacts live beside them and are read by a different mechanism — `rule_pack.yaml` and `intent_catalog.yaml`, hand-authored (SecureBank's BRD never went through skill-builder) and bind-mounted straight into `securebank-mcp` for the INLINE checks, never seeded into the volume. Keep all four in step with each other: `intent_catalog.yaml` must list **every** published intent, because `catalog_membership` blocks an intent absent from it and only a wholly EMPTY catalog short-circuits to allow — a partial one silently blocks whatever it omits. Verified live: a Bank Teller's `view_users` returns `ssn` masked while a Bank Manager's does not (FR-ACCT-3), and an Account Holder is blocked by the native `role_not_permitted` rule and the inline `entitlement` check independently. `OpenAI API key` required for the ungoverned and orchestrator services.
 
@@ -613,6 +613,80 @@ oob-ingest changes no decision; the services keep exporting to Phoenix.
   `curl -X POST :8110/oob/sync` (pull now), `docker exec prefront-clickhouse-1
   clickhouse-client -q "SELECT service, count() FROM prefront.spans FINAL GROUP BY service"`.
 
+## Learned intents (`evalengine/behavior/` → `semanticlayer/intent_mining.py`)
+
+The policy-less onboarding path: both artifact-backed check families need a
+document the customer may not have, while that customer's traces already carry
+most of an intent catalog. `intent_learning_design.md` is the plan and carries
+the field-by-field table of what is and is not learnable — **L1-L3 are built**
+(branch `feature/intent-mining`), L4 (impact preview) and L5 (drift watch) are
+not. Do not widen the learnable set by guessing.
+
+- **L1 counts, and only counts** — `eval-engine/evalengine/behavior/`
+  (`profiles`, `workflows`, `episodes`, `cohorts`, `baseline`, `processmap`),
+  served as ten `GET /eval/behavior/*` endpoints. Every number is an aggregate a
+  reviewer could reproduce with a SQL query; nothing here names or infers.
+  Three constraints from the package docstring are load-bearing:
+  **frequency is not legitimacy** (an agent that leaked SSNs for six months
+  teaches a naive miner that SSN access is normal for that role — so every
+  profile carries a `contested` overlay of the Family 2 verdicts on its own
+  supporting sessions; Family 2 being the one family that needs no policy is
+  exactly what makes policy learnable without one); **an intent is not always
+  one call** (a business operation is often a sequence, so `workflows.py` mines
+  contiguous runs and `profiles.followed_by` is kept as the cheap pairwise
+  shadow of the same signal); and **the answer key is not an input** —
+  `app.intent` is exposed separately as `observed_intent_labels` for SCORING
+  only, and `profile_tools()` never selects it.
+- **L2 synthesises** — `semanticlayer/intent_mining.py`,
+  `POST /design/semantic/intents/mine`. Structure is deterministic and
+  reproducible; the LLM only names a candidate and states what rule the
+  behaviour appears to follow. `review_status="pending"` always.
+- **L3 publishes** — `semanticlayer/intent_publish.py`,
+  `POST /design/semantic/intents/publish` (UI: `prefront-app`'s **Learned
+  Intents** tab, `/learned` — see `prefront-ui/CLAUDE.md`). Approval is the
+  moment observation becomes permission, so `approved_roles` is explicit on
+  every entry and **defaults to nothing**: a caller reaches the published
+  catalog because a human named it, never because the traces contained it. The
+  inferred policy sentence rides along as a `note` and is load-bearing to
+  nothing. The output is the SAME `intent_catalog.yaml` the hand-authored path
+  produces, into the same volume, loaded by the same Family 3 loader — which is
+  the only way a learned catalog stays honest, since nothing in the runtime
+  knows where a catalog came from.
+- **Measure the miner, don't assert it**: `semantic-layer/score_mined_catalog.py`
+  scores a mined catalog against LoanPro's hand-authored one (the ideal holdout
+  — it has both the traces and the ground truth). Results in
+  `intent_learning_design.md` §6.1.
+
+## Finding summaries (`semanticlayer/finding_explain.py`) — advisory, outside the evaluator
+
+A check writes its `detail` for its own purposes — `rule R-X: restricted
+field(s) […] surfaced on turn 0's answer` is exact, reproducible, and close to
+unreadable for the person who has to act on it. A small model rewrites it in
+plain words.
+
+**eval-engine neither calls this nor waits on it**, which is the whole point of
+where it lives: `ExplainWorker` starts from semantic-layer's FastAPI startup and
+POLLS eval-engine's findings feed, so verdicts stay deterministic (Hard Rule 3)
+and evaluation can never block on, or fail because of, a model. No summary
+changes a verdict, an effect or a severity, and the check's own wording is
+always shown beside it.
+
+- Endpoints: `POST /design/semantic/findings/explain` (write one now) and
+  `GET /design/semantic/findings/explanations` (what has been written). The UI
+  uses **both** — the worker reaches a finding within seconds, but a reader can
+  open one sooner (`DecisionTraces.tsx`). Poll interval:
+  `SEMANTICLAYER_EXPLAIN_POLL_SECONDS` (default 10).
+- Summaries are **cached by content**, so identical findings share one and a
+  finding is paid for once however often it is opened. The model and the prompt
+  version are part of the cache key, so changing either re-summarises
+  everything once.
+- `SEMANTICLAYER_EXPLAIN_MODEL` defaults to `gpt-4o-mini`, and the worker pins
+  `provider="openai"` regardless of `LLM_PROVIDER`. 4o-mini rather than the
+  cheaper `gpt-4.1-nano` on measured grounds: side by side on 8 LoanPro
+  findings, nano named the application number where the check had compared an
+  applicant id, and called a recommendation an approval — even under the
+  stricter prompt. The saving was cents at this volume.
+
 ## Compliance reporting (`/eval/compliance`, the Compliance tab)
 
 `compliance_design.md` is the reference; the short version:
@@ -655,7 +729,12 @@ The engine and every demo deployment are now SEPARATE Compose projects (see
 demo compose attaches to its network/volume as `external: true`:
 
 ```bash
-cp .env.example .env          # add an LLM key (e.g. NVIDIA_API_KEY=…; GROQ_API_KEY also supported)
+cp .env.example .env          # LLM key. The provider defaults to openai, so OPENAI_API_KEY is
+                              #   the one to set: skill-builder, the semantic mapper, both demos'
+                              #   agents and the finding explainer all read it. LLM_PROVIDER +
+                              #   GROQ_/NVIDIA_/DEEPSEEK_API_KEY redirect the two DESIGN-TIME
+                              #   services only — the demo agents take OPENAI_/NVIDIA_API_KEY
+                              #   directly, and the explainer pins provider=openai
 docker compose up --build     # ui:5173  skill-builder:8000  semantic-layer-api:8010
                               # oob-ingest:8110  clickhouse:8123  phoenix:6006  eval-engine:8120
 docker compose -f loanpro-demo/docker-compose.yml up --build -d
@@ -699,7 +778,8 @@ precondition automaton, a Hypothesis property-based suite against generated
 step streams — `test_family1_temporal_properties.py`), `semantic-mcp-server/
 tests/` (governance/inline_checks.py, both pure and wired against a real
 `_call_governed`), `semantic-layer/tests/` (intent mining's deterministic half and its safety
-guards — that package had no suite until mining landed),
+guards, plus `intent_publish` and `finding_explain` — that package had no
+suite until mining landed),
 and two pure (no-network) files in `loanpro-demo/`
 (`test_grading_harness.py`, `test_preflight_import.py`). `oob-ingest` still
 has none — verify changes to it by running the service (see the per-service
@@ -722,16 +802,43 @@ VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q -k executability           # one
 make test          # every offline suite, from the repo root
 ```
 
+Two **live** regressions sit beside that offline suite, and neither is in `make
+test` nor in CI — both need the engine's compose up, the demo's own compose up,
+and a metered LLM key:
+
+```bash
+make grade-loanpro       # OUT-OF-BAND: loanpro-demo/grading_harness.py over the 39-scenario
+                         #   catalogue -> docs/eval-coverage.{md,json}; non-zero on any FAIL
+make regress-securebank  # INLINE: securebank-demo/inline_regression.py -> docs/inline-regression.json
+make regress             # both
+```
+
+`regress-securebank` is the inline counterpart to `grade-loanpro`, and exists
+because the two demos exercise opposite halves of Prefront: LoanPro's
+out-of-band path has had a graded harness since step 15, while SecureBank's
+in-band path — where Prefront actually blocks, masks and routes for approval —
+had no regression at all, so a governed decision could change and nothing would
+notice.
+
 ### UI dev
 ```bash
 cd prefront-ui
 pnpm install                          # install workspace deps (pnpm only; enforced by preinstall hook)
+                                      #   see the minimumReleaseAge note below before adding a dep
 pnpm run typecheck                    # type-check all packages
 pnpm -r --filter ./artifacts/prefront-app run dev   # Vite dev server (needs API proxy or full stack up)
 
 # Regenerate the React-Query client after editing lib/api-spec/openapi.yaml
 pnpm --filter ./lib/api-spec run codegen   # runs orval + typecheck:libs
 ```
+
+**A new dependency can fail to install for a day, and that is deliberate.**
+`pnpm-workspace.yaml` sets `minimumReleaseAge: 1440` — a package version must
+have been public for 24h before pnpm will install it, since malicious npm
+releases are typically caught and pulled within hours. **Do not disable it** to
+get an install through. The escape hatch is the `minimumReleaseAgeExclude`
+allowlist, for an urgent fix from a publisher with an impeccable record, and the
+exclusion comes back out once the window has passed.
 
 **Typechecking gotchas (WSL):** the host `node` may be a Windows shim that fails under WSL (`exec format error`), so `pnpm run typecheck` can't run directly. Run `tsc` in a container instead (host `node_modules` are mounted):
 ```bash
@@ -807,7 +914,7 @@ Top-level design docs, each answering a different question:
 | `autonomous_build.md` | the phased build order for the eval engine — the HOW |
 | `application_isolation_design.md` | **PROPOSED, not built**: making "application" a real boundary object so two subject apps' configs, policies, modes and DATA are isolated. Measures where isolation exists today (api-server `demo` column, semantic-layer `datasource_id`) and where it does not (eval-engine and oob-ingest have no app concept at all), and proposes the Phoenix project as the ingestion partition. Answers `TODO.md` entry 8's blocking question |
 | `enforced_isolation_design.md` | **PROPOSED, not built**: the successor to the above — why per-app isolation is currently a CONVENTION (an optional scope on every read, three unreconciled keys) and what would make it hold: one canonical `app_id`, a store handle with no unscoped form, and a static guard modelled on `test_domain_independence.py`. States what it still does not give you (one shared database, no auth, global retention) and when a database-per-application is the honest answer instead |
-| `intent_learning_design.md` | **L1+L2 BUILT** on `feature/intent-mining`, L3-L5 planned (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog — and the policy behind it — from observed traces, for a customer with no policy document. `evalengine/behavior/` counts (`/eval/behavior/*`); `semanticlayer/intent_mining.py` synthesises candidates and asks an LLM what rule the behaviour implies (`POST /design/semantic/intents/mine`). §6.1 carries the measured holdout results |
+| `intent_learning_design.md` | **L1-L3 BUILT** on `feature/intent-mining`, L4-L5 (impact preview, drift watch) planned (`autonomous_build.md` §6 Phase E, steps 21-25): mining an intent catalog — and the policy behind it — from observed traces, for a customer with no policy document. Summarised under "Learned intents" above; §6.1 carries the measured holdout results |
 | `compliance_design.md` | how the engine's checks map onto GDPR / SOC 2 / PCI-DSS / HIPAA and a deployment's own regime — the two-layer model (shipped framework packs × per-deployment overlay) behind `/eval/compliance` and the Compliance tab, plus the ranked list of gaps no mapping covers; per-section status markers say what is built |
 | `loanpro-demo/docs/check-coverage.md` | generated contract: check → session → the span attributes that detect it |
 | `loanpro-demo/docs/use-cases.md` | the policy-failure use cases in narrative form, each with its real `loan_underwriting_policy.md` citation (and a correction table for numbers from an older version of that document) |

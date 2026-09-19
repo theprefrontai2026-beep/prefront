@@ -541,7 +541,9 @@ wired over their published artifacts, population checks, the grading harness
 (39/39 on the full catalogue), the Findings UI, Preflight, and inline reuse in
 `semantic-mcp-server`.
 
-**Phase E (steps 21-25) — learned intents — is TODO, not started.** Plan in
+**Phase E (steps 21-25) — learned intents — is PARTLY BUILT** on branch
+`feature/intent-mining`: L1-L3 (aggregates, candidate synthesis, review +
+publish) are in, L4 (impact preview) and L5 (drift watch) are not. Plan in
 `../intent_learning_design.md`. It closes the policy-less onboarding gap: both
 artifact-backed families need a document the customer may not have, leaving
 them with Family 2 alone, while their traces already carry most of an intent
@@ -549,7 +551,16 @@ catalog. Mining is design-time and emits candidates only; the output is the
 same `intent_catalog.yaml` Family 3 already loads, so there is no new runtime
 path and this service needs no new check.
 
-Two constraints from that plan bear directly on code here, if you pick it up:
+**This service owns L1 only** — `evalengine/behavior/` (`profiles`,
+`workflows`, `episodes`, `cohorts`, `baseline`, `processmap`; tests in
+`tests/test_behavior_*.py`), exposed as ten `GET /eval/behavior/*` endpoints.
+THIS PACKAGE ONLY COUNTS: every number is an aggregate a reviewer could
+reproduce with a SQL query. Synthesis (naming a candidate, inferring the rule
+behind it) and publication are design-time steps in `semantic-layer`
+(`intent_mining.py`, `intent_publish.py`) that CONSUME what this emits — keep
+it that way, or the auditable half stops being auditable.
+
+Three constraints from that plan bear directly on the code here:
 
 - **Frequency is not legitimacy.** Mining learns what the agent DID, not what
   it should do. Family 2 is the only family that needs no policy and runs over
@@ -561,6 +572,12 @@ Two constraints from that plan bear directly on code here, if you pick it up:
   is observed-not-permitted; `toxic_with` and `restricted_fields` cannot be
   learned positively at all, since frequency learns what co-occurs as normal.
   The design doc has the field-by-field table — do not widen it by guessing.
+- **The answer key is not an input.** A deployment may already stamp an approved
+  intent name on its spans (`app.intent`); a miner that consumes the label it is
+  meant to predict measures nothing. It is exposed separately as
+  `observed_intent_labels`, for scoring a mined catalog against a hand-authored
+  one (`semantic-layer/score_mined_catalog.py`), and `profile_tools()` never
+  selects it.
 
 ## Compliance reporting (`evalengine/compliance/`, `/eval/compliance`)
 

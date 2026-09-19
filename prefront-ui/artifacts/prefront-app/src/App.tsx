@@ -65,7 +65,9 @@ const TABS = [
   // the app opens on LoanPro, so the tab was simply absent and there was
   // nothing to click or discover. The body says why instead (see below),
   // which is what the nav entry is for.
-  { id: "runtime",  label: "Runtime",         sub: "Governed vs ungoverned",   icon: IconSplit },
+  // Label only: the id and its /runtime path stay, so existing links and the
+  // remembered per-tab paths keep working.
+  { id: "runtime",  label: "Evaluator",       sub: "Governed vs ungoverned",   icon: IconSplit },
   { id: "traces",   label: "Decision Traces", sub: "Filterable decision log",  icon: IconList },
   // Intent Flows hidden for the demo, the same way as Semantic Layer above:
   // its tab body stays mounted below, so re-enabling it is restoring this line.
@@ -198,7 +200,7 @@ function IconSettings() {
 const PAGE_META: Record<string, { title: string; desc: string }> = {
   dashboard:{ title: "Overview",          desc: "Moving agents from demo to production — every action follows business rules, uses approved context, and produces decision evidence." },
   learned:  { title: "Learned Intents",   desc: "For a deployment with no policy document: what the traces imply. Tool calls are grouped by operation, profiled by counting, and — optionally — read by a model that states the rule the behaviour appears to follow. Candidates to review, never a published policy." },
-  runtime:  { title: "Runtime",           desc: "The same request answered twice — a realistic app-layer agent with typed business functions and no authorization policy, versus the identical request through the Prefront runtime with identity injected and policy enforced. The verdict, the rows and the model's own answer, side by side." },
+  runtime:  { title: "Evaluator",        desc: "The same request answered twice — a realistic app-layer agent with typed business functions and no authorization policy, versus the identical request through the Prefront runtime with identity injected and policy enforced. The verdict, the rows and the model's own answer, side by side." },
   traces:   { title: "Decision Traces",  desc: "The full governance decision log — filter every recorded decision by outcome, caller, role, intent, or policy." },
   flows:    { title: "Intent Flows",     desc: "Profile which intents each user invokes, in what order, within a session." },
   data:     { title: "Data Connector",   desc: "Point Prefront at a datasource and introspect its schema." },
