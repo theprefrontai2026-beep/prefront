@@ -1,0 +1,23 @@
+# Standalone, like every other demo in this repo — the engine's own compose
+# project is NOT required, because the enforcement plane is a library here
+# rather than a service. Nothing to attach to, no external network or volume.
+#
+#   docker compose -f warrant-demo/docker-compose.yml up --build -d
+#   open http://localhost:8140
+#
+# Build context is the repo root so the image can copy both `warrant/` (the
+# engine) and `warrant-demo/` (this application's vocabulary) — the split is
+# the point being demonstrated, so the image keeps it.
+services:
+  warrant-demo:
+    build:
+      context: ..
+      dockerfile: warrant-demo/Dockerfile
+    ports: ["${WARRANT_DEMO_PORT:-8140}:8140"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8140/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped

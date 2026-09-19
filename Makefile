@@ -42,6 +42,7 @@ test:
 	cd semantic-mcp-server && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
 	cd semantic-layer && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
 	cd warrant && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
+	cd warrant-demo && ../warrant/.venv/bin/python -m pytest -q
 	cd skill-builder && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q \
 		../loanpro-demo/test_grading_harness.py ../loanpro-demo/test_preflight_import.py
 	sh eval-engine/sync.sh --check

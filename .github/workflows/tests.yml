@@ -45,6 +45,7 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r warrant/requirements-dev.txt
       - run: python -m pytest -q warrant/tests
+      - run: python -m pytest -q warrant-demo/test_demo.py
 
   semantic-mcp-server:
     # semantic-mcp-server/tests/ has no __init__.py, so pytest's default

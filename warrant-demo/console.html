@@ -1,0 +1,363 @@
+<title>Arcadia Treasury Run</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------------------
+   A settlement blotter, not a dashboard. Two ledgers run in parallel and a
+   decision gate sits on the spine between them. Every structural device here
+   encodes something: the centre column is where a control fires, the rules are
+   ledger column separators, and tabular figures exist so money columns align.
+   --------------------------------------------------------------------------- */
+:root {
+  --ground:#EEF0F3; --surface:#FFFFFF; --surface-sunk:#E4E8ED;
+  --ink:#151C26; --ink-soft:#5A6675; --ink-faint:#8A94A1;
+  --rule:#D3D8DF; --rule-strong:#AEB7C2;
+  --released:#1F6F4A; --released-wash:#E3F0E9;
+  --denied:#96242F;  --denied-wash:#F7E4E5;
+  --held:#9A6410;    --held-wash:#F8EEDC;
+  --spine:#151C26;
+}
+:root:not([data-theme="light"]) { }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:#11151B; --surface:#171D25; --surface-sunk:#0D1116;
+    --ink:#E6EAEF; --ink-soft:#9AA5B2; --ink-faint:#6C7784;
+    --rule:#28313B; --rule-strong:#3A4552;
+    --released:#5BBD8C; --released-wash:#14291F;
+    --denied:#E8737E;  --denied-wash:#2C1518;
+    --held:#D9A44C;    --held-wash:#2B2113;
+    --spine:#E6EAEF;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:#11151B; --surface:#171D25; --surface-sunk:#0D1116;
+  --ink:#E6EAEF; --ink-soft:#9AA5B2; --ink-faint:#6C7784;
+  --rule:#28313B; --rule-strong:#3A4552;
+  --released:#5BBD8C; --released-wash:#14291F;
+  --denied:#E8737E;  --denied-wash:#2C1518;
+  --held:#D9A44C;    --held-wash:#2B2113;
+  --spine:#E6EAEF;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:Archivo,"Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.wrap{max-width:1280px;margin:0 auto;padding-inline:20px}
+
+/* --- masthead: the consent everything is measured against ----------------- */
+header.mast{background:var(--surface);border-bottom:2px solid var(--spine)}
+.mast-in{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;
+  padding-block:20px 18px}
+.org{flex:1 1 260px;min-width:0}
+.org h1{margin:0;font-size:19px;font-weight:700;letter-spacing:-.015em}
+.org p{margin:3px 0 0;font-size:13px;color:var(--ink-soft)}
+.consent{flex:2 1 520px;min-width:0;border-left:3px solid var(--spine);
+  padding-left:16px}
+.consent .said{margin:0 0 9px;font-size:14.5px;line-height:1.45}
+.consent .said b{font-weight:600}
+.bounds{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12.5px;color:var(--ink-soft)}
+.bounds span{white-space:nowrap}
+.bounds b{color:var(--ink);font-weight:600}
+
+/* --- layout --------------------------------------------------------------- */
+.cols{display:grid;grid-template-columns:238px minmax(0,1fr);gap:28px;
+  padding-block:24px 56px;align-items:start}
+
+/* --- scenario rail -------------------------------------------------------- */
+nav.rail{position:sticky;top:12px}
+.grp{margin-bottom:18px}
+.grp h2{margin:0 0 6px;font-size:12.5px;font-weight:600;color:var(--ink-faint);
+  letter-spacing:.01em}
+.rail button{
+  display:block;width:100%;text-align:left;background:none;border:0;
+  border-left:2px solid var(--rule);cursor:pointer;color:var(--ink-soft);
+  font:inherit;font-size:13.5px;line-height:1.35;padding:5px 0 5px 11px;
+}
+.rail button:hover{color:var(--ink);border-left-color:var(--rule-strong)}
+.rail button[aria-current="true"]{color:var(--ink);font-weight:600;
+  border-left-color:var(--spine);border-left-width:2px}
+.rail button:focus-visible{outline:2px solid var(--spine);outline-offset:2px}
+
+/* --- scenario head -------------------------------------------------------- */
+.head{margin-bottom:20px}
+.head h3{margin:0 0 5px;font-size:26px;font-weight:700;letter-spacing:-.02em;
+  line-height:1.2;max-width:34ch}
+.head .q{margin:0;font-size:15px;color:var(--ink-soft);max-width:56ch}
+
+/* --- the blotter: two ledgers and a gate ---------------------------------- */
+.blotter{background:var(--surface);border:1px solid var(--rule)}
+.lane-heads,.row{display:grid;grid-template-columns:1fr 104px 1fr}
+.lane-heads{border-bottom:2px solid var(--spine)}
+.lane-heads div{padding:10px 16px;font-size:13px;font-weight:600}
+.lane-heads .mid{text-align:center;color:var(--ink-faint);font-weight:500;
+  border-inline:1px solid var(--rule)}
+.lane-heads .hL{color:var(--denied)}
+.lane-heads .hR{color:var(--released)}
+
+.row{border-bottom:1px solid var(--rule)}
+.row:last-of-type{border-bottom:0}
+.cell{padding:12px 16px;min-width:0}
+.cell .act{font-size:14px;line-height:1.35}
+.cell .meta{margin-top:3px;font-size:12.5px;color:var(--ink-faint);
+  display:flex;flex-wrap:wrap;gap:3px 12px}
+.cell .amt{font-weight:600}
+.struck .act{text-decoration:line-through;text-decoration-thickness:1px;
+  color:var(--ink-faint)}
+
+/* the spine: where a control fires */
+.gate{border-inline:1px solid var(--rule);display:flex;align-items:center;
+  justify-content:center;padding:12px 6px;background:var(--surface-sunk)}
+.stamp{font-size:11.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;
+  border:1.5px solid currentColor;white-space:nowrap}
+.allow .stamp{color:var(--released)}
+.deny .stamp{color:var(--denied);background:var(--denied-wash)}
+.step_up .stamp{color:var(--held);background:var(--held-wash)}
+.row.deny .cell.right{background:var(--denied-wash)}
+.row.step_up .cell.right{background:var(--held-wash)}
+.row.deny .cell.left,.row.step_up .cell.left{background:var(--denied-wash)}
+
+.why{grid-column:1/-1;border-top:1px dashed var(--rule);padding:10px 16px;
+  font-size:13px;color:var(--ink-soft);background:var(--surface)}
+.why b{color:var(--ink);font-weight:600}
+.codes{margin-top:5px;font-size:12px;color:var(--ink-faint)}
+
+/* --- tally ---------------------------------------------------------------- */
+.tally{display:grid;grid-template-columns:1fr 104px 1fr;border-top:2px solid var(--spine)}
+.tally .t{padding:13px 16px}
+.tally .mid{border-inline:1px solid var(--rule);background:var(--surface-sunk)}
+.tally .big{font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
+.tally .lbl{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+.bad{color:var(--denied)} .good{color:var(--released)}
+
+/* --- outcome line --------------------------------------------------------- */
+.outcomes{display:grid;grid-template-columns:1fr 1fr;gap:1px;margin-top:1px;
+  background:var(--rule)}
+.outcomes div{background:var(--surface);padding:13px 16px;font-size:13.5px;
+  line-height:1.5}
+.outcomes .k{display:block;font-weight:600;font-size:12.5px;margin-bottom:3px}
+.outcomes .l .k{color:var(--denied)} .outcomes .r .k{color:var(--released)}
+
+/* --- evidence + checks ---------------------------------------------------- */
+details.ev{margin-top:20px;background:var(--surface);border:1px solid var(--rule)}
+details.ev>summary{cursor:pointer;padding:11px 16px;font-size:13.5px;
+  font-weight:600;list-style:none}
+details.ev>summary::-webkit-details-marker{display:none}
+details.ev>summary::before{content:"+ ";color:var(--ink-faint)}
+details.ev[open]>summary::before{content:"– "}
+details.ev>summary:focus-visible{outline:2px solid var(--spine);outline-offset:-2px}
+.evbody{border-top:1px solid var(--rule);padding:14px 16px}
+.src{border-left:3px solid var(--rule);padding:2px 0 2px 12px;margin-bottom:12px}
+.src.untrusted{border-left-color:var(--denied)}
+.src.trusted{border-left-color:var(--released)}
+.src .tag{font-size:12px;font-weight:600}
+.src.untrusted .tag{color:var(--denied)} .src.trusted .tag{color:var(--released)}
+.src .loc{font-size:12px;color:var(--ink-faint);margin-left:8px}
+.src p{margin:4px 0 0;font-size:13px;color:var(--ink-soft);white-space:pre-wrap;
+  max-width:70ch}
+.checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
+  gap:2px 18px;margin-top:4px}
+.chk{display:flex;gap:8px;font-size:12.5px;padding:2px 0;align-items:baseline}
+.chk i{font-style:normal;width:9px;flex:none}
+.chk.satisfied i{color:var(--released)} .chk.satisfied span{color:var(--ink-soft)}
+.chk.violated i,.chk.violated span{color:var(--denied);font-weight:600}
+.chk.indeterminate i,.chk.indeterminate span{color:var(--held);font-weight:600}
+
+/* --- summary -------------------------------------------------------------- */
+.totals{margin-top:32px;border-top:2px solid var(--spine);padding-top:16px;
+  display:flex;flex-wrap:wrap;gap:28px 44px;align-items:flex-end}
+.totals .t .big{font-size:29px;font-weight:700;letter-spacing:-.025em;line-height:1}
+.totals .t .lbl{font-size:12.5px;color:var(--ink-soft);margin-top:4px;max-width:24ch}
+.foot{margin-top:22px;font-size:12.5px;color:var(--ink-faint);max-width:78ch;
+  line-height:1.6}
+
+@media (max-width:900px){
+  .cols{grid-template-columns:1fr;gap:20px}
+  nav.rail{position:static}
+  .grp{display:inline-block;vertical-align:top;margin-right:20px}
+  .lane-heads,.row,.tally{grid-template-columns:1fr}
+  .lane-heads .mid,.gate,.tally .mid{border-inline:0;border-block:1px solid var(--rule)}
+  .gate{justify-content:flex-start;padding-inline:16px}
+  .outcomes{grid-template-columns:1fr}
+  .head h3{font-size:23px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<header class="mast"><div class="wrap mast-in">
+  <div class="org">
+    <h1>Arcadia Capital</h1>
+    <p>Treasury Operations · unattended overnight settlement</p>
+  </div>
+  <div class="consent">
+    <p class="said" id="instruction"></p>
+    <div class="bounds" id="bounds"></div>
+  </div>
+</div></header>
+
+<div class="wrap cols">
+  <nav class="rail" id="rail" aria-label="Situations"></nav>
+  <main>
+    <div class="head">
+      <h3 id="sc-title"></h3>
+      <p class="q" id="sc-question"></p>
+    </div>
+    <section class="blotter" aria-live="polite">
+      <div class="lane-heads">
+        <div class="hL">No control on the call path</div>
+        <div class="mid">Decision</div>
+        <div class="hR">Through Warrant</div>
+      </div>
+      <div id="rows"></div>
+      <div class="tally" id="tally"></div>
+    </section>
+    <div class="outcomes">
+      <div class="l"><span class="k">What happens today</span><span id="story-u"></span></div>
+      <div class="r"><span class="k">What Warrant does</span><span id="story-g"></span></div>
+    </div>
+    <details class="ev" id="ev" open>
+      <summary>What the agent acted on, and every control that ran</summary>
+      <div class="evbody" id="evbody"></div>
+    </details>
+
+    <div class="totals" id="totals"></div>
+    <p class="foot" id="foot"></p>
+  </main>
+</div>
+
+<script>
+/* One file, two hosts. When results are baked in (a shared link) use them;
+   otherwise ask the local demo server, which runs the scenarios for real. */
+const boot = async () => {
+  if (window.__RUN__) return window.__RUN__;
+  const r = await fetch("/api/results");
+  if (!r.ok) throw new Error("demo server did not answer");
+  return r.json();
+};
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const STAMP = {allow:"RELEASED", deny:"DENIED", step_up:"HELD"};
+
+let RUN, current;
+
+function drawRail() {
+  const groups = [];
+  RUN.scenarios.forEach(s => {
+    let g = groups.find(x => x.name === s.group);
+    if (!g) groups.push(g = {name: s.group, items: []});
+    g.items.push(s);
+  });
+  document.getElementById("rail").innerHTML = groups.map(g => `
+    <div class="grp"><h2>${esc(g.name)}</h2>${g.items.map(s =>
+      `<button type="button" data-key="${esc(s.key)}">${esc(s.title)}</button>`
+    ).join("")}</div>`).join("");
+  document.querySelectorAll("#rail button").forEach(b =>
+    b.addEventListener("click", () => select(b.dataset.key)));
+}
+
+function laneCell(step, side) {
+  const gone = side === "right" && step.outcome !== "executed";
+  const bits = [];
+  if (step.counterparty) bits.push(esc(step.counterparty));
+  if (step.resource) bits.push(esc(step.resource));
+  return `<div class="cell ${side} ${gone ? "struck" : ""}">
+    <div class="act">${esc(step.narrative)}${
+      step.amount ? ` <span class="amt num">${esc(step.amount)}</span>` : ""}</div>
+    ${bits.length ? `<div class="meta">${bits.map(b => `<span>${b}</span>`).join("")}</div>` : ""}
+  </div>`;
+}
+
+function select(key) {
+  current = RUN.scenarios.find(s => s.key === key) || RUN.scenarios[0];
+  document.querySelectorAll("#rail button").forEach(b =>
+    b.setAttribute("aria-current", String(b.dataset.key === current.key)));
+
+  document.getElementById("sc-title").textContent = current.title;
+  document.getElementById("sc-question").textContent = current.question;
+  document.getElementById("story-u").textContent = current.ungoverned_story;
+  document.getElementById("story-g").textContent = current.governed_story;
+
+  const U = current.lanes.ungoverned.steps, G = current.lanes.governed.steps;
+  document.getElementById("rows").innerHTML = G.map((g, i) => {
+    const u = U[i] || g;
+    const why = g.effect !== "allow" && g.detail
+      ? `<div class="why"><b>Why it stopped.</b> ${esc(g.detail)}
+           ${g.reasons.length ? `<div class="codes">${g.reasons.map(esc).join(" · ")}</div>` : ""}
+         </div>` : "";
+    return `<div class="row ${g.effect}">
+      ${laneCell(u, "left")}
+      <div class="gate"><span class="stamp">${STAMP[g.effect] || "—"}</span></div>
+      ${laneCell(g, "right")}
+      ${why}
+    </div>`;
+  }).join("");
+
+  const lu = current.lanes.ungoverned, lg = current.lanes.governed;
+  document.getElementById("tally").innerHTML = `
+    <div class="t"><div class="big num bad">${esc(lu.cash_moved)}</div>
+      <div class="lbl">released${lu.unauthorized !== "$0.00"
+        ? ` · <b class="bad">${esc(lu.unauthorized)} unauthorised</b>` : ""}</div></div>
+    <div class="t mid"></div>
+    <div class="t"><div class="big num good">${esc(lg.cash_moved)}</div>
+      <div class="lbl">released${lg.held ? ` · ${lg.held} held for the operator` : ""}${
+        lg.blocked ? ` · ${lg.blocked} stopped` : ""}</div></div>`;
+
+  const last = G.find(s => s.effect !== "allow") || G[G.length - 1];
+  document.getElementById("evbody").innerHTML = `
+    <p style="margin:0 0 10px;font-size:13px;color:var(--ink-soft)">
+      Sources the agent derived <b style="color:var(--ink)">${esc(last.narrative)}</b> from:</p>
+    ${last.sources.map(s => `<div class="src ${esc(s.origin)}">
+      <span class="tag">${esc(s.origin.replace("_", "-"))}</span>
+      <span class="loc">${esc(s.locator)}</span>
+      <p>${esc(s.excerpt)}</p></div>`).join("") ||
+      `<p style="font-size:13px;color:var(--ink-faint)">No sources cited.</p>`}
+    <p style="margin:16px 0 6px;font-size:13px;color:var(--ink-soft)">
+      Controls that ran on this call — all of them, every time:</p>
+    <div class="checks">${last.checks.map(c => `<div class="chk ${esc(c.status)}">
+      <i>${c.status === "satisfied" ? "✓" : c.status === "violated" ? "✕" : "?"}</i>
+      <span>${esc(c.check_id.replace("pds.", "").replace(/_/g, " "))}</span></div>`).join("")}</div>`;
+}
+
+function drawChrome() {
+  const m = RUN.mission;
+  document.getElementById("instruction").innerHTML =
+    `<b>${esc(m.operator)}</b> approved, once: “${esc(m.instruction)}”`;
+  document.getElementById("bounds").innerHTML = [
+    ["may", m.actions.length + " actions"],
+    ["with", m.counterparties.join(", ")],
+    ["up to", m.budget],
+    ["between", m.window],
+    ["sub-agents", m.max_depth + " deep"],
+  ].map(([k, v]) => `<span>${esc(k)} <b>${esc(v)}</b></span>`).join("");
+
+  const t = RUN.summary;
+  document.getElementById("totals").innerHTML = `
+    <div class="t"><div class="big num good">${esc(t.prevented)}</div>
+      <div class="lbl">stopped before it left the building, across ${t.scenarios} situations</div></div>
+    <div class="t"><div class="big num">${t.incidents_ungoverned} → ${t.incidents_governed}</div>
+      <div class="lbl">situations that cost money — without the control, then with it</div></div>
+    <div class="t"><div class="big num">${t.held_for_approval}</div>
+      <div class="lbl">sent to the operator instead of being refused outright</div></div>`;
+  document.getElementById("foot").textContent =
+    "Every decision on this page was produced by the enforcement engine itself — the outcomes, "
+    + "the reason codes and the control list are its output, not a script. The agent is scripted "
+    + "so the run is identical every time; the decisions are not.";
+}
+
+boot().then(run => {
+  RUN = run;
+  drawChrome();
+  drawRail();
+  select(RUN.open_on || RUN.scenarios[0].key);
+}).catch(e => {
+  document.querySelector("main").innerHTML =
+    `<div class="head"><h3>The demo server is not answering</h3>
+     <p class="q">Start it with <b>python server.py</b> from <b>warrant-demo/</b>, then reload.
+     (${esc(e.message)})</p></div>`;
+});
+</script>

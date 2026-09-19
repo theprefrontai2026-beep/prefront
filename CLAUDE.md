@@ -730,10 +730,8 @@ side-effect call happens, whether it is permitted — from a signed human
 approval the model cannot reach.
 
 **Status: the decision core, offline and tested (93 tests). No service, no
-gateway, no transport** — so it runs as a library or via
-`python -m warrant demo` (five calls through one Mission: allow, argument
-rewrite, counterparty step-up, injected instruction, sub-agent escalation;
-`--json` for the raw `Decision` payloads). `warrant/README.md` carries the design rationale and
+gateway, no transport** — so it runs as a library, and `warrant-demo/` is the
+worked example of embedding it (see that section below). `warrant/README.md` carries the design rationale and
 the table of what the spec's Phase 1 still needs (gateway, token service,
 consent screen, evidence store, step-up delivery, runtime adapters).
 
@@ -787,6 +785,53 @@ consent screen, evidence store, step-up delivery, runtime adapters).
   `origin` labels. The injection tripwire depends on honest labelling and is
   audited after the fact by `evidence_mismatch`, never prevented on the path.
 
+## Warrant demo: Arcadia Capital (`warrant-demo/`)
+
+The enforcement plane's demonstration, and the third demo deployment in this
+repo. Investor- and executive-facing: one treasury agent settling supplier
+invoices overnight, run twice — ungoverned, then through Warrant — over twelve
+situations. Standalone; the engine's compose project is NOT needed, because
+here the enforcement plane is a library rather than a service.
+
+```bash
+cd warrant-demo && python3 server.py          # -> http://localhost:8140
+python3 server.py --check                     # one line, non-zero on drift
+docker compose -f warrant-demo/docker-compose.yml up --build -d
+```
+
+- **The decisions are real, the agent is scripted, and that split is
+  deliberate.** Every outcome, reason code and control result on the page is
+  `warrant/`'s own output, computed at page load. The agent is scripted
+  because what is being demonstrated is deterministic by construction — a live
+  model would add variance to the only part of the system designed to have
+  none, and produce a demo that behaves differently on stage than in
+  rehearsal. `test_demo.py` asserts the documented outcome of all twelve, so a
+  change to the engine makes the demo FAIL rather than lie.
+- **`deployment.py` is the whole integration** — ~60 lines handing the engine
+  one consent screen's worth of fields plus an action list. It does not
+  subclass, patch or extend anything, and `test_demo.py` asserts that
+  (no private imports, no engine subclassing), which is what makes "the same
+  engine governs a different application unchanged" testable.
+- **INJ-02 is the marquee case and the test pins why**: an amendment inside a
+  supplier's own PDF inflates a $9,750 invoice to $105,800. Identity, scope,
+  counterparty and budget all PASS — 11 of 12 controls green — and the denial
+  comes from `pds.injection_tripwire` alone. `test_the_marquee_case_fires_only_
+  the_provenance_control` asserts the reason tuple is exactly that one, so the
+  claim cannot silently stop being true.
+- **Both lanes run the identical call sequence**, asserted per scenario, so any
+  difference between the columns is attributable to the enforcement plane and
+  not to the harness.
+- **`console.html` is one file with no build step** and works two ways: it uses
+  `window.__RUN__` when results are baked in (a shared static link) and
+  otherwise fetches `/api/results` from the local server. Two tests keep the
+  page and the server agreeing on the payload shape in BOTH directions.
+- The vocabulary (suppliers, invoices, cents, the ledger) lives in `world.py`
+  and nowhere else. `warrant/` still names no application — and the guard that
+  enforces it now checks business NOUNS on executable lines, not just
+  deployment names, because a `python -m warrant demo` command briefly lived
+  in the engine and invented a vocabulary to demonstrate itself with. That
+  demo is this directory now.
+
 ## Commands
 
 ### Run the bundled stack
@@ -839,9 +884,10 @@ small enough that `docker compose up -d --build <service>` is usually simpler.
 
 ### Tests
 
-Six Python test suites exist: `warrant/tests/` (the enforcement plane —
+Seven Python test suites exist: `warrant/tests/` (the enforcement plane —
 see that section above; organised by the ATTACK each case stops rather than by
-method, and including a domain-independence guard), `skill-builder/tests/`, `eval-engine/tests/`
+method, and including a domain-independence guard), `warrant-demo/test_demo.py`
+(the Arcadia demo as a regression suite), `skill-builder/tests/`, `eval-engine/tests/`
 (includes a domain-independence guard and, for `family1/temporal.py`'s
 precondition automaton, a Hypothesis property-based suite against generated
 step streams — `test_family1_temporal_properties.py`), `semantic-mcp-server/
@@ -855,9 +901,9 @@ has none — verify changes to it by running the service (see the per-service
 verification recipes below and in the OOB section). `semantic-layer`'s suite
 had been deleted in 9cf773a and came back with intent mining, so its
 coverage is that module only, not the service.
-`make test` runs all six suites plus
+`make test` runs all seven suites plus
 `eval-engine/sync.sh --check`, using each service's already-created venv;
-`.github/workflows/tests.yml` runs five of the six in CI (semantic-layer's is still not added there; warrant's is) (fresh venvs
+`.github/workflows/tests.yml` runs six of the seven in CI (semantic-layer's is still not added there; warrant's and the Arcadia demo's are) (fresh venvs
 via `actions/setup-python`, plus a `compose-config` job) on every push/PR —
 deliberately NOT `make grade-loanpro` (below), which needs the live stack +
 a metered LLM key that a plain CI runner doesn't have.
@@ -978,6 +1024,7 @@ Top-level design docs, each answering a different question:
 | `TODO.md` | open work not carried by a design doc's own status marker — an index, not a second plan (deep plans stay where they are; entries carry file:line evidence) |
 | `Prefront + Warrant Feature Specification.pdf` | the merged product: enforcement plane (Warrant) + judgement plane (Prefront) over one trace. The source for `warrant/`; also the roadmap, buyer framing and the explicit deferral of policy-document ingestion |
 | `warrant/README.md` | the enforcement plane's design rationale, its two honest limits, and the table of what Phase 1 still needs |
+| `warrant-demo/README.md` | the Arcadia treasury demo: the twelve situations, a fifteen-minute presenting order, and an explicit account of what is real vs staged |
 | `design.md` | positioning + the LLM-at-design-time-only principle |
 | `prefront_semantic_layer_design.md` | the semantic-contract artifact set |
 | `governance_layer_design` | the INLINE governance pipeline's design (note: no file extension, which is why grep for `*.md` misses it) — the per-stage contract behind `semantic-mcp-server/semanticmcp/governance/` documented under "Runtime governance pipeline" above, and an explicit out-of-scope list (authN/token validation, OPA or any external policy engine, persisted approval workflow) with the sockets left for all three |
