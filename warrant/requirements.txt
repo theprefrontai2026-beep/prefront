@@ -1,0 +1,13 @@
+# Prefront/Warrant enforcement plane: Missions, Action Attestations, the task
+# tree and the Policy Decision Service.
+#
+# Deliberately tiny. Everything in `warrant/` that a resource server needs in
+# order to VERIFY a Mission or an attestation must run from this list alone —
+# the spec promises "open-source verifiers per language" and an air-gapped
+# deployment with "no outbound calls", and a verifier that drags in a web
+# framework is neither open nor air-gappable in practice.
+#
+# `cryptography` supplies Ed25519 only (sign/verify + raw key encoding). No
+# JWT library: a Mission is not a JWT, and a verifier that accepts one would
+# inherit the alg-confusion family of bugs for no benefit.
+cryptography>=42.0

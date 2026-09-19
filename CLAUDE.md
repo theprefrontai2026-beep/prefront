@@ -720,6 +720,70 @@ always shown beside it.
   (`POST /design/semantic/compliance/overlay/suggest`, deterministic) — a
   human publishes it; nothing in the pipeline writes it.
 
+## Warrant: the enforcement plane (`warrant/`)
+
+New, and the first half of the product this repo did not previously have.
+`Prefront + Warrant Feature Specification.pdf` is the source; the short version
+is that Prefront's pitch is **authorize, judge, prove, from one trace**, and
+`eval-engine` has only ever been the JUDGE half. `warrant/` decides, before a
+side-effect call happens, whether it is permitted — from a signed human
+approval the model cannot reach.
+
+**Status: the decision core, offline and tested (93 tests). No service, no
+gateway, no transport.** `warrant/README.md` carries the design rationale and
+the table of what the spec's Phase 1 still needs (gateway, token service,
+consent screen, evidence store, step-up delivery, runtime adapters).
+
+- **A Mission is the unit of consent**, signed by the Mission Authority:
+  instruction hash, action classes, resources, counterparties, budget,
+  validity window, sub-agent depth. An **Action Attestation** is what the model
+  CLAIMS it is about to do, signed by the Intent Binder in the agent process —
+  a claim, never a permission. The **PDS** turns the pair into
+  `allow | deny | step_up`.
+- **The PDS is a pure function and every check runs.** No mutation (so the
+  spec's sandbox can replay a proposed policy against recorded attestations),
+  no short-circuit on first failure (the Narrow stage needs every reason, not
+  the first). `indeterminate` counts as that check's violation — fail closed,
+  the same convention `semantic-mcp-server`'s governance already uses.
+- **`CheckResult` deliberately mirrors `evalengine.contract.Verdict`**:
+  the same `satisfied | violated | indeterminate`, with `on_violation`
+  (`deny`/`step_up`) mapping onto that contract's `block`/`approval_required`.
+  The spec plans to promote proven integrity checks inline as a PDS plugin;
+  this alignment is what makes that a registration rather than a rewrite.
+- **Step-up is not a soft deny.** A new counterparty or an over-budget call
+  pauses ONE branch and shows a human the specific delta. Collapsing it into
+  deny is what teaches users to approve Missions with an empty counterparty
+  list, removing the control entirely.
+- **Narrowing is an intersection, not a check** (`tree.Grant.narrow`), so a
+  sub-agent grant cannot widen even when a caller asks it to. The subtle line:
+  an UNCONSTRAINED request inherits the parent's list, not the world's.
+  Budget is the TREE's, and spending is reserve-then-settle — a ceiling checked
+  only at decision time lets two concurrent branches each see the full
+  remaining budget (there is a threaded test for exactly that).
+- **Hashing is the integrity boundary** (`canonical.py`), not a formatting
+  choice: the control zone holds hashes, the data zone holds payloads, and the
+  auditor's evidence chain IS the claim that they match. Domain-separated
+  digests, `1.0 == 1`, sets refused rather than ordered by guess. The tag
+  constants are WIRE FORMAT — changing one invalidates every hash ever
+  persisted of that type, and reads as forgery rather than as a version bump.
+- **Ed25519 only, algorithm checked but never dispatched on**; detached
+  signatures over canonical bytes, so a verifier never parses untrusted input
+  before verifying. A published JWKS verifies offline, which the air-gapped
+  deployment and the "open-source verifiers per language" promise both need.
+- **`warrant/` names no deployment**, enforced by
+  `tests/test_domain_independence.py` the way eval-engine's guard works
+  (deployment names, anywhere, comments included). The action registry ships
+  EMPTY — a default verb list would be the engine having an opinion about a
+  customer's tool surface. An unregistered action class **fails closed**,
+  deliberately: assuming an unknown verb is a harmless read is how a new
+  destructive tool ships ungoverned.
+- **The Intent Binder is inside the blast radius** and that is by design, not
+  an oversight: it runs in the agent process, so whoever controls the agent
+  controls its key. That is WHY the PDS is a separate party, and why the
+  judgement plane recomputes provenance rather than trusting an attestation's
+  `origin` labels. The injection tripwire depends on honest labelling and is
+  audited after the fact by `evidence_mismatch`, never prevented on the path.
+
 ## Commands
 
 ### Run the bundled stack
@@ -772,7 +836,9 @@ small enough that `docker compose up -d --build <service>` is usually simpler.
 
 ### Tests
 
-Five Python test suites exist: `skill-builder/tests/`, `eval-engine/tests/`
+Six Python test suites exist: `warrant/tests/` (the enforcement plane —
+see that section above; organised by the ATTACK each case stops rather than by
+method, and including a domain-independence guard), `skill-builder/tests/`, `eval-engine/tests/`
 (includes a domain-independence guard and, for `family1/temporal.py`'s
 precondition automaton, a Hypothesis property-based suite against generated
 step streams — `test_family1_temporal_properties.py`), `semantic-mcp-server/
@@ -786,9 +852,9 @@ has none — verify changes to it by running the service (see the per-service
 verification recipes below and in the OOB section). `semantic-layer`'s suite
 had been deleted in 9cf773a and came back with intent mining, so its
 coverage is that module only, not the service.
-`make test` runs all five suites plus
+`make test` runs all six suites plus
 `eval-engine/sync.sh --check`, using each service's already-created venv;
-`.github/workflows/tests.yml` runs four of the five in CI (semantic-layer's is new and not yet added there) (fresh venvs
+`.github/workflows/tests.yml` runs five of the six in CI (semantic-layer's is still not added there; warrant's is) (fresh venvs
 via `actions/setup-python`, plus a `compose-config` job) on every push/PR —
 deliberately NOT `make grade-loanpro` (below), which needs the live stack +
 a metered LLM key that a plain CI runner doesn't have.
@@ -907,6 +973,8 @@ Top-level design docs, each answering a different question:
 | doc | what it covers |
 |---|---|
 | `TODO.md` | open work not carried by a design doc's own status marker — an index, not a second plan (deep plans stay where they are; entries carry file:line evidence) |
+| `Prefront + Warrant Feature Specification.pdf` | the merged product: enforcement plane (Warrant) + judgement plane (Prefront) over one trace. The source for `warrant/`; also the roadmap, buyer framing and the explicit deferral of policy-document ingestion |
+| `warrant/README.md` | the enforcement plane's design rationale, its two honest limits, and the table of what Phase 1 still needs |
 | `design.md` | positioning + the LLM-at-design-time-only principle |
 | `prefront_semantic_layer_design.md` | the semantic-contract artifact set |
 | `governance_layer_design` | the INLINE governance pipeline's design (note: no file extension, which is why grep for `*.md` misses it) — the per-stage contract behind `semantic-mcp-server/semanticmcp/governance/` documented under "Runtime governance pipeline" above, and an explicit out-of-scope list (authN/token validation, OPA or any external policy engine, persisted approval workflow) with the sockets left for all three |
