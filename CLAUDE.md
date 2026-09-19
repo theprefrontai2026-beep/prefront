@@ -825,6 +825,9 @@ docker compose -f warrant-demo/docker-compose.yml up --build -d
   `window.__RUN__` when results are baked in (a shared static link) and
   otherwise fetches `/api/results` from the local server. Two tests keep the
   page and the server agreeing on the payload shape in BOTH directions.
+- **`build_static.py` bakes the run into one file** for an audience with no
+  terminal. It REFUSES to build when any situation no longer decides as
+  documented, because a static copy outlives the session that produced it.
 - The vocabulary (suppliers, invoices, cents, the ledger) lives in `world.py`
   and nowhere else. `warrant/` still names no application — and the guard that
   enforces it now checks business NOUNS on executable lines, not just

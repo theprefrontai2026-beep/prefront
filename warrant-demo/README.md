@@ -14,6 +14,19 @@ Only dependency is `cryptography`, which the engine needs to sign anything. If
 you have the engine's venv it is already there:
 `../warrant/.venv/bin/python server.py`.
 
+### Showing it without a terminal
+
+```bash
+python3 build_static.py --out arcadia.html
+```
+
+Bakes the run into one self-contained file for a link, an email or a laptop
+with no Python. The console prefers baked-in results over fetching, so the
+static build and the live server share one implementation rather than drifting
+into two. The build refuses if any situation no longer decides as documented —
+a static copy outlives the session that made it, so shipping a stale one is the
+worst version of that failure.
+
 ## The situation
 
 Arcadia Capital's Treasury Operations agent settles supplier invoices
