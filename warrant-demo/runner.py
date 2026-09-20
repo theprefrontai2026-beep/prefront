@@ -81,13 +81,26 @@ def _split_point(scenario: scenarios.Scenario, calls: list) -> int:
     return 1
 
 
-def run(scenario: scenarios.Scenario) -> ScenarioResult:
+def run(scenario: scenarios.Scenario, pds_url: str = "") -> ScenarioResult:
+    """Run one situation down both lanes.
+
+    `pds_url` switches the governed lane from the embedded engine to a
+    warrant-service over HTTP. The scenarios are untouched by the choice, and
+    the results are asserted identical either way — a service that decided
+    differently from the library would be invisible until an audit.
+    """
     at = scenario.run_at if scenario.run_at is not None else deployment.NOW
 
     # Two independent deployments so neither lane's budget, call count or tree
-    # state can leak into the other.
+    # state can leak into the other. The ungoverned lane never consults a PDS,
+    # so it stays embedded whatever mode the governed lane is in.
     dep_u = deployment.build(tree_id=f"{scenario.key.lower()}-ungoverned")
-    dep_g = deployment.build(tree_id=f"{scenario.key.lower()}-governed")
+    if pds_url:
+        import remote
+
+        dep_g = remote.build(pds_url, tree_id=f"{scenario.key.lower()}-governed")
+    else:
+        dep_g = deployment.build(tree_id=f"{scenario.key.lower()}-governed")
 
     ledger_u, ledger_g = Ledger(), Ledger()
 
@@ -113,8 +126,8 @@ def run(scenario: scenarios.Scenario) -> ScenarioResult:
     return ScenarioResult(scenario, ungoverned, LaneResult(steps, ledger_g))
 
 
-def run_all() -> list[ScenarioResult]:
-    return [run(s) for s in scenarios.CATALOGUE]
+def run_all(pds_url: str = "") -> list[ScenarioResult]:
+    return [run(s, pds_url=pds_url) for s in scenarios.CATALOGUE]
 
 
 # --- serialization for the console -----------------------------------------

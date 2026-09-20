@@ -1,0 +1,57 @@
+# The Warrant plane: the enforcement service, and the demo that drives it.
+#
+#   docker compose -f docker-compose.warrant.yml up --build -d
+#   open http://localhost:8140     the Arcadia console
+#   open http://localhost:8150/docs   the PDS API
+#
+# A separate Compose project from the engine stack (`docker-compose.yaml`) and
+# from the other demos, because it shares nothing with them — no network, no
+# volume, no database. Warrant is a decision service with in-memory state; it
+# has no ClickHouse, no Postgres and no Phoenix to attach to.
+#
+# `name:` is REQUIRED here and is not cosmetic. This file sits at the repo
+# root, so Compose would otherwise derive the project name from the directory
+# and call it `prefront` — the ENGINE stack's project. The two would then share
+# a network and a container namespace, and `down` on either would reach into
+# the other. The demos avoid this by living in their own directories; this one
+# has to say so.
+#
+# The console talks to the PDS over HTTP rather than embedding it, which is the
+# point of running it this way: it exercises the same API an integrator uses,
+# so a break in the service surface shows up here rather than in production.
+name: prefront-warrant
+
+services:
+  warrant-pds:
+    build:
+      context: .
+      dockerfile: warrant-service/Dockerfile
+    ports: ["${WARRANT_PDS_PORT:-8150}:8150"]
+    environment:
+      WARRANT_ISSUER: arcadia.treasury.authority
+      WARRANT_POLICY_VERSION: arcadia-ap-policy-7
+      # The deployment's vocabulary. Unset, the service starts with an empty
+      # registry and denies every side-effect call — running and refusing,
+      # which is the honest posture for a service nobody configured.
+      WARRANT_ACTION_REGISTRY_PATH: /policy/action_registry.yaml
+      # WARRANT_AUTHORITY_KEY: <base64url 32 bytes>
+      #   Left unset here so the demo needs no secret. The service says so at
+      #   startup: a generated key means Missions stop verifying after a
+      #   restart, which is fine for a demo and wrong for anything else.
+    volumes:
+      - ./warrant-demo/policy:/policy:ro
+    restart: unless-stopped
+
+  warrant-console:
+    build:
+      context: .
+      dockerfile: warrant-demo/Dockerfile
+    ports: ["${WARRANT_DEMO_PORT:-8140}:8140"]
+    environment:
+      # Setting this is what moves the decisions out of process. Remove it and
+      # the console falls back to the embedded engine with identical results.
+      WARRANT_PDS_URL: http://warrant-pds:8150
+    depends_on:
+      warrant-pds:
+        condition: service_healthy
+    restart: unless-stopped

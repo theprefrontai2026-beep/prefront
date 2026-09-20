@@ -47,6 +47,21 @@ jobs:
       - run: python -m pytest -q warrant/tests
       - run: python -m pytest -q warrant-demo/test_demo.py
 
+  warrant-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r warrant-service/requirements-dev.txt
+      # Includes test_demo_parity.py, which starts a real uvicorn server and
+      # asserts the service decides identically to the embedded engine across
+      # all twelve demo situations.
+      - run: python -m pytest -q warrant-service/tests
+      # The demo suite again, from an env that HAS pyyaml, so the
+      # action-registry drift guard actually executes rather than skipping.
+      - run: python -m pytest -q warrant-demo/test_demo.py
+
   semantic-mcp-server:
     # semantic-mcp-server/tests/ has no __init__.py, so pytest's default
     # import-mode inserts only the tests/ dir onto sys.path when invoked

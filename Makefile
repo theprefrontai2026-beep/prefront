@@ -43,6 +43,11 @@ test:
 	cd semantic-layer && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
 	cd warrant && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
 	cd warrant-demo && ../warrant/.venv/bin/python -m pytest -q
+	cd warrant-service && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q
+	# The registry drift guard needs pyyaml, which the demo deliberately does
+	# NOT depend on (it runs from the stdlib + cryptography so it starts on any
+	# machine). Run that one check from the service's venv, which has it.
+	cd warrant-demo && ../warrant-service/.venv/bin/python -m pytest -q -k registry
 	cd skill-builder && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q \
 		../loanpro-demo/test_grading_harness.py ../loanpro-demo/test_preflight_import.py
 	sh eval-engine/sync.sh --check

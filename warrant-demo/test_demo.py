@@ -21,6 +21,10 @@ import pytest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "warrant"))
+# `remote.py` (the HTTP mode) imports the service's client. Only the drift
+# guard below reaches it, and only when pyyaml is present, so the demo's own
+# minimal-dependency property is untouched.
+sys.path.insert(0, str(HERE.parent / "warrant-service"))
 
 import runner  # noqa: E402
 import scenarios  # noqa: E402
@@ -180,3 +184,21 @@ def test_the_console_reads_only_keys_the_server_sends():
     html = (HERE / "console.html").read_text()
     for key in re.findall(r"\bRUN\.(\w+)", html):
         assert key in payload, f"console.html reads RUN.{key}, which the server does not send"
+
+
+def test_the_generated_action_registry_matches_world_actions():
+    """The file warrant-service reads and the registry the embedded demo uses
+    must not drift, or the two modes would decide differently for a reason
+    that has nothing to do with the service.
+
+    Skipped rather than failed without PyYAML: the demo deliberately runs from
+    the standard library plus `cryptography` so it starts on any machine, and
+    this check is a maintenance guard rather than part of what the demo does.
+    """
+    yaml = pytest.importorskip("yaml", reason="pyyaml is not a demo dependency")
+    import remote
+
+    on_disk = yaml.safe_load((HERE / "policy" / "action_registry.yaml").read_text())
+    assert on_disk == remote.registry_document(), (
+        "policy/action_registry.yaml is stale — run `python3 gen_registry.py`"
+    )

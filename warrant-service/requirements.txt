@@ -1,0 +1,12 @@
+# Prefront/Warrant PDS service: the enforcement plane over HTTP.
+#
+# The ENGINE (`warrant/`) deliberately depends on cryptography alone, because a
+# resource server verifying a Mission offline must not have to install a web
+# framework. This package is where wire concerns live, so it is free to take
+# the repo's usual FastAPI stack — and keeping the split means the engine stays
+# embeddable in a process that has no interest in HTTP at all.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pyyaml>=6.0
+cryptography>=42.0

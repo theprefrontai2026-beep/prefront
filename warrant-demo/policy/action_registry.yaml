@@ -1,0 +1,40 @@
+# Arcadia Capital's action classes, as warrant-service loads them.
+#
+# This is the deployment's vocabulary - the file that carries a customer's own
+# verbs into an engine that ships none. The service reads it at startup from
+# WARRANT_ACTION_REGISTRY_PATH; unset, it starts with an empty registry and
+# every side-effect call fails closed.
+#
+# `blast_radius` drives one control and one only: the injection tripwire denies
+# a HIGH action whose evidence chain includes untrusted content. Reading is low
+# on purpose - the tripwire has to be narrow enough that an agent can consume
+# documents freely, or it becomes indistinguishable from switching the agent
+# off and gets disabled.
+#
+# GENERATED from world.ACTIONS by `python3 gen_registry.py`. Edit world.py and
+# regenerate; test_demo.py fails if the two drift, because a service enforcing
+# a different verb list than the embedded demo would make the two modes differ
+# for a reason that has nothing to do with the service.
+
+version: arcadia-ap-registry-3
+actions:
+- name: ap.invoice.annotate
+  blast_radius: medium
+  side_effect: true
+  description: Attach a note to an invoice
+- name: ap.invoice.read
+  blast_radius: low
+  side_effect: false
+  description: Read an invoice record and its document
+- name: ap.payment.release
+  blast_radius: high
+  side_effect: true
+  description: Release funds to a supplier
+- name: ap.supplier.create
+  blast_radius: high
+  side_effect: true
+  description: Register a new supplier
+- name: ap.supplier.lookup
+  blast_radius: low
+  side_effect: false
+  description: Look up a supplier's banking record

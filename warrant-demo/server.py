@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,9 +36,23 @@ from world import APPROVED_COUNTERPARTIES, SUPPLIERS, usd  # noqa: E402
 # baseline is one click away in the rail, named so it is obvious.
 OPEN_ON = "INJ-02"
 
+# When set, every governed decision goes to a warrant-service over HTTP instead
+# of the engine embedded in this process. The scenarios are untouched by the
+# choice and decide identically either way — `warrant-service/tests/
+# test_demo_parity.py` asserts that across all twelve — so this changes WHERE
+# a decision is made, never what it is.
+PDS_URL = os.environ.get("WARRANT_PDS_URL", "")
 
-def build_payload() -> dict:
-    results = runner.run_all()
+
+def build_payload(results=None) -> dict:
+    """The console's whole data set.
+
+    Takes `results` so a caller that has already run the catalogue does not run
+    it again. That used to be a wasted CPU second; against a SHARED service it
+    is a correctness bug, because each run mints Missions and trees whose ids
+    the engine rightly refuses to reuse.
+    """
+    results = runner.run_all(pds_url=PDS_URL) if results is None else results
     mission = deployment.build().mission
     return {
         "open_on": OPEN_ON,
@@ -51,6 +66,7 @@ def build_payload() -> dict:
             "max_depth": mission.max_depth,
         },
         "summary": runner.summary(results),
+        "decided_by": f"warrant-service at {PDS_URL}" if PDS_URL else "embedded engine",
         "scenarios": [runner.result_json(r) for r in results],
     }
 
@@ -95,7 +111,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    results = runner.run_all()
+    # Run the catalogue ONCE, here, and thread it through everything below.
+    results = runner.run_all(pds_url=PDS_URL)
     ok = all(r.matched_expectation for r in results)
     total = runner.summary(results)
 
@@ -107,11 +124,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if ok else 1
 
-    Handler.payload = json.dumps(build_payload()).encode()
+    Handler.payload = json.dumps(build_payload(results)).encode()
     Handler.console = (HERE / "console.html").read_bytes()
 
     where = f"http://localhost:{args.port}"
     print(f"Arcadia treasury demo  ->  {where}")
+    print("  decisions from: "
+          + (f"warrant-service at {PDS_URL}" if PDS_URL else "the embedded engine"))
     print(f"  {len(results)} situations · {total['prevented']} prevented · "
           f"{total['incidents_ungoverned']} incidents without the control, "
           f"{total['incidents_governed']} with it")

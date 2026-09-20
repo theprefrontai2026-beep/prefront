@@ -346,7 +346,8 @@ function drawChrome() {
   document.getElementById("foot").textContent =
     "Every decision on this page was produced by the enforcement engine itself — the outcomes, "
     + "the reason codes and the control list are its output, not a script. The agent is scripted "
-    + "so the run is identical every time; the decisions are not.";
+    + "so the run is identical every time; the decisions are not."
+    + (RUN.decided_by ? " Decided by the " + RUN.decided_by + "." : "");
 }
 
 boot().then(run => {

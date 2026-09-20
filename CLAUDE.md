@@ -785,6 +785,58 @@ consent screen, evidence store, step-up delivery, runtime adapters).
   `origin` labels. The injection tripwire depends on honest labelling and is
   audited after the fact by `evidence_mismatch`, never prevented on the path.
 
+## Warrant as a service (`warrant-service/`)
+
+The enforcement plane over HTTP: a Policy Decision Service any agent runtime
+can call before it acts, plus a stdlib-only client. The ENGINE stays a library
+with one dependency — a resource server verifying a Mission offline must not
+have to install a web framework — so all wire concerns live here.
+
+```bash
+docker compose -f docker-compose.warrant.yml up --build -d   # pds :8150 + console :8140
+curl :8150/v1/registry            # what vocabulary this deployment has
+curl :8150/.well-known/jwks.json  # verify a Mission offline
+```
+
+- **`POST /v1/decisions` is the only route on a call's path.** Everything else
+  (issuing Missions, spawning nodes, reserving budget) is setup and allowed to
+  be ordinary.
+- **A refusal is a 200 with a decision, never an error status.** A caller that
+  tells "denied" from "service broken" by HTTP status gets it wrong in the
+  permissive direction eventually. 4xx means malformed, and names the field.
+- **Unknown request fields are REFUSED, not ignored** (`codec._only`) — a
+  dropped field is an instruction the caller believes was honoured.
+- **Deciding consumes no budget**; `reserve`/`settle` are separate routes, so
+  the PDS stays a pure function across the wire and a proposed policy can still
+  be replayed against recorded attestations.
+- **Transport failure raises, never returns a decision** (`client.ServiceError`).
+  Fail closed.
+- **Every submodule is imported LAZILY, and that is a requirement.** The client
+  ships into a customer's agent process and must cost nothing but the stdlib.
+  An eager `from .config import ...` (PyYAML) once killed the demo container on
+  startup; `tests/test_client_is_stdlib_only.py` holds the line in a fresh
+  interpreter.
+- **Config follows the repo's artifact-gating convention.**
+  `WARRANT_ACTION_REGISTRY_PATH` unset ⇒ empty registry, so every side-effect
+  call fails closed and `/v1/registry` says so — running and refusing is the
+  honest posture. Set but unreadable ⇒ **hard startup failure**, never a silent
+  degrade. A generated authority key is announced, because Missions signed
+  under it stop verifying after a restart.
+- **`tests/test_demo_parity.py` is the load-bearing test**: it starts a real
+  uvicorn server and runs the entire Arcadia catalogue through it, asserting
+  identical effects, reason codes and per-control results against the embedded
+  engine. A service that quietly decided differently from the library would be
+  invisible until an audit and wrong toward permission. It uses a real socket
+  rather than `TestClient` because half of what it checks is that the wire
+  format survives a round trip.
+- **State is in-memory and dies with the process** — said plainly rather than
+  hidden behind a store interface. There is also no authN on these routes; the
+  PDS trusts its caller to be the gateway, so it must not be exposed further.
+- **`docker-compose.warrant.yml` sets `name: prefront-warrant` and must.** It
+  lives at the repo root, so Compose would otherwise derive the project name
+  `prefront` — the ENGINE stack's project — and the two would share a network
+  and container namespace, with `down` on either reaching into the other.
+
 ## Warrant demo: Arcadia Capital (`warrant-demo/`)
 
 The enforcement plane's demonstration, and the third demo deployment in this
@@ -825,6 +877,14 @@ docker compose -f warrant-demo/docker-compose.yml up --build -d
   `window.__RUN__` when results are baked in (a shared static link) and
   otherwise fetches `/api/results` from the local server. Two tests keep the
   page and the server agreeing on the payload shape in BOTH directions.
+- **Two modes, one catalogue.** `WARRANT_PDS_URL` unset ⇒ decisions from the
+  engine embedded in the console's process; set ⇒ decisions from
+  `warrant-service` over HTTP (`remote.py` is the adapter — same attributes,
+  backed by calls, no decision logic). Identical results either way, asserted.
+  `policy/action_registry.yaml` carries Arcadia's verbs into the service and is
+  GENERATED from `world.ACTIONS` by `gen_registry.py`, with a drift guard in
+  `test_demo.py` — a service enforcing a different verb list than the embedded
+  demo would make the two modes differ for a reason unrelated to the service.
 - **`build_static.py` bakes the run into one file** for an audience with no
   terminal. It REFUSES to build when any situation no longer decides as
   documented, because a static copy outlives the session that produced it.
@@ -887,10 +947,11 @@ small enough that `docker compose up -d --build <service>` is usually simpler.
 
 ### Tests
 
-Seven Python test suites exist: `warrant/tests/` (the enforcement plane —
+Eight Python test suites exist: `warrant/tests/` (the enforcement plane —
 see that section above; organised by the ATTACK each case stops rather than by
 method, and including a domain-independence guard), `warrant-demo/test_demo.py`
-(the Arcadia demo as a regression suite), `skill-builder/tests/`, `eval-engine/tests/`
+(the Arcadia demo as a regression suite), `warrant-service/tests/`
+(the HTTP surface, plus the service-vs-library parity suite), `skill-builder/tests/`, `eval-engine/tests/`
 (includes a domain-independence guard and, for `family1/temporal.py`'s
 precondition automaton, a Hypothesis property-based suite against generated
 step streams — `test_family1_temporal_properties.py`), `semantic-mcp-server/
@@ -904,9 +965,9 @@ has none — verify changes to it by running the service (see the per-service
 verification recipes below and in the OOB section). `semantic-layer`'s suite
 had been deleted in 9cf773a and came back with intent mining, so its
 coverage is that module only, not the service.
-`make test` runs all seven suites plus
+`make test` runs all eight suites plus
 `eval-engine/sync.sh --check`, using each service's already-created venv;
-`.github/workflows/tests.yml` runs six of the seven in CI (semantic-layer's is still not added there; warrant's and the Arcadia demo's are) (fresh venvs
+`.github/workflows/tests.yml` runs seven of the eight in CI (semantic-layer's is still not added there; warrant's, the service's and the Arcadia demo's are) (fresh venvs
 via `actions/setup-python`, plus a `compose-config` job) on every push/PR —
 deliberately NOT `make grade-loanpro` (below), which needs the live stack +
 a metered LLM key that a plain CI runner doesn't have.
@@ -1028,6 +1089,7 @@ Top-level design docs, each answering a different question:
 | `Prefront + Warrant Feature Specification.pdf` | the merged product: enforcement plane (Warrant) + judgement plane (Prefront) over one trace. The source for `warrant/`; also the roadmap, buyer framing and the explicit deferral of policy-document ingestion |
 | `warrant/README.md` | the enforcement plane's design rationale, its two honest limits, and the table of what Phase 1 still needs |
 | `warrant-demo/README.md` | the Arcadia treasury demo: the twelve situations, a fifteen-minute presenting order, and an explicit account of what is real vs staged |
+| `warrant-service/README.md` | the PDS's HTTP surface, its four integration rules, its configuration, and what it is not yet (in-memory state, no authN) |
 | `design.md` | positioning + the LLM-at-design-time-only principle |
 | `prefront_semantic_layer_design.md` | the semantic-contract artifact set |
 | `governance_layer_design` | the INLINE governance pipeline's design (note: no file extension, which is why grep for `*.md` misses it) — the per-stage contract behind `semantic-mcp-server/semanticmcp/governance/` documented under "Runtime governance pipeline" above, and an explicit out-of-scope list (authN/token validation, OPA or any external policy engine, persisted approval workflow) with the sockets left for all three |
