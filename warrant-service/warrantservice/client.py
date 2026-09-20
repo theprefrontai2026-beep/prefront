@@ -57,6 +57,9 @@ class RemotePolicyDecisionService:
         credential: str = "",
         subject_token: str = "",
         subject_token_provider: Optional[Callable[[str], str]] = None,
+        task_token: str = "",
+        dpop_key: Any = None,
+        tool_url: str = "",
         timeout: float = 5.0,
     ) -> None:
         """`credential` is `<client_id>.<secret>`, as minted by
@@ -77,12 +80,24 @@ class RemotePolicyDecisionService:
         named on a `DecisionRequest` and returning that user's token. It takes
         precedence over `subject_token`, and its results are cached per subject
         so a busy gateway does not re-ask the IdP on every call.
+
+        `task_token` and `dpop_key` are the third thing: proof of WHICH NODE is
+        calling. The token says so, and the key proves the token is ours — the
+        agent's `SigningKey` serves as both the attestation signer and the DPoP
+        key, so the service can check that whoever proved possession is whoever
+        signed the claim. `tool_url` is the endpoint the proof is made for; it
+        defaults to this service's decision route, which is right when the PDS
+        is the enforcement point, and a gateway in front of tools should set it
+        to the tool URL it actually received.
         """
         self.base_url = base_url.rstrip("/")
         self.credential = credential
         self.subject_token = subject_token
         self.subject_token_provider = subject_token_provider
         self._subject_tokens: dict[str, str] = {}
+        self.task_token = task_token
+        self.dpop_key = dpop_key
+        self.tool_url = tool_url or f"{self.base_url}/v1/decisions"
         self.timeout = timeout
 
     # -- transport --------------------------------------------------------
@@ -124,8 +139,44 @@ class RemotePolicyDecisionService:
         return self.subject_token
 
     def decide(self, request: DecisionRequest) -> Decision:
-        """Identical in signature and return type to the embedded engine."""
+        """Identical in signature and return type to the embedded engine.
+
+        The signature has to stay identical — it is what lets a caller move the
+        PDS in or out of its own process by changing one construction line, and
+        what makes the parity suite a real comparison rather than two different
+        APIs producing similar numbers. So everything token-related is read
+        from the client, never added as a parameter here.
+        """
         signed = request.signed
+
+        # With a task token, node identity and the subject come from the token
+        # and must NOT also be asserted in the body; the service refuses both.
+        if self.task_token:
+            from .dpop import make_proof
+
+            if self.dpop_key is None:
+                raise ServiceError(
+                    "a task token was supplied without a dpop_key. The token is "
+                    "bound to a key, and presenting it without proving possession "
+                    "would be presenting a bearer token"
+                )
+            identity = {
+                "task_token": self.task_token,
+                "dpop_proof": make_proof(
+                    self.dpop_key, method="POST", url=self.tool_url,
+                    access_token=self.task_token,
+                ),
+                "htm": "POST",
+                "htu": self.tool_url,
+            }
+        else:
+            identity = {
+                "node_id": request.node_id,
+                **({"subject_token": token}
+                   if (token := self._subject_token_for(request.token_subject))
+                   else {"token_subject": request.token_subject}),
+            }
+
         body = self._call(
             "POST", "/v1/decisions",
             {
@@ -136,14 +187,8 @@ class RemotePolicyDecisionService:
                     "algorithm": signed.algorithm,
                 },
                 "observed_args": request.observed_args,
-                "node_id": request.node_id,
                 "now": request.now,
-                # Exactly one of these, matching how the service is configured.
-                # Sending both is refused, and so is sending the unverified one
-                # to a deployment that verifies identity.
-                **({"subject_token": token}
-                   if (token := self._subject_token_for(request.token_subject))
-                   else {"token_subject": request.token_subject}),
+                **identity,
             },
         )
         return codec.decision_from_wire(body)
@@ -206,6 +251,54 @@ class RemotePolicyDecisionService:
 
     def release(self, tree_id: str, handle: str) -> dict:
         return self._call("POST", f"/v1/trees/{tree_id}/reservations/{handle}/release")
+
+    # -- task-tree tokens -------------------------------------------------
+
+    def issue_root_token(self, tree_id: str, key) -> dict:
+        """The root agent's token, bound to `key`."""
+        from .dpop import key_thumbprint
+
+        return self._call("POST", "/v1/token",
+                          {"tree_id": tree_id, "jkt": key_thumbprint(key)})
+
+    def exchange_token(self, parent_token: str, parent_key, *, actor: str,
+                       grant: Optional[dict] = None, child_key=None) -> dict:
+        """A narrower token for a sub-agent — the only path to a downstream one.
+
+        Authorized by the parent token plus a proof of holding its key, not by
+        a deployment credential: an agent process has the former and usually
+        not the latter.
+        """
+        from .dpop import key_thumbprint, make_proof
+
+        url = f"{self.base_url}/v1/token/exchange"
+        return self._call("POST", "/v1/token/exchange", {
+            "task_token": parent_token,
+            "dpop_proof": make_proof(parent_key, method="POST", url=url,
+                                     access_token=parent_token),
+            "actor": actor,
+            "grant": grant or {},
+            "jkt": key_thumbprint(child_key or parent_key),
+        })
+
+    def for_task_token(self, task_token: str, key, tool_url: str = "") -> "RemotePolicyDecisionService":
+        """A client presenting a specific node's token.
+
+        Returned as a NEW client rather than by mutating this one, because a
+        sub-agent's token must not silently become the parent's — they are
+        different principals and sharing one mutable client is how they stop
+        being.
+        """
+        return RemotePolicyDecisionService(
+            self.base_url,
+            credential=self.credential,
+            subject_token=self.subject_token,
+            subject_token_provider=self.subject_token_provider,
+            task_token=task_token,
+            dpop_key=key,
+            tool_url=tool_url or self.tool_url,
+            timeout=self.timeout,
+        )
 
     def denylist(self) -> dict:
         return self._call("GET", "/v1/denylist")

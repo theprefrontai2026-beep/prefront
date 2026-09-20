@@ -39,7 +39,9 @@ from fastapi.responses import JSONResponse
 
 from warrant import (
     Budget,
+    CheckResult,
     ContractError,
+    Decision,
     DecisionRequest,
     Grant,
     KeySet,
@@ -55,7 +57,9 @@ from warrant.tree import BudgetExceeded, TreeError
 from . import codec
 from .auth import Forbidden, Unauthenticated
 from .config import ConfigError, Settings, from_env
+from .dpop import DpopError, ProofVerifier
 from .oidc import SubjectError, SubjectVerifier
+from .tokens import TokenError, TokenService
 
 
 def _now() -> int:
@@ -70,6 +74,28 @@ def _problem(status: int, detail: str, kind: str = "invalid_request") -> JSONRes
     first time the prose improves.
     """
     return JSONResponse({"error": kind, "detail": detail}, status_code=status)
+
+
+def _refuse(attestation, check_id: str, detail: str, mission_id: str = "") -> Decision:
+    """A denial produced by the SOCKET rather than by the engine.
+
+    Token validation is a transport concern — the engine has no concept of a
+    token — so these refusals cannot come from `PolicyDecisionService`. They are
+    still returned as a `Decision` so a gateway has one shape to handle and an
+    audit trail has one kind of record; the `token.` prefix on the check id is
+    what tells a reader which layer decided.
+    """
+    check = CheckResult(check_id=check_id, status="violated", detail=detail,
+                        on_violation="deny")
+    return Decision(
+        effect="deny",
+        tree_id=attestation.tree_id,
+        node_id=attestation.node_id,
+        mission_id=mission_id,
+        checks=(check,),
+        reasons=(check_id,),
+        decided_at=int(time.time()),
+    )
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
@@ -87,6 +113,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     authenticator = settings.authenticator
     subjects = SubjectVerifier(settings.oidc)
+    tokens = TokenService(
+        issuer=settings.issuer,
+        signing_key=settings.token_key,
+        audience=settings.token_audience,
+        ttl_seconds=settings.token_ttl_seconds,
+    ) if settings.token_key else None
+    proofs = ProofVerifier(settings.dpop_window_seconds)
 
     def scope(name: str):
         """Require a scope on a route.
@@ -156,6 +189,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def _forbidden(_: Request, exc: Forbidden):
         return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
 
+    @app.exception_handler(TokenError)
+    async def _token(_: Request, exc: TokenError):
+        # 401, like a bad subject token: the request was well formed, the
+        # holder could not be established.
+        return JSONResponse({"error": "token_not_valid", "detail": str(exc)}, status_code=401)
+
+    @app.exception_handler(DpopError)
+    async def _dpop(_: Request, exc: DpopError):
+        return JSONResponse(
+            {"error": "proof_not_valid", "detail": str(exc)},
+            status_code=401,
+            headers={"WWW-Authenticate": "DPoP"},
+        )
+
     @app.exception_handler(SubjectError)
     async def _subject(_: Request, exc: SubjectError):
         # 401, not 400: the request was well formed, the identity was not
@@ -188,6 +235,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             # Posture, reported for as long as it lasts. An operator should be
             # able to see an open door in one request rather than infer it.
             "caller_auth": "required" if authenticator.enabled else "DISABLED",
+            "task_tokens": (
+                "required" if settings.task_tokens_required
+                else "disabled (an agent key may assert any node)"
+            ),
             "subject_identity": (
                 f"verified against {settings.oidc.issuer}" if subjects.enabled
                 else "UNVERIFIED (no identity provider configured)"
@@ -544,6 +595,112 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _problem(400, str(exc))
         return {"added": added, "total": len(trees.denylist())}
 
+    # -- task-tree tokens --------------------------------------------------
+
+    def _token_response(raw: str, node=None) -> dict:
+        body = {"task_token": raw, "token_type": "DPoP", "expires_in": settings.token_ttl_seconds}
+        if node is not None:
+            body["node_id"] = node.node_id
+            body["depth"] = node.depth
+            body["actor_chain"] = list(node.actor_chain)
+            body["grant"] = {
+                "action_classes": list(node.grant.action_classes),
+                "resources": list(node.grant.resources),
+                "counterparties": list(node.grant.counterparties),
+            }
+        return body
+
+    @app.post("/v1/token", dependencies=[scope("token:issue")])
+    async def issue_root_token(request: Request):
+        """The task's first token, for the root agent.
+
+        Creates no authority: the tree already exists, so the Mission has been
+        checked for currency and the tree for the denylist. This only names, in
+        a verifiable and key-bound way, authority the tree already holds.
+        """
+        if tokens is None:
+            return _problem(501, "no token signing key is configured", kind="not_configured")
+        try:
+            body = codec._require(await body_of(request), where="body")
+            codec._only(body, {"tree_id", "jkt"}, where="body")
+            tree = trees.get(codec._str(body, "tree_id", where="body"))
+        except codec.WireError as exc:
+            return _problem(400, str(exc))
+        except TreeError as exc:
+            return _problem(404, str(exc), kind="not_found")
+        try:
+            raw = tokens.issue_root(tree, codec._str(body, "jkt", where="body"))
+        except codec.WireError as exc:
+            return _problem(400, str(exc))
+        except TreeError as exc:
+            # A refusal about the TASK's state (revoked), not about a token.
+            return _problem(409, str(exc), kind="token_refused")
+        return _token_response(raw, tree.node(tree.root_id))
+
+    @app.post("/v1/token/exchange")
+    async def exchange_token(request: Request):
+        """A narrower token for a sub-agent — the only path to a downstream one.
+
+        Deliberately NOT behind a service-credential scope. The parent token
+        plus a proof of possessing its key IS the authorization, which is the
+        OAuth token-exchange model (RFC 8693): an agent process holds its task
+        token, not a deployment credential. Presenting someone else's token
+        fails at the proof.
+
+        Narrowing and the depth cap are `TaskTree.spawn`'s, never re-implemented
+        here.
+        """
+        if tokens is None:
+            return _problem(501, "no token signing key is configured", kind="not_configured")
+        try:
+            body = codec._require(await body_of(request), where="body")
+            codec._only(body, {"task_token", "dpop_proof", "actor", "grant", "jkt"},
+                        where="body")
+            parent_raw = codec._str(body, "task_token", where="body")
+            parent = tokens.verify(parent_raw)
+
+            proof = proofs.verify(
+                codec._str(body, "dpop_proof", where="body"),
+                method="POST",
+                url=str(request.url),
+                access_token=parent_raw,
+            )
+            # The proof must be made with the key the PARENT token is bound to.
+            # Without this check the exchange would accept any well-formed proof
+            # alongside a stolen token — which is precisely what binding exists
+            # to prevent, so it is the one line that makes the rest worth having.
+            if proof.jkt != parent.jkt:
+                raise DpopError(
+                    "the DPoP proof was made with a different key than the task "
+                    "token is bound to, so whoever presented this token does not "
+                    "hold its key"
+                )
+
+            try:
+                tree = trees.get(parent.tree_id)
+            except TreeError as exc:
+                return _problem(404, str(exc), kind="not_found")
+            grant_body = codec._require(body.get("grant") or {}, where="grant")
+            codec._only(grant_body, {"action_classes", "resources", "counterparties"},
+                        where="grant")
+            raw, child = tokens.exchange(
+                parent, tree,
+                actor=codec._str(body, "actor", where="body"),
+                requested=Grant(
+                    action_classes=codec._strs(grant_body, "action_classes", where="grant"),
+                    resources=codec._strs(grant_body, "resources", where="grant"),
+                    counterparties=codec._strs(grant_body, "counterparties", where="grant"),
+                ),
+                jkt=codec._str(body, "jkt", where="body") or parent.jkt,
+            )
+        except codec.WireError as exc:
+            return _problem(400, str(exc))
+        except TreeError as exc:
+            # Depth cap, or a revoked task. The token was fine; the request was
+            # not, and 401 would tell an agent its valid token was invalid.
+            return _problem(409, str(exc), kind="exchange_refused")
+        return _token_response(raw, child)
+
     # -- the hot path ------------------------------------------------------
 
     @app.post("/v1/decisions", dependencies=[scope("decide")])
@@ -560,18 +717,76 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             codec._only(
                 body,
                 {"signed_attestation", "observed_args", "node_id", "now",
-                 "token_subject", "subject_token"},
+                 "token_subject", "subject_token",
+                 "task_token", "dpop_proof", "htm", "htu"},
                 where="body",
             )
-            subject = resolve_subject(body, where="body")
+            signed_att = codec.signed_attestation_from_wire(body.get("signed_attestation"))
+
+            if settings.task_tokens_required and tokens is not None:
+                # With tokens required, node identity and the end user both come
+                # from the token. The caller may no longer assert either — the
+                # self-asserted path is closed, the same way configuring an IdP
+                # closes the unverified subject path.
+                for asserted in ("node_id", "token_subject", "subject_token"):
+                    if asserted in body:
+                        raise codec.WireError(
+                            f"body.{asserted} is not accepted: this deployment "
+                            "requires a task-tree token, which already says which "
+                            "node is calling and for whom"
+                        )
+                raw_token = codec._str(body, "task_token", where="body")
+                task = tokens.verify(raw_token)
+
+                # The proof is made by the AGENT for the call it is making, and
+                # the gateway reports the method and URL it actually saw. That
+                # is what stops a proof captured at a harmless endpoint from
+                # being presented at a dangerous one.
+                proof = proofs.verify(
+                    codec._str(body, "dpop_proof", where="body"),
+                    method=codec._str(body, "htm", where="body") or "POST",
+                    url=codec._str(body, "htu", where="body"),
+                    access_token=raw_token,
+                )
+                if proof.jkt != task.jkt:
+                    raise DpopError(
+                        "the DPoP proof was made with a different key than the "
+                        "task token is bound to"
+                    )
+
+                att = signed_att.attestation
+                if (att.tree_id, att.node_id) != (task.tree_id, task.node_id):
+                    # A refusal the ENGINE cannot make, because it has no
+                    # concept of tokens. Returned as a Decision rather than an
+                    # error so the record looks like every other refusal, with
+                    # a `token.` check id saying which layer produced it.
+                    return codec.decision_to_wire(_refuse(
+                        att, "token.node_binding",
+                        f"attestation claims {att.tree_id}/{att.node_id} but the "
+                        f"task token holds {task.tree_id}/{task.node_id}: an agent "
+                        "cannot act as a node it was not issued",
+                        task.mission_id,
+                    ))
+                subject = task.subject
+                node_id = task.node_id
+            else:
+                if "task_token" in body:
+                    raise codec.WireError(
+                        "body.task_token was sent but this deployment does not "
+                        "require task-tree tokens (WARRANT_TASK_TOKENS is unset), "
+                        "so it would not be enforced. Refusing rather than "
+                        "accepting a token nobody checked"
+                    )
+                subject = resolve_subject(body, where="body")
+                node_id = codec._str(body, "node_id", where="body")
             observed = body.get("observed_args")
             if not isinstance(observed, dict):
                 raise codec.WireError("observed_args must be an object of the arguments the tool received")
             decision = pds.decide(
                 DecisionRequest(
-                    signed=codec.signed_attestation_from_wire(body.get("signed_attestation")),
+                    signed=signed_att,
                     observed_args=observed,
-                    node_id=codec._str(body, "node_id", where="body"),
+                    node_id=node_id,
                     now=codec._int(body, "now", where="body", default=_now()),
                     token_subject=subject,
                 )

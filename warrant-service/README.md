@@ -120,6 +120,57 @@ allow-list is asymmetric only: with HMAC the verification key is the signing
 key, so anything able to verify could also mint. A symmetric or `none`
 algorithm is refused at startup, not per token.
 
+## Task-tree tokens
+
+The third question, after "who is calling" and "who is the user": **which node
+is this?**
+
+An Action Attestation is signed by a registered agent key and *names* its node.
+The signature binds the arguments honestly, but node identity was self-asserted
+— so agent B, holding a perfectly valid key, could attest as a node belonging
+to agent A and have every downstream control evaluate it against A's grant.
+
+A task token says, signed by the control zone: this key holds this node, in
+this tree, under this Mission, for this user, with this actor chain behind it.
+Set `WARRANT_TASK_TOKENS=required` and the self-asserted path closes — `node_id`
+and any subject field in a decision body are refused, because the token already
+says both.
+
+```
+POST /v1/token           root token for a tree          (scope: token:issue)
+POST /v1/token/exchange  a narrower one for a sub-agent (parent token + proof)
+```
+
+**Exchange is the only path to a downstream token**, and it does not
+re-implement narrowing: it calls `TaskTree.spawn`, so the child's grant is the
+engine's intersection and the depth cap is the engine's check. A second
+implementation of "cannot widen" living beside the first is how the two
+eventually disagree, and the one that is wrong is the one an attacker finds.
+
+Exchange is deliberately **not** behind a service-credential scope. The parent
+token plus proof of holding its key *is* the authorization — the OAuth token
+exchange model (RFC 8693), and the right one here because an agent process
+holds its task token, not a deployment credential.
+
+**Proof of possession (DPoP, RFC 9449)** is what makes a stolen token useless.
+The token carries `cnf.jkt`, the thumbprint of the holder's key; every
+presentation needs a fresh proof signed by the matching private key. Verified
+live: the agent holding its own key gets `allow`; a thief holding the same
+token gets `401 proof_not_valid`.
+
+DPoP rather than mTLS-bound tokens because it needs no TLS infrastructure at
+the customer — and because the agent already holds an Ed25519 key for signing
+attestations, so the same key can prove possession. That reuse buys a property
+neither mechanism has alone: the service can check that the key which proved
+possession is the key that signed the claim.
+
+A proof is single-use within its window (`jti`), pinned to one method and URL
+(`htm`/`htu`, so one captured at a harmless endpoint cannot be presented at a
+dangerous one), and bound to one specific token (`ath`).
+
+The actor chain is emitted as RFC 8693 `act`, nested innermost-first, so an
+OAuth-aware consumer can already read it.
+
 ## Configuration
 
 | | |
@@ -135,6 +186,9 @@ algorithm is refused at startup, not per token.
 | `WARRANT_OIDC_AUDIENCE` | strongly advised — a token for another app at the same issuer is still a valid token |
 | `WARRANT_OIDC_JWKS_URL` | defaults to `<issuer>/.well-known/jwks.json` |
 | `WARRANT_OIDC_ALGORITHMS` · `WARRANT_OIDC_LEEWAY` · `WARRANT_OIDC_CACHE_SECONDS` · `WARRANT_OIDC_REFRESH_COOLDOWN` | |
+| `WARRANT_TASK_TOKENS` | `required` closes the self-asserted-node path |
+| `WARRANT_TOKEN_KEY` · `WARRANT_TOKEN_TTL` · `WARRANT_TOKEN_AUDIENCE` | task-token signing; the key is separate from the Authority's on purpose |
+| `WARRANT_DPOP_WINDOW` | proof acceptance window, seconds |
 
 Two states the service announces at startup because both are legitimate and
 both silently change what it does:
@@ -193,11 +247,13 @@ replicas share nothing but whatever denylist you replicate between them.
 the spec's Phase 1 still needs, along with the gateway, the token service, the
 consent screen and the evidence store.
 
-**There are still no task-tree tokens.** Callers are authenticated and the end
-user is verified, but the spec's OAuth 2.1 token service — tokens stamped with
-`mission`/`tree_id`/`node_id` and the actor chain, proof-of-possession bound so
-a stolen one is useless — does not exist. Today a caller with the `decide`
-scope may ask about any tree.
+**The DPoP replay cache is per process.** Two replicas do not share it, so a
+proof accepted by one could be replayed against another within its window. The
+fix is a shared store, not a bigger cache.
+
+**Tokens cannot be revoked individually.** Revoking the tree stops every token
+in it at the next decision, which is the guarantee that matters, but there is
+no per-`jti` denylist and no refresh flow — a token simply expires.
 
 **Step-up has no delivery.** `step_up` is returned with the delta that caused
 it, and nothing carries it to a human, captures their answer, or resumes the

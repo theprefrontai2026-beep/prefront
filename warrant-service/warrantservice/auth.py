@@ -55,6 +55,7 @@ SCOPES = {
     "tree:manage": "open trees, spawn nodes, reserve and settle budget",
     "tree:revoke": "press stop on a task",
     "denylist:merge": "accept revocations replicated from a peer",
+    "token:issue": "mint a task tree's ROOT token — the start of a delegation chain",
 }
 
 

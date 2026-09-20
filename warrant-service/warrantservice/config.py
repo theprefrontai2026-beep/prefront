@@ -55,6 +55,16 @@ class Settings:
     # Where the END USER's identity comes from. Disabled leaves the legacy
     # unverified `token_subject` path open; enabled closes it.
     oidc: "_oidc.OidcSettings" = field(default_factory=lambda: _oidc.OidcSettings())
+    # Task-tree tokens. When required, an agent must prove which node it is
+    # rather than asserting it in a signed attestation; the self-asserted path
+    # is then closed, the same way configuring an IdP closes the unverified
+    # subject path.
+    task_tokens_required: bool = False
+    token_key: Optional[SigningKey] = None
+    token_key_supplied: bool = False
+    token_ttl_seconds: int = 900
+    token_audience: str = "warrant-pds"
+    dpop_window_seconds: int = 60
 
 
 def load_registry(path: Optional[str]) -> tuple[ActionRegistry, str]:
@@ -107,6 +117,25 @@ def load_registry(path: Optional[str]) -> tuple[ActionRegistry, str]:
     return ActionRegistry(classes, version=version), path
 
 
+def load_token_key(raw: Optional[str], key_id: str = "warrant-token-1") -> tuple[SigningKey, bool]:
+    """The task-token signing key — deliberately NOT the Authority's.
+
+    The Authority's signature says a human approved a task, and resource
+    servers we do not run verify it. This key says an agent holds a node, and
+    only this service verifies it. Sharing one key would mean a compromise of
+    the busy online path also forged consent.
+    """
+    if not raw:
+        return SigningKey.generate(key_id), False
+    try:
+        return SigningKey.from_raw(key_id, b64u_decode(raw)), True
+    except Exception as exc:
+        raise ConfigError(
+            f"WARRANT_TOKEN_KEY is set but is not a base64url-encoded 32-byte "
+            f"Ed25519 private key: {exc}"
+        ) from exc
+
+
 def load_authority_key(raw: Optional[str]) -> tuple[SigningKey, bool]:
     """The Mission Authority's private key, from config or freshly generated.
 
@@ -140,6 +169,8 @@ def from_env(env: Optional[dict] = None) -> Settings:
         # Re-raised as ConfigError so `__main__` has one failure type to report
         # and an operator sees one consistent message shape at startup.
         raise ConfigError(str(exc)) from exc
+    tokens_required = env.get("WARRANT_TASK_TOKENS", "").lower() in ("required", "1", "true")
+    token_key, token_key_supplied = load_token_key(env.get("WARRANT_TOKEN_KEY"))
     return Settings(
         issuer=env.get("WARRANT_ISSUER", "warrant.local"),
         policy_version=env.get("WARRANT_POLICY_VERSION", registry.version),
@@ -149,4 +180,10 @@ def from_env(env: Optional[dict] = None) -> Settings:
         authority_key_supplied=supplied,
         authenticator=authenticator,
         oidc=_oidc.from_env(env),
+        task_tokens_required=tokens_required,
+        token_key=token_key,
+        token_key_supplied=token_key_supplied,
+        token_ttl_seconds=int(env.get("WARRANT_TOKEN_TTL", "900")),
+        token_audience=env.get("WARRANT_TOKEN_AUDIENCE", "warrant-pds"),
+        dpop_window_seconds=int(env.get("WARRANT_DPOP_WINDOW", "60")),
     )

@@ -53,6 +53,12 @@ services:
       # rather than a string in the request body, and with this set the old
       # unverified `token_subject` field is REFUSED rather than ignored —
       # leaving the weak path open beside the strong one protects nobody.
+      # WHICH NODE IS CALLING. Without this an agent's attestation merely
+      # ASSERTS its node, so any registered key could act as any node in any
+      # tree. With it, the agent must present a key-bound task token, and the
+      # self-asserted path is closed.
+      WARRANT_TASK_TOKENS: required
+
       WARRANT_OIDC_ISSUER: http://dev-idp:8160
       WARRANT_OIDC_AUDIENCE: warrant-pds
       WARRANT_OIDC_JWKS_URL: http://dev-idp:8160/.well-known/jwks.json
@@ -107,6 +113,9 @@ services:
       # from the credential above, answered by a different party.
       WARRANT_IDP_TOKEN_URL: http://dev-idp:8160/token
       WARRANT_IDP_NAME: the identity provider
+      # The console must know to ask for a task token; the service would refuse
+      # its calls otherwise, which is the intended behaviour on both sides.
+      WARRANT_TASK_TOKENS: required
     depends_on:
       warrant-pds:
         condition: service_healthy

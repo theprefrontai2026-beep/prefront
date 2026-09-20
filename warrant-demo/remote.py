@@ -57,6 +57,33 @@ class RemoteNode:
     node_id: str
 
 
+class NodeAwarePDS:
+    """Routes each decision to the client holding that node's task token.
+
+    In token mode a sub-agent is a different principal with a different token,
+    so one client cannot speak for the whole tree. This keeps `agent.py`
+    unchanged — it still calls `dep.pds.decide(request)` — while the right
+    token and proof go with each call.
+
+    Without tokens it is a thin pass-through to the single client, which is why
+    the two modes share one code path here rather than branching in the agent.
+    """
+
+    def __init__(self, default: RemotePolicyDecisionService) -> None:
+        self._default = default
+        self._by_node: dict[str, RemotePolicyDecisionService] = {}
+
+    def register(self, node_id: str, client: RemotePolicyDecisionService) -> None:
+        self._by_node[node_id] = client
+
+    def decide(self, request):
+        return self._by_node.get(request.node_id, self._default).decide(request)
+
+    def __getattr__(self, name):
+        # Setup calls (tree, reserve, settle, …) belong to the root client.
+        return getattr(self._default, name)
+
+
 class RemoteTree:
     """The task tree, held by the service.
 
@@ -66,22 +93,39 @@ class RemoteTree:
     that charges the budget.
     """
 
-    def __init__(self, client: RemotePolicyDecisionService, tree_id: str, root_id: str) -> None:
+    def __init__(self, client: RemotePolicyDecisionService, tree_id: str, root_id: str,
+                 pds: Optional[NodeAwarePDS] = None, agent_key=None,
+                 root_token: str = "") -> None:
         self._client = client
         self.tree_id = tree_id
         self.root_id = root_id
+        self._pds = pds
+        self._agent_key = agent_key
+        self._root_token = root_token
 
     def spawn(self, parent_id: str, actor: str, requested: Optional[Grant] = None,
               created_at: int = 0) -> RemoteNode:
-        grant = requested or Grant()
-        body = self._client.spawn(
-            self.tree_id, actor, parent_id,
-            {
-                "action_classes": list(grant.action_classes),
-                "resources": list(grant.resources),
-                "counterparties": list(grant.counterparties),
-            },
-        )
+        grant = {
+            "action_classes": list((requested or Grant()).action_classes),
+            "resources": list((requested or Grant()).resources),
+            "counterparties": list((requested or Grant()).counterparties),
+        }
+
+        if self._root_token:
+            # TOKEN MODE. A sub-agent's token comes from exchange and nowhere
+            # else, so spawning and getting a token are one act rather than two
+            # — which is the point: there is no way to obtain a downstream
+            # token that skips the narrowing.
+            body = self._client.exchange_token(
+                self._root_token, self._agent_key, actor=actor, grant=grant,
+            )
+            self._pds.register(
+                body["node_id"],
+                self._client.for_task_token(body["task_token"], self._agent_key),
+            )
+            return RemoteNode(node_id=body["node_id"])
+
+        body = self._client.spawn(self.tree_id, actor, parent_id, grant)
         return RemoteNode(node_id=body["node_id"])
 
     def reserve(self, amount_minor: int, at: int = 0) -> str:
@@ -113,7 +157,7 @@ class RemoteMission:
 class RemoteDeployment:
     """The same shape `deployment.Deployment` presents to the agent."""
 
-    pds: RemotePolicyDecisionService
+    pds: object
     tree: RemoteTree
     trees: RemoteTreeStore
     binder: IntentBinder
@@ -144,7 +188,8 @@ def subject_token_for(operator: str) -> str:
 
 
 def build(base_url: str, tree_id: str = "arcadia-run-1",
-          subject: str = deployment.OPERATOR) -> RemoteDeployment:
+          subject: str = deployment.OPERATOR,
+          foreign_subject: str = "") -> RemoteDeployment:
     """Set the deployment up through the service's own API.
 
     This is the integrator's path end to end: register the agent's public key,
@@ -212,9 +257,44 @@ def build(base_url: str, tree_id: str = "arcadia-run-1",
     )
     tree = client.open_tree(tree_id, mission_id, deployment.AGENT)
 
+    # A TASK-TREE TOKEN, when the deployment requires one. It says — signed by
+    # the control zone — that this key holds this node, so the agent can no
+    # longer simply assert a node in its attestation. The same key signs
+    # attestations and proves possession of the token, which lets the service
+    # check the two came from the same place.
+    root_token = ""
+    if os.environ.get("WARRANT_TASK_TOKENS", "").lower() in ("required", "1", "true"):
+        root_token = client.issue_root_token(tree_id, agent_key)["task_token"]
+
+        # "Another operator's consent is presented" needs restating under task
+        # tokens, because the attack it modelled is now structurally impossible:
+        # the token binds the subject and the tree TOGETHER, so there is no
+        # separate subject field left to swap. What remains is presenting a
+        # token from a different operator's task — genuine, correctly signed,
+        # and for somebody else's work. The node binding catches it.
+        if foreign_subject:
+            other_tree = f"{tree_id}-foreign"
+            other_mission = f"{other_tree}-mission"
+            client.issue_mission(
+                mission_id=other_mission, subject=foreign_subject,
+                instruction="Settle a different operator's batch.",
+                action_classes=["ap.invoice.read", "ap.payment.release"],
+                resources=list(INVOICES), counterparties=list(APPROVED_COUNTERPARTIES),
+                budget={"amount_minor": deployment.BUDGET_CENTS, "currency": CURRENCY},
+                not_before=deployment.WINDOW_OPENS, not_after=deployment.WINDOW_CLOSES,
+                issued_at=deployment.WINDOW_OPENS,
+            )
+            client.open_tree(other_tree, other_mission, deployment.AGENT)
+            root_token = client.issue_root_token(other_tree, agent_key)["task_token"]
+
+        client = client.for_task_token(root_token, agent_key)
+
+    pds = NodeAwarePDS(client)
+
     return RemoteDeployment(
-        pds=client,
-        tree=RemoteTree(client, tree_id, tree["root_id"]),
+        pds=pds,
+        tree=RemoteTree(client, tree_id, tree["root_id"], pds=pds,
+                        agent_key=agent_key, root_token=root_token),
         trees=RemoteTreeStore(client),
         binder=IntentBinder(agent_key, tree_id, tree["root_id"]),
         mission=RemoteMission(subject=subject),

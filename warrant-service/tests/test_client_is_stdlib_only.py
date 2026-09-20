@@ -24,13 +24,35 @@ ROOT = Path(__file__).resolve().parents[2]
 # process already has it.
 FORBIDDEN = ("fastapi", "starlette", "uvicorn", "yaml", "pydantic", "httpx", "requests")
 
+# Importing was never the whole promise — USING the client is. An earlier
+# version of this probe only imported, so a lazy `import jwt` inside the DPoP
+# helpers passed here and then killed the demo container the moment the client
+# asked for a task token. Exercise every client-side path an agent walks.
 PROBE = f"""
 import sys
 sys.path.insert(0, {str(ROOT / "warrant")!r})
 sys.path.insert(0, {str(ROOT / "warrant-service")!r})
 
+from warrant import SigningKey
 from warrantservice import RemotePolicyDecisionService, ServiceError
+from warrantservice.dpop import key_thumbprint, make_proof
+
 client = RemotePolicyDecisionService("http://127.0.0.1:1")
+key = SigningKey.generate("probe")
+
+# Proof-of-possession, client side: a thumbprint and a signed proof.
+jkt = key_thumbprint(key)
+proof = make_proof(key, method="POST", url="https://tools.example/call",
+                   access_token="some-token")
+assert jkt and proof.count(".") == 2
+
+# And the codec, which every response goes through.
+from warrantservice import codec
+codec.decision_from_wire({{
+    "effect": "deny", "tree_id": "t", "node_id": "n", "mission_id": "m",
+    "checks": [], "reasons": [], "step_up_delta": [], "decided_at": 1,
+    "policy_version": "v",
+}})
 
 leaked = [m for m in {FORBIDDEN!r} if m in sys.modules]
 print(",".join(leaked))

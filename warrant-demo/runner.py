@@ -98,7 +98,13 @@ def run(scenario: scenarios.Scenario, pds_url: str = "") -> ScenarioResult:
     if pds_url:
         import remote
 
-        dep_g = remote.build(pds_url, tree_id=f"{scenario.key.lower()}-governed")
+        dep_g = remote.build(
+            pds_url,
+            tree_id=f"{scenario.key.lower()}-governed",
+            # A scenario that presents another operator's identity needs a
+            # different shape under task tokens; `remote.build` explains why.
+            foreign_subject=scenario.token_subject or "",
+        )
     else:
         dep_g = deployment.build(tree_id=f"{scenario.key.lower()}-governed")
 

@@ -814,6 +814,32 @@ curl :8150/.well-known/jwks.json  # verify a Mission offline
   and on `/v1/missions` alike. Leaving the weak path open beside the strong one
   protects nobody. Algorithms are an asymmetric-only allow-list, refused at
   startup if symmetric — with HMAC the verification key is the signing key.
+- **Task-tree tokens answer the third question: WHICH NODE is calling.** An
+  attestation NAMES its node, so any registered agent key could act as any
+  node in any tree. A token says — signed by the control zone — that this key
+  holds this node, in this tree, under this Mission, for this user.
+  `WARRANT_TASK_TOKENS=required` closes the self-asserted path: `node_id` and
+  any subject field in a decision body are then refused.
+- **Exchange is the only path to a downstream token, and it calls
+  `TaskTree.spawn`** rather than re-implementing narrowing — a second
+  implementation of "cannot widen" beside the first is how the two eventually
+  disagree. It needs NO service-credential scope: the parent token plus proof
+  of its key IS the authorization (RFC 8693), because an agent process holds a
+  task token, not a deployment credential.
+- **DPoP (RFC 9449) is what makes a stolen token useless.** `cnf.jkt` binds
+  the token to a key; every presentation needs a fresh proof signed by it.
+  The agent's attestation key doubles as the DPoP key, so the service can also
+  check that whoever proved possession is whoever signed the claim. Verified
+  live: agent -> allow, thief with the same token -> 401.
+- **A token-validity error is 401; a TREE-state refusal is 409.** Conflating
+  them was a real bug — a depth-cap refusal came back as 401, telling an agent
+  its perfectly valid token was invalid, which sends it to re-authenticate for
+  a problem that is not authentication. `TokenError` is now narrow and
+  `TreeError` passes through.
+- **`_refuse()` produces service-layer denials as a `Decision`** with a
+  `token.` check-id prefix. The engine has no concept of tokens, so these
+  cannot come from the PDS; returning them in the same shape means a gateway
+  has one thing to handle and the prefix says which layer decided.
 - **Scopes are split by blast radius.** A gateway holds `decide` and nothing
   else; `mission:issue` belongs to a control plane that never touches a tool
   call. One credential for everything would be the same hole with a password
@@ -850,8 +876,16 @@ curl :8150/.well-known/jwks.json  # verify a Mission offline
   rather than `TestClient` because half of what it checks is that the wire
   format survives a round trip.
 - **State is in-memory and dies with the process** — said plainly rather than
-  hidden behind a store interface. Still missing: task-tree TOKENS (the OAuth
-  2.1 service, PoP binding), step-up delivery, and credential rotation/lockout.
+  hidden behind a store interface. The DPoP replay cache is per process too, so
+  two replicas do not share it. Still missing: step-up delivery, per-token
+  revocation and refresh, and credential rotation/lockout.
+- **The client stays stdlib-only to USE, not merely to import.** PyJWT is
+  imported lazily inside `ProofVerifier.verify`; creating a proof and computing
+  a thumbprint need only the stdlib and the engine's key. An eager import broke
+  the demo container twice — once via `config`/PyYAML, once via `dpop`/PyJWT —
+  and the second slipped past a guard that only checked importing, so
+  `test_client_is_stdlib_only.py` now exercises the client-side paths an agent
+  actually walks.
 - **`docker-compose.warrant.yml` sets `name: prefront-warrant` and must.** It
   lives at the repo root, so Compose would otherwise derive the project name
   `prefront` — the ENGINE stack's project — and the two would share a network
@@ -901,6 +935,13 @@ docker compose -f warrant-demo/docker-compose.yml up --build -d
   engine embedded in the console's process; set ⇒ decisions from
   `warrant-service` over HTTP (`remote.py` is the adapter — same attributes,
   backed by calls, no decision logic). Identical results either way, asserted.
+  The demo runs with all three guards on: caller credentials, IdP-verified
+  identity, and task tokens with DPoP. Two scenarios change reason codes under
+  tokens and both are improvements — the replayed settlement (INT-02) is caught
+  by `token.node_binding` before the engine sees it, and "another operator's
+  consent" (CTL-03) had to be RESTATED, because binding the subject and the
+  tree into one token makes the original substitution structurally impossible;
+  it now presents a genuine token from another operator's task.
   The demo runs authenticated end to end: a scoped credential in
   `policy/credentials.yaml` (hashes only; the demo secret is public in the
   compose file by construction) and `dev_idp.py`, a loudly-labelled TEST DOUBLE
