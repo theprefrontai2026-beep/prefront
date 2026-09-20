@@ -85,6 +85,10 @@ class Step:
     reasons: tuple[str, ...] = ()
     detail: str = ""
     checks: tuple = ()
+    # Populated only for a held call, and only in service mode: who the
+    # step-up is waiting on and where the request was delivered. The demo's
+    # answer to "where do approvals show up?".
+    approval: Optional[dict] = None
 
     @property
     def moved_money(self) -> bool:
@@ -181,12 +185,17 @@ def run_governed(
         else:
             outcome = "blocked"
 
+        approval = None
+        if outcome == "held_for_approval" and hasattr(dep.pds, "pending_approval"):
+            approval = dep.pds.pending_approval(signed.attestation)
+
         steps.append(
             Step(
                 call=call,
                 outcome=outcome,
                 effect=decision.effect,
                 reasons=decision.reasons,
+                approval=approval,
                 detail=" ".join(decision.step_up_delta)
                 or next((c.detail for c in decision.checks if c.status != "satisfied"), ""),
                 checks=decision.checks,

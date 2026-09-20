@@ -63,6 +63,13 @@ services:
       WARRANT_OIDC_AUDIENCE: warrant-pds
       WARRANT_OIDC_JWKS_URL: http://dev-idp:8160/.well-known/jwks.json
 
+      # STEP-UP DELIVERY. A held call notifies the operator off the call path.
+      # The log channel is always on; a webhook URL (Slack or Teams incoming
+      # webhooks take this shape as-is) adds a second destination. The link
+      # base is what a human clicks.
+      WARRANT_APPROVAL_LINK_BASE: http://localhost:8150
+      # WARRANT_APPROVAL_WEBHOOK_URL: https://hooks.slack.com/services/...
+
       # WARRANT_AUTHORITY_KEY: <base64url 32 bytes>
       #   Left unset here so the demo needs no secret. The service says so at
       #   startup: a generated key means Missions stop verifying after a

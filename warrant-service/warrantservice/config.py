@@ -65,6 +65,17 @@ class Settings:
     token_ttl_seconds: int = 900
     token_audience: str = "warrant-pds"
     dpop_window_seconds: int = 60
+    # Step-up: how long an unanswered request stays open, where it is
+    # delivered, and the base URL used to build the link a human clicks.
+    approval_ttl_seconds: int = 900
+    approval_webhook_url: str = ""
+    approval_link_base: str = ""
+    # How many recent decisions stay queryable. Bounded on purpose: a fixed
+    # memory cost rather than a leak, with the SIEM export as the long history.
+    journal_capacity: int = 1000
+    # Shown in the console so an operator can tell which deployment they are
+    # looking at without reading the compose file.
+    deployment_name: str = ""
 
 
 def load_registry(path: Optional[str]) -> tuple[ActionRegistry, str]:
@@ -186,4 +197,9 @@ def from_env(env: Optional[dict] = None) -> Settings:
         token_ttl_seconds=int(env.get("WARRANT_TOKEN_TTL", "900")),
         token_audience=env.get("WARRANT_TOKEN_AUDIENCE", "warrant-pds"),
         dpop_window_seconds=int(env.get("WARRANT_DPOP_WINDOW", "60")),
+        approval_ttl_seconds=int(env.get("WARRANT_APPROVAL_TTL", "900")),
+        approval_webhook_url=env.get("WARRANT_APPROVAL_WEBHOOK_URL", ""),
+        approval_link_base=env.get("WARRANT_APPROVAL_LINK_BASE", ""),
+        journal_capacity=int(env.get("WARRANT_JOURNAL_CAPACITY", "1000")),
+        deployment_name=env.get("WARRANT_DEPLOYMENT_NAME", ""),
     )

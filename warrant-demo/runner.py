@@ -163,6 +163,7 @@ def _step_json(step: agent.Step) -> dict:
         ],
         "outcome": step.outcome,
         "effect": step.effect,
+        "approval": step.approval,
         "reasons": list(step.reasons),
         "detail": step.detail,
         "checks": [

@@ -460,6 +460,16 @@ class TreeStore:
             raise TreeError(f"unknown tree {tree_id!r}")
         return tree
 
+    def tree_ids(self) -> tuple[str, ...]:
+        """Every tree this store holds, in creation order.
+
+        Does NOT include denylisted trees this replica never saw — those are
+        revocations, not tasks, and `denylist()` is where they live. Conflating
+        them would make an operations view show tasks that never ran here.
+        """
+        with self._lock:
+            return tuple(self._trees)
+
     def revoke(self, tree_id: str, at: int, reason: str = "") -> None:
         """Revoke a tree, whether or not this node has ever seen it.
 

@@ -50,6 +50,32 @@ into two. The build refuses if any situation no longer decides as documented —
 a static copy outlives the session that made it, so shipping a stale one is the
 worst version of that failure.
 
+## What the console is
+
+Seven views over a live deployment, not a slideshow:
+
+| View | What it answers |
+|---|---|
+| **Overview** | What is enforced, what has been stopped, and which controls are firing |
+| **Approvals** | Calls paused for a person — with working Approve and Decline |
+| **Decisions** | Every decision, filterable by outcome, action and control; each row opens to the full control list |
+| **Tasks** | Live task trees, budget consumption, delegation, and a working Stop |
+| **Missions** | The consent each task runs under, and whether it still counts |
+| **Policy** | The boundary: action classes and blast radius, credentials and scopes, identity, tokens, step-up |
+| **Evidence** | The twelve situations, with and without Warrant |
+
+Two things it does deliberately. **It shows the gaps**: a deployment missing a
+control gets a banner naming it, because an operator should see an open door
+rather than infer it from what is absent. And **Policy is read-only**: every
+value comes from the environment or a mounted file, so changing one is a
+deploy. An enforcement plane whose policy could be edited through its own web
+surface would be an enforcement plane an attacker edits through its own web
+surface.
+
+The console is a BFF — it holds the service credential so the browser never
+does, and proxies only a named allow-list of routes. Minting consent,
+publishing an agent key and issuing a token are not reachable from it.
+
 ## The situation
 
 Arcadia Capital's Treasury Operations agent settles supplier invoices

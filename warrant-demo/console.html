@@ -1,366 +1,789 @@
-<title>Arcadia Treasury Run</title>
+<title>Warrant Control</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 /* ---------------------------------------------------------------------------
-   A settlement blotter, not a dashboard. Two ledgers run in parallel and a
-   decision gate sits on the spine between them. Every structural device here
-   encodes something: the centre column is where a control fires, the rules are
-   ledger column separators, and tabular figures exist so money columns align.
+   A settlement blotter grown into a control plane. The vernacular is
+   institutional finance — ruled columns, tabular figures, stamped outcomes —
+   because that is the world this governs. Structure encodes state: the spine
+   between two ledgers is where a control fires, a severity stripe says what
+   needs attention, and nothing is a card unless it is genuinely a separate
+   object.
    --------------------------------------------------------------------------- */
 :root {
-  --ground:#EEF0F3; --surface:#FFFFFF; --surface-sunk:#E4E8ED;
+  --ground:#EEF0F3; --surface:#FFFFFF; --sunk:#E4E8ED; --raised:#F7F8FA;
   --ink:#151C26; --ink-soft:#5A6675; --ink-faint:#8A94A1;
-  --rule:#D3D8DF; --rule-strong:#AEB7C2;
-  --released:#1F6F4A; --released-wash:#E3F0E9;
-  --denied:#96242F;  --denied-wash:#F7E4E5;
-  --held:#9A6410;    --held-wash:#F8EEDC;
-  --spine:#151C26;
+  --rule:#D3D8DF; --rule-strong:#AEB7C2; --spine:#151C26;
+  --ok:#1F6F4A;   --ok-wash:#E3F0E9;
+  --bad:#96242F;  --bad-wash:#F7E4E5;
+  --hold:#9A6410; --hold-wash:#F8EEDC;
+  --info:#2C4E80; --info-wash:#E6ECF5;
 }
-:root:not([data-theme="light"]) { }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ground:#11151B; --surface:#171D25; --surface-sunk:#0D1116;
+    --ground:#11151B; --surface:#171D25; --sunk:#0D1116; --raised:#1D242E;
     --ink:#E6EAEF; --ink-soft:#9AA5B2; --ink-faint:#6C7784;
-    --rule:#28313B; --rule-strong:#3A4552;
-    --released:#5BBD8C; --released-wash:#14291F;
-    --denied:#E8737E;  --denied-wash:#2C1518;
-    --held:#D9A44C;    --held-wash:#2B2113;
-    --spine:#E6EAEF;
+    --rule:#28313B; --rule-strong:#3A4552; --spine:#E6EAEF;
+    --ok:#5BBD8C;   --ok-wash:#14291F;
+    --bad:#E8737E;  --bad-wash:#2C1518;
+    --hold:#D9A44C; --hold-wash:#2B2113;
+    --info:#8FB0DE; --info-wash:#16202E;
   }
 }
 :root[data-theme="dark"] {
-  --ground:#11151B; --surface:#171D25; --surface-sunk:#0D1116;
+  --ground:#11151B; --surface:#171D25; --sunk:#0D1116; --raised:#1D242E;
   --ink:#E6EAEF; --ink-soft:#9AA5B2; --ink-faint:#6C7784;
-  --rule:#28313B; --rule-strong:#3A4552;
-  --released:#5BBD8C; --released-wash:#14291F;
-  --denied:#E8737E;  --denied-wash:#2C1518;
-  --held:#D9A44C;    --held-wash:#2B2113;
-  --spine:#E6EAEF;
+  --rule:#28313B; --rule-strong:#3A4552; --spine:#E6EAEF;
+  --ok:#5BBD8C;   --ok-wash:#14291F;
+  --bad:#E8737E;  --bad-wash:#2C1518;
+  --hold:#D9A44C; --hold-wash:#2B2113;
+  --info:#8FB0DE; --info-wash:#16202E;
 }
 
 *{box-sizing:border-box}
+html,body{height:100%}
 body{
   margin:0; background:var(--ground); color:var(--ink);
   font-family:Archivo,"Helvetica Neue",Helvetica,Arial,sans-serif;
-  font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  font-size:14.5px; line-height:1.5; -webkit-font-smoothing:antialiased;
 }
 .num{font-variant-numeric:tabular-nums lining-nums}
-.wrap{max-width:1280px;margin:0 auto;padding-inline:20px}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--info);outline-offset:2px}
 
-/* --- masthead: the consent everything is measured against ----------------- */
-header.mast{background:var(--surface);border-bottom:2px solid var(--spine)}
-.mast-in{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;
-  padding-block:20px 18px}
-.org{flex:1 1 260px;min-width:0}
-.org h1{margin:0;font-size:19px;font-weight:700;letter-spacing:-.015em}
-.org p{margin:3px 0 0;font-size:13px;color:var(--ink-soft)}
-.consent{flex:2 1 520px;min-width:0;border-left:3px solid var(--spine);
-  padding-left:16px}
-.consent .said{margin:0 0 9px;font-size:14.5px;line-height:1.45}
-.consent .said b{font-weight:600}
-.bounds{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12.5px;color:var(--ink-soft)}
-.bounds span{white-space:nowrap}
-.bounds b{color:var(--ink);font-weight:600}
+/* --- shell ---------------------------------------------------------------- */
+.app{display:grid;grid-template-columns:216px minmax(0,1fr);min-height:100%}
 
-/* --- layout --------------------------------------------------------------- */
-.cols{display:grid;grid-template-columns:238px minmax(0,1fr);gap:28px;
-  padding-block:24px 56px;align-items:start}
-
-/* --- scenario rail -------------------------------------------------------- */
-nav.rail{position:sticky;top:12px}
-.grp{margin-bottom:18px}
-.grp h2{margin:0 0 6px;font-size:12.5px;font-weight:600;color:var(--ink-faint);
-  letter-spacing:.01em}
-.rail button{
-  display:block;width:100%;text-align:left;background:none;border:0;
-  border-left:2px solid var(--rule);cursor:pointer;color:var(--ink-soft);
-  font:inherit;font-size:13.5px;line-height:1.35;padding:5px 0 5px 11px;
+nav.side{
+  background:var(--surface);border-right:1px solid var(--rule);
+  display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top,0px);
 }
-.rail button:hover{color:var(--ink);border-left-color:var(--rule-strong)}
-.rail button[aria-current="true"]{color:var(--ink);font-weight:600;
-  border-left-color:var(--spine);border-left-width:2px}
-.rail button:focus-visible{outline:2px solid var(--spine);outline-offset:2px}
+.brand{padding:16px 18px 14px;border-bottom:2px solid var(--spine)}
+.brand h1{margin:0;font-size:16.5px;font-weight:700;letter-spacing:-.01em}
+.brand p{margin:2px 0 0;font-size:12px;color:var(--ink-faint)}
+.side nav{padding:10px 8px;display:flex;flex-direction:column;gap:1px}
+.side button{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  background:none;border:0;border-radius:3px;cursor:pointer;
+  padding:7px 10px;font-size:13.5px;color:var(--ink-soft);
+}
+.side button:hover{background:var(--raised);color:var(--ink)}
+.side button[aria-current="true"]{background:var(--sunk);color:var(--ink);font-weight:600}
+.side .count{margin-left:auto;font-size:11.5px;font-weight:600;
+  padding:0 6px;border-radius:9px;background:var(--hold-wash);color:var(--hold)}
+.side .count.zero{background:var(--sunk);color:var(--ink-faint)}
+.side footer{margin-top:auto;padding:12px 18px;border-top:1px solid var(--rule);
+  font-size:11.5px;color:var(--ink-faint);line-height:1.45}
 
-/* --- scenario head -------------------------------------------------------- */
-.head{margin-bottom:20px}
-.head h3{margin:0 0 5px;font-size:26px;font-weight:700;letter-spacing:-.02em;
-  line-height:1.2;max-width:34ch}
-.head .q{margin:0;font-size:15px;color:var(--ink-soft);max-width:56ch}
+main{min-width:0;display:flex;flex-direction:column}
+header.bar{
+  background:var(--surface);border-bottom:1px solid var(--rule);
+  padding:12px 24px;display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;
+  position:sticky;top:env(safe-area-inset-top,0px);z-index:5;
+}
+.bar h2{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em}
+.bar .sub{font-size:12.5px;color:var(--ink-faint)}
+.chips{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:11.5px;font-weight:600;padding:3px 8px;border:1px solid currentColor;
+  border-radius:2px;white-space:nowrap}
+.chip.on{color:var(--ok)} .chip.off{color:var(--bad);background:var(--bad-wash)}
+.chip.mute{color:var(--ink-faint)}
 
-/* --- the blotter: two ledgers and a gate ---------------------------------- */
-.blotter{background:var(--surface);border:1px solid var(--rule)}
-.lane-heads,.row{display:grid;grid-template-columns:1fr 104px 1fr}
+.view{padding:22px 24px 64px;max-width:1180px}
+.view[hidden]{display:none!important}
+h3.sec{margin:0 0 3px;font-size:15px;font-weight:600}
+p.note{margin:0 0 14px;font-size:13px;color:var(--ink-soft);max-width:70ch}
+
+/* --- panels & tiles ------------------------------------------------------- */
+.panel{background:var(--surface);border:1px solid var(--rule);margin-bottom:20px}
+.panel > h4{margin:0;padding:11px 16px;font-size:13.5px;font-weight:600;
+  border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:10px}
+.panel > h4 .aside{margin-left:auto;font-size:12px;font-weight:400;color:var(--ink-faint)}
+.pad{padding:14px 16px}
+
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));
+  gap:1px;background:var(--rule);border:1px solid var(--rule);margin-bottom:20px}
+.tile{background:var(--surface);padding:14px 16px}
+.tile .v{font-size:25px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.tile .k{font-size:12.5px;color:var(--ink-soft);margin-top:3px}
+
+.guards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1px;
+  background:var(--rule)}
+.guard{background:var(--surface);padding:13px 16px;border-left:3px solid var(--ok)}
+.guard.off{border-left-color:var(--bad)}
+.guard .n{font-size:13.5px;font-weight:600}
+.guard .s{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+.guard.off .s{color:var(--bad)}
+
+.warn{border-left:3px solid var(--hold);background:var(--hold-wash);
+  padding:11px 16px;margin-bottom:20px;font-size:13px}
+.warn b{display:block;margin-bottom:4px}
+.warn ul{margin:0;padding-left:18px} .warn li{margin:2px 0}
+
+/* --- tables --------------------------------------------------------------- */
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{text-align:left;font-weight:600;font-size:12px;color:var(--ink-soft);
+  padding:8px 12px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr.row{cursor:pointer}
+tr.row:hover td{background:var(--raised)}
+td.r{text-align:right}
+.stamp{font-size:11px;font-weight:700;letter-spacing:.03em;padding:2px 7px;
+  border:1.5px solid currentColor;white-space:nowrap;display:inline-block}
+.stamp.allow,td.allow{color:var(--ok)}
+.stamp.deny,td.deny{color:var(--bad)}
+.stamp.step_up,td.step_up{color:var(--hold)}
+.stamp.deny{background:var(--bad-wash)} .stamp.step_up{background:var(--hold-wash)}
+/* A severity STRIPE rather than a tinted row: the outcome is one fact about
+   the call, not a property of its counterparty or its amount. */
+tr.row td:first-child{border-left:3px solid transparent}
+tr.row.deny td:first-child{border-left-color:var(--bad)}
+tr.row.step_up td:first-child{border-left-color:var(--hold)}
+tr.row.allow td:first-child{border-left-color:var(--ok)}
+.mono{font-size:12px;color:var(--ink-faint)}
+
+/* --- drill-down ----------------------------------------------------------- */
+.detail td{background:var(--sunk);padding:14px 16px}
+.checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:1px 16px}
+.chk{display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:2px 0}
+.chk i{font-style:normal;width:10px;flex:none}
+.chk.satisfied i{color:var(--ok)} .chk.satisfied span{color:var(--ink-soft)}
+.chk.violated i,.chk.violated span{color:var(--bad);font-weight:600}
+.chk.indeterminate i,.chk.indeterminate span{color:var(--hold);font-weight:600}
+.why{margin:10px 0 0;font-size:13px;color:var(--ink-soft)}
+.why b{color:var(--ink)}
+
+/* --- controls ------------------------------------------------------------- */
+.act{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--rule-strong);
+  background:var(--surface);padding:5px 12px;font-size:12.5px;font-weight:600;
+  cursor:pointer;border-radius:2px}
+.act:hover{border-color:var(--ink)}
+.act.go{color:var(--ok);border-color:var(--ok)}
+.act.go:hover{background:var(--ok-wash)}
+.act.stop{color:var(--bad);border-color:var(--bad)}
+.act.stop:hover{background:var(--bad-wash)}
+.act[disabled]{opacity:.45;cursor:default}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:center}
+.filters select,.filters input{font:inherit;font-size:13px;padding:5px 8px;
+  border:1px solid var(--rule-strong);background:var(--surface);color:var(--ink);
+  border-radius:2px}
+.filters label{font-size:12.5px;color:var(--ink-soft)}
+
+/* --- approvals ------------------------------------------------------------ */
+.req{background:var(--surface);border:1px solid var(--rule);
+  border-left:3px solid var(--hold);margin-bottom:12px}
+.req .top{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;
+  padding:13px 16px 0}
+.req .what{font-size:15px;font-weight:600}
+.req .amt{font-size:15px;font-weight:700}
+.req .who{font-size:12.5px;color:var(--ink-faint);margin-left:auto}
+.req .delta{padding:8px 16px 0}
+.req .delta .said{font-size:13.5px}
+/* The control's own wording, kept verbatim and set as supporting detail. It is
+   exact and reproducible, which is why it is shown at all; it is also written
+   in minor units for an engine that names no currency, which is why it does
+   not lead. */
+.req .delta .raw{margin:4px 0 0;font-size:12px;color:var(--ink-faint)}
+.req .foot{padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.req .meta{font-size:12px;color:var(--ink-faint);margin-left:auto;text-align:right}
+.req.done{border-left-color:var(--rule-strong);opacity:.72}
+
+/* --- budget meter --------------------------------------------------------- */
+.meter{height:6px;background:var(--sunk);border-radius:3px;overflow:hidden;
+  min-width:110px;margin-top:5px}
+.meter i{display:block;height:100%;background:var(--ok)}
+.meter i.hot{background:var(--hold)} .meter i.over{background:var(--bad)}
+
+/* --- empty ---------------------------------------------------------------- */
+.empty{padding:34px 16px;text-align:center;color:var(--ink-soft);font-size:13.5px}
+.empty b{display:block;color:var(--ink);font-size:14.5px;margin-bottom:5px}
+
+/* --- scenario blotter (kept) ---------------------------------------------- */
+.lane-heads,.srow{display:grid;grid-template-columns:1fr 104px 1fr}
 .lane-heads{border-bottom:2px solid var(--spine)}
 .lane-heads div{padding:10px 16px;font-size:13px;font-weight:600}
 .lane-heads .mid{text-align:center;color:var(--ink-faint);font-weight:500;
   border-inline:1px solid var(--rule)}
-.lane-heads .hL{color:var(--denied)}
-.lane-heads .hR{color:var(--released)}
-
-.row{border-bottom:1px solid var(--rule)}
-.row:last-of-type{border-bottom:0}
+.lane-heads .hL{color:var(--bad)} .lane-heads .hR{color:var(--ok)}
+.srow{border-bottom:1px solid var(--rule)}
 .cell{padding:12px 16px;min-width:0}
-.cell .act{font-size:14px;line-height:1.35}
+.cell .act2{font-size:13.5px;line-height:1.35}
 .cell .meta{margin-top:3px;font-size:12.5px;color:var(--ink-faint);
   display:flex;flex-wrap:wrap;gap:3px 12px}
-.cell .amt{font-weight:600}
-.struck .act{text-decoration:line-through;text-decoration-thickness:1px;
-  color:var(--ink-faint)}
-
-/* the spine: where a control fires */
+.struck .act2{text-decoration:line-through;color:var(--ink-faint)}
 .gate{border-inline:1px solid var(--rule);display:flex;align-items:center;
-  justify-content:center;padding:12px 6px;background:var(--surface-sunk)}
-.stamp{font-size:11.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;
-  border:1.5px solid currentColor;white-space:nowrap}
-.allow .stamp{color:var(--released)}
-.deny .stamp{color:var(--denied);background:var(--denied-wash)}
-.step_up .stamp{color:var(--held);background:var(--held-wash)}
-.row.deny .cell.right{background:var(--denied-wash)}
-.row.step_up .cell.right{background:var(--held-wash)}
-.row.deny .cell.left,.row.step_up .cell.left{background:var(--denied-wash)}
-
-.why{grid-column:1/-1;border-top:1px dashed var(--rule);padding:10px 16px;
+  justify-content:center;padding:12px 6px;background:var(--sunk)}
+.srow.deny .cell{background:var(--bad-wash)} .srow.step_up .cell{background:var(--hold-wash)}
+.swhy{grid-column:1/-1;border-top:1px dashed var(--rule);padding:10px 16px;
   font-size:13px;color:var(--ink-soft);background:var(--surface)}
-.why b{color:var(--ink);font-weight:600}
-.codes{margin-top:5px;font-size:12px;color:var(--ink-faint)}
+.scnpick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.scnpick button{border:1px solid var(--rule-strong);background:var(--surface);
+  padding:5px 10px;font-size:12.5px;cursor:pointer;border-radius:2px}
+.scnpick button[aria-current="true"]{border-color:var(--spine);font-weight:600}
 
-/* --- tally ---------------------------------------------------------------- */
-.tally{display:grid;grid-template-columns:1fr 104px 1fr;border-top:2px solid var(--spine)}
-.tally .t{padding:13px 16px}
-.tally .mid{border-inline:1px solid var(--rule);background:var(--surface-sunk)}
-.tally .big{font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
-.tally .lbl{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
-.bad{color:var(--denied)} .good{color:var(--released)}
-
-/* --- outcome line --------------------------------------------------------- */
-.outcomes{display:grid;grid-template-columns:1fr 1fr;gap:1px;margin-top:1px;
-  background:var(--rule)}
-.outcomes div{background:var(--surface);padding:13px 16px;font-size:13.5px;
-  line-height:1.5}
-.outcomes .k{display:block;font-weight:600;font-size:12.5px;margin-bottom:3px}
-.outcomes .l .k{color:var(--denied)} .outcomes .r .k{color:var(--released)}
-
-/* --- evidence + checks ---------------------------------------------------- */
-details.ev{margin-top:20px;background:var(--surface);border:1px solid var(--rule)}
-details.ev>summary{cursor:pointer;padding:11px 16px;font-size:13.5px;
-  font-weight:600;list-style:none}
-details.ev>summary::-webkit-details-marker{display:none}
-details.ev>summary::before{content:"+ ";color:var(--ink-faint)}
-details.ev[open]>summary::before{content:"– "}
-details.ev>summary:focus-visible{outline:2px solid var(--spine);outline-offset:-2px}
-.evbody{border-top:1px solid var(--rule);padding:14px 16px}
-.src{border-left:3px solid var(--rule);padding:2px 0 2px 12px;margin-bottom:12px}
-.src.untrusted{border-left-color:var(--denied)}
-.src.trusted{border-left-color:var(--released)}
-.src .tag{font-size:12px;font-weight:600}
-.src.untrusted .tag{color:var(--denied)} .src.trusted .tag{color:var(--released)}
-.src .loc{font-size:12px;color:var(--ink-faint);margin-left:8px}
-.src p{margin:4px 0 0;font-size:13px;color:var(--ink-soft);white-space:pre-wrap;
-  max-width:70ch}
-.checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
-  gap:2px 18px;margin-top:4px}
-.chk{display:flex;gap:8px;font-size:12.5px;padding:2px 0;align-items:baseline}
-.chk i{font-style:normal;width:9px;flex:none}
-.chk.satisfied i{color:var(--released)} .chk.satisfied span{color:var(--ink-soft)}
-.chk.violated i,.chk.violated span{color:var(--denied);font-weight:600}
-.chk.indeterminate i,.chk.indeterminate span{color:var(--held);font-weight:600}
-
-/* --- summary -------------------------------------------------------------- */
-.totals{margin-top:32px;border-top:2px solid var(--spine);padding-top:16px;
-  display:flex;flex-wrap:wrap;gap:28px 44px;align-items:flex-end}
-.totals .t .big{font-size:29px;font-weight:700;letter-spacing:-.025em;line-height:1}
-.totals .t .lbl{font-size:12.5px;color:var(--ink-soft);margin-top:4px;max-width:24ch}
-.foot{margin-top:22px;font-size:12.5px;color:var(--ink-faint);max-width:78ch;
-  line-height:1.6}
-
-@media (max-width:900px){
-  .cols{grid-template-columns:1fr;gap:20px}
-  nav.rail{position:static}
-  .grp{display:inline-block;vertical-align:top;margin-right:20px}
-  .lane-heads,.row,.tally{grid-template-columns:1fr}
-  .lane-heads .mid,.gate,.tally .mid{border-inline:0;border-block:1px solid var(--rule)}
-  .gate{justify-content:flex-start;padding-inline:16px}
-  .outcomes{grid-template-columns:1fr}
-  .head h3{font-size:23px}
+@media (max-width:860px){
+  .app{grid-template-columns:1fr}
+  nav.side{border-right:0;border-bottom:1px solid var(--rule)}
+  .side nav{flex-direction:row;flex-wrap:wrap}
+  .side footer{display:none}
+  .lane-heads,.srow{grid-template-columns:1fr}
+  .gate{justify-content:flex-start}
+  .view{padding:16px}
 }
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
-<header class="mast"><div class="wrap mast-in">
-  <div class="org">
-    <h1>Arcadia Capital</h1>
-    <p>Treasury Operations · unattended overnight settlement</p>
-  </div>
-  <div class="consent">
-    <p class="said" id="instruction"></p>
-    <div class="bounds" id="bounds"></div>
-  </div>
-</div></header>
-
-<div class="wrap cols">
-  <nav class="rail" id="rail" aria-label="Situations"></nav>
-  <main>
-    <div class="head">
-      <h3 id="sc-title"></h3>
-      <p class="q" id="sc-question"></p>
+<div class="app">
+  <nav class="side">
+    <div class="brand">
+      <h1>Warrant</h1>
+      <p id="deployment">…</p>
     </div>
-    <section class="blotter" aria-live="polite">
+    <nav id="nav"></nav>
+    <footer id="sidefoot"></footer>
+  </nav>
+
+  <main>
+    <header class="bar">
+      <div><h2 id="vtitle">Overview</h2><div class="sub" id="vsub"></div></div>
+      <div class="chips" id="chips"></div>
+    </header>
+
+    <section class="view" id="v-overview"></section>
+    <section class="view" id="v-approvals" hidden></section>
+    <section class="view" id="v-decisions" hidden></section>
+    <section class="view" id="v-tasks" hidden></section>
+    <section class="view" id="v-missions" hidden></section>
+    <section class="view" id="v-policy" hidden></section>
+    <section class="view" id="v-scenarios" hidden></section>
+  </main>
+</div>
+
+<script>
+const VIEWS = [
+  {id:"overview",  label:"Overview",   sub:"What this deployment is enforcing, and what it stopped"},
+  {id:"approvals", label:"Approvals",  sub:"Calls paused for a human decision"},
+  {id:"decisions", label:"Decisions",  sub:"Every decision this deployment made, and the controls behind it"},
+  {id:"tasks",     label:"Tasks",      sub:"Live task trees, their budgets and their delegation"},
+  {id:"missions",  label:"Missions",   sub:"The consent each task runs under"},
+  {id:"policy",    label:"Policy",     sub:"The boundary this deployment enforces"},
+  {id:"scenarios", label:"Evidence",   sub:"The same request answered with and without Warrant"},
+];
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const STAMP = {allow:"ALLOWED", deny:"DENIED", step_up:"HELD"};
+const money = (minor, cur) => minor
+  ? (minor/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})
+    + (cur ? " " + cur : "") : "";
+const span = s => s < 60 ? Math.max(1, Math.round(s)) + "s"
+  : s < 3600 ? Math.round(s/60) + "m" : Math.round(s/3600) + "h";
+const ago = t => t ? span(Math.max(0, Math.floor(Date.now()/1000) - t)) + " ago" : "—";
+const until = t => {
+  if (!t) return "—";
+  const s = t - Math.floor(Date.now()/1000);
+  return s <= 0 ? "expired" : "in " + span(s);
+};
+const api = async (path, opts) => {
+  const r = await fetch("/api" + path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || body.error || r.status);
+  return body;
+};
+
+const S = {currency:"", view:"overview", config:null, stats:null, journal:[], approvals:[],
+           trees:[], missions:[], scenarios:null, scenario:null, filter:{}, open:null};
+
+/* --- chrome --------------------------------------------------------------- */
+
+function drawNav() {
+  const pending = S.approvals.filter(a => a.status === "pending").length;
+  document.getElementById("nav").innerHTML = VIEWS.map(v => `
+    <button type="button" data-v="${v.id}" aria-current="${v.id === S.view}">
+      ${esc(v.label)}
+      ${v.id === "approvals"
+        ? `<span class="count ${pending ? "" : "zero"}">${pending}</span>` : ""}
+    </button>`).join("");
+  document.querySelectorAll("#nav button").forEach(b =>
+    b.addEventListener("click", () => go(b.dataset.v)));
+}
+
+function drawChrome() {
+  const c = S.config || {};
+  const g = c.guards || {};
+  document.getElementById("deployment").textContent = c.deployment || "not connected";
+  const chip = (on, onText, offText) =>
+    `<span class="chip ${on ? "on" : "off"}">${esc(on ? onText : offText)}</span>`;
+  document.getElementById("chips").innerHTML = c.guards ? [
+    chip(g.caller_auth?.enabled, "callers authenticated", "callers UNAUTHENTICATED"),
+    chip(g.subject_identity?.enabled, "identity verified", "identity UNVERIFIED"),
+    chip(g.task_tokens?.required, "task tokens required", "task tokens off"),
+    `<span class="chip mute">${esc(c.policy_version || "")}</span>`,
+  ].join("") : "";
+  document.getElementById("sidefoot").innerHTML = S.stats
+    ? `${S.stats.total} of ${S.stats.capacity} decisions held<br>${
+        S.trees.length} task${S.trees.length === 1 ? "" : "s"} · ${
+        S.missions.length} mission${S.missions.length === 1 ? "" : "s"}`
+    : "";
+}
+
+function go(view) {
+  S.view = view; S.open = null;
+  const meta = VIEWS.find(v => v.id === view);
+  document.getElementById("vtitle").textContent = meta.label;
+  document.getElementById("vsub").textContent = meta.sub;
+  VIEWS.forEach(v => document.getElementById("v-" + v.id).hidden = v.id !== view);
+  drawNav();
+  render();
+}
+
+/* --- views ---------------------------------------------------------------- */
+
+function renderOverview() {
+  const s = S.stats || {by_effect:{}, top_reasons:[]}, c = S.config || {};
+  const e = s.by_effect || {};
+  const warnings = (c.warnings || []);
+  const g = c.guards || {};
+  const guard = (name, on, detail) => `
+    <div class="guard ${on ? "" : "off"}">
+      <div class="n">${esc(name)}</div><div class="s">${esc(detail)}</div>
+    </div>`;
+
+  document.getElementById("v-overview").innerHTML = `
+    ${warnings.length ? `<div class="warn"><b>This deployment has gaps</b><ul>${
+      warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
+
+    <div class="tiles">
+      <div class="tile"><div class="v num">${e.allow || 0}</div><div class="k">allowed</div></div>
+      <div class="tile"><div class="v num deny" style="color:var(--bad)">${e.deny || 0}</div>
+        <div class="k">stopped</div></div>
+      <div class="tile"><div class="v num" style="color:var(--hold)">${e.step_up || 0}</div>
+        <div class="k">sent to a human</div></div>
+      <div class="tile"><div class="v num">${esc(money(s.value_stopped_minor, "") || "0.00")}
+        <span style="font-size:14px;font-weight:600;color:var(--ink-faint)">${
+          esc(S.currency || "")}</span></div>
+        <div class="k">value on calls that were stopped</div></div>
+    </div>
+
+    <div class="panel">
+      <h4>Controls in force</h4>
+      <div class="guards">
+        ${guard("Caller authentication", g.caller_auth?.enabled,
+          g.caller_auth?.enabled
+            ? `${(g.caller_auth.clients || []).length} credential(s), scoped`
+            : "anyone reaching this service can call it")}
+        ${guard("End-user identity", g.subject_identity?.enabled,
+          g.subject_identity?.enabled
+            ? `verified against ${g.subject_identity.issuer}`
+            : "subject asserted by the caller, not verified")}
+        ${guard("Task-tree tokens", g.task_tokens?.required,
+          g.task_tokens?.required
+            ? `key-bound, ${g.task_tokens.ttl_seconds}s, DPoP`
+            : "an agent key may assert any node")}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h4>What is stopping calls<span class="aside">by control</span></h4>
+      ${(s.top_reasons || []).length ? `<div class="tw"><table>
+        <thead><tr><th>Control</th><th>Layer</th><th class="r">Times fired</th></tr></thead>
+        <tbody>${s.top_reasons.map(([id, n]) => `<tr>
+          <td>${esc(id.replace(/^(pds|token|approval)\./, "").replace(/_/g, " "))}</td>
+          <td class="mono">${esc(id.split(".")[0] === "pds" ? "policy engine"
+            : id.split(".")[0] === "token" ? "task token" : "step-up")}</td>
+          <td class="r num">${n}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty"><b>Nothing has fired yet</b>
+             Controls appear here as soon as they stop or pause a call.</div>`}
+    </div>
+
+    <div class="panel">
+      <h4>Recent decisions<span class="aside">newest first</span></h4>
+      ${decisionTable(S.journal.slice(0, 8), false)}
+    </div>`;
+}
+
+function decisionTable(rows, withFilters) {
+  if (!rows.length) return `<div class="empty"><b>No decisions recorded</b>
+    Every governed call lands here with the controls that ran on it.</div>`;
+  return `<div class="tw"><table>
+    <thead><tr>
+      <th>When</th><th>Outcome</th><th>Action</th><th>Counterparty</th>
+      <th class="r">Amount</th><th>Why</th>
+    </tr></thead>
+    <tbody>${rows.map(r => `
+      <tr class="row ${esc(r.effect)}" data-seq="${r.seq}">
+        <td class="mono">${esc(ago(r.at))}</td>
+        <td><span class="stamp ${esc(r.effect)}">${esc(STAMP[r.effect] || r.effect)}</span></td>
+        <td>${esc(r.action)}</td>
+        <td>${esc(r.counterparty || "—")}</td>
+        <td class="r num">${esc(money(r.amount_minor, "") || "—")}</td>
+        <td class="mono">${esc((r.reasons || []).map(x =>
+          x.replace(/^(pds|token|approval)\./, "").replace(/_/g, " ")).join(", ") || "all controls passed")}</td>
+      </tr>
+      ${S.open === r.seq ? `<tr class="detail"><td colspan="6">
+        <div class="checks">${(r.checks || []).map(c => `
+          <div class="chk ${esc(c.status)}">
+            <i>${c.status === "satisfied" ? "✓" : c.status === "violated" ? "✕" : "?"}</i>
+            <span>${esc(c.check_id.replace(/^(pds|token|approval)\./, "").replace(/_/g, " "))}</span>
+          </div>`).join("")}</div>
+        ${(r.checks || []).filter(c => c.status !== "satisfied").map(c =>
+          `<p class="why"><b>${esc(c.check_id)}.</b> ${esc(c.detail)}</p>`).join("")}
+        <p class="why mono">task ${esc(r.tree_id)} · node ${esc(r.node_id)} · for ${esc(r.subject)}
+          ${r.actor_chain?.length ? " · chain " + esc(r.actor_chain.join(" → ")) : ""}
+          ${r.worst_origin ? " · evidence " + esc(r.worst_origin) : ""}</p>
+      </td></tr>` : ""}`).join("")}</tbody></table></div>`;
+}
+
+function renderDecisions() {
+  const f = S.filter;
+  document.getElementById("v-decisions").innerHTML = `
+    <div class="filters">
+      <label>Outcome</label>
+      <select id="f-effect">
+        ${["", "allow", "deny", "step_up"].map(v =>
+          `<option value="${v}" ${f.effect === v ? "selected" : ""}>${
+            v ? STAMP[v] : "any"}</option>`).join("")}
+      </select>
+      <label>Action</label>
+      <select id="f-action">
+        <option value="">any</option>
+        ${(S.config?.action_registry?.actions || []).map(a =>
+          `<option value="${esc(a.name)}" ${f.action === a.name ? "selected" : ""}>${
+            esc(a.name)}</option>`).join("")}
+      </select>
+      <label>Control</label>
+      <input id="f-reason" placeholder="e.g. injection_tripwire" value="${esc(f.reason || "")}">
+      <button class="act" id="f-clear" type="button">Clear</button>
+    </div>
+    <div class="panel"><h4>Decisions<span class="aside">${S.journal.length} shown</span></h4>
+      ${decisionTable(S.journal, true)}</div>`;
+
+  const apply = () => {
+    S.filter = {
+      effect: document.getElementById("f-effect").value,
+      action: document.getElementById("f-action").value,
+      reason: document.getElementById("f-reason").value.trim(),
+    };
+    refreshJournal().then(render);
+  };
+  document.getElementById("f-effect").onchange = apply;
+  document.getElementById("f-action").onchange = apply;
+  document.getElementById("f-reason").onchange = apply;
+  document.getElementById("f-clear").onclick = () => { S.filter = {}; refreshJournal().then(render); };
+}
+
+function renderApprovals() {
+  const pending = S.approvals.filter(a => a.status === "pending");
+  const done = S.approvals.filter(a => a.status !== "pending").slice(0, 8);
+  const card = a => `
+    <div class="req ${a.status === "pending" ? "" : "done"}">
+      <div class="top">
+        <span class="what">${esc(a.action)}${a.counterparty ? " to " + esc(a.counterparty) : ""}</span>
+        ${a.amount_minor ? `<span class="amt num">${esc(money(a.amount_minor, a.currency))}</span>` : ""}
+        <span class="who">for ${esc(a.approver)}</span>
+      </div>
+      <div class="delta">
+        <div class="said">${esc(a.reasons?.includes("pds.counterparty_scope")
+          ? "This counterparty is not on the approved list for this task."
+          : a.reasons?.includes("pds.budget")
+          ? "This call would take the task past the budget you approved."
+          : "This call falls outside the boundary you approved.")}</div>
+        ${(a.delta || []).map(d => `<p class="raw">${esc(d)}</p>`).join("")}
+      </div>
+      <div class="foot">
+        ${a.status === "pending" ? `
+          <button class="act go" data-ok="${esc(a.approval_id)}">Approve this call</button>
+          <button class="act stop" data-no="${esc(a.approval_id)}">Decline</button>`
+        : `<span class="stamp ${a.status === "approved" ? "allow" : "deny"}">${
+            esc(a.status.toUpperCase())}</span>
+           <span class="mono">by ${esc(a.decided_by)}${
+             a.decided_via && a.decided_via !== a.decided_by
+               ? ` (via ${esc(a.decided_via)})` : ""}${a.note ? ` — ${esc(a.note)}` : ""}</span>`}
+        <span class="meta">request ${esc(a.approval_id.slice(0, 8))}<br>
+          ${a.status === "pending" ? "expires " + esc(until(a.expires_at))
+            : esc(ago(a.decided_at))}
+          ${(a.delivery || []).length ? " · sent via " + esc(a.delivery.join(", ")) : ""}</span>
+      </div>
+    </div>`;
+
+  document.getElementById("v-approvals").innerHTML = `
+    <h3 class="sec">Waiting on a person</h3>
+    <p class="note">A call the agent may not make on its own. Approving releases
+      <b>this call only</b> — the approval is spent when used, so it cannot cover
+      the next one. Nothing here can lift a denial.</p>
+    ${pending.length ? pending.map(card).join("")
+      : `<div class="panel"><div class="empty"><b>Nothing is waiting</b>
+           Calls that cross a boundary the operator can extend appear here.</div></div>`}
+    ${done.length ? `<h3 class="sec" style="margin-top:22px">Recently answered</h3>
+      ${done.map(card).join("")}` : ""}`;
+
+  document.querySelectorAll("[data-ok]").forEach(b =>
+    b.onclick = () => answer(b.dataset.ok, true, b));
+  document.querySelectorAll("[data-no]").forEach(b =>
+    b.onclick = () => answer(b.dataset.no, false, b));
+}
+
+async function answer(id, ok, button) {
+  button.disabled = true;
+  button.textContent = ok ? "Approving…" : "Declining…";
+  try {
+    await api(`/v1/approvals/${id}/${ok ? "approve" : "deny"}`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({note: ok ? "approved from the console" : "declined from the console"}),
+    });
+    await refreshAll();
+  } catch (e) {
+    button.disabled = false;
+    button.textContent = "Could not: " + e.message;
+  }
+}
+
+function renderTasks() {
+  document.getElementById("v-tasks").innerHTML = `
+    <p class="note">One task tree per unit of work. Sub-agents get narrower
+      grants by exchange only, and the budget is the tree's — fanning out does
+      not multiply the ceiling.</p>
+    <div class="panel"><h4>Tasks<span class="aside">${S.trees.length}</span></h4>
+    ${S.trees.length ? `<div class="tw"><table>
+      <thead><tr><th>Task</th><th>For</th><th>Nodes</th><th>Calls</th>
+        <th>Budget used</th><th>State</th><th></th></tr></thead>
+      <tbody>${S.trees.map(t => {
+        const cap = t.budget.amount_minor, used = t.budget.committed + t.budget.outstanding;
+        const pct = cap ? Math.min(100, Math.round(used / cap * 100)) : 0;
+        return `<tr>
+          <td class="mono">${esc(t.tree_id)}</td>
+          <td>${esc(t.subject)}</td>
+          <td class="num">${t.nodes}</td>
+          <td class="num">${t.calls}</td>
+          <td>${cap ? `<div class="num">${esc(money(used, t.budget.currency))} of ${
+                esc(money(cap, ""))}</div>
+              <div class="meter"><i class="${pct > 90 ? "over" : pct > 70 ? "hot" : ""}"
+                style="width:${pct}%"></i></div>` : `<span class="mono">uncapped</span>`}</td>
+          <td>${t.revoked
+            ? `<span class="stamp deny">REVOKED</span><div class="mono">${esc(t.revoked_reason)}</div>`
+            : `<span class="stamp allow">RUNNING</span>`}</td>
+          <td class="r">${t.revoked ? "" :
+            `<button class="act stop" data-revoke="${esc(t.tree_id)}">Stop this task</button>`}</td>
+        </tr>`;
+      }).join("")}</tbody></table></div>`
+      : `<div class="empty"><b>No tasks</b> A task appears when an agent opens one.</div>`}
+    </div>`;
+
+  document.querySelectorAll("[data-revoke]").forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = "Stopping…";
+    try {
+      await api(`/v1/trees/${b.dataset.revoke}/revoke`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({reason: "stopped from the console"}),
+      });
+      await refreshAll();
+    } catch (e) { b.disabled = false; b.textContent = "Could not: " + e.message; }
+  });
+}
+
+function renderMissions() {
+  document.getElementById("v-missions").innerHTML = `
+    <p class="note">One consent screen, signed. Every task runs inside exactly
+      one of these, and nothing an agent does can widen it.</p>
+    <div class="panel"><h4>Missions<span class="aside">${S.missions.length}</span></h4>
+    ${S.missions.length ? `<div class="tw"><table>
+      <thead><tr><th>Mission</th><th>Approved by</th><th>May do</th><th>With</th>
+        <th class="r">Budget</th><th>Depth</th><th>State</th></tr></thead>
+      <tbody>${S.missions.map(m => `<tr>
+        <td class="mono">${esc(m.mission_id)}</td>
+        <td>${esc(m.subject)}</td>
+        <td>${(m.action_classes || []).map(esc).join("<br>") || "<span class='mono'>any</span>"}</td>
+        <td>${(m.counterparties || []).map(esc).join("<br>") || "<span class='mono'>any</span>"}</td>
+        <td class="r num">${esc(money(m.budget?.amount_minor, m.budget?.currency) || "uncapped")}</td>
+        <td class="num">${m.max_depth}</td>
+        <td>${m.current ? `<span class="stamp allow">CURRENT</span>`
+          : `<span class="stamp deny">RETIRED</span>${m.superseded_by
+             ? `<div class="mono">by ${esc(m.superseded_by)}</div>` : ""}`}</td>
+      </tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty"><b>No missions issued</b></div>`}
+    </div>`;
+}
+
+function renderPolicy() {
+  const c = S.config || {}; const g = c.guards || {};
+  const reg = c.action_registry || {actions: []};
+  document.getElementById("v-policy").innerHTML = `
+    <p class="note">What this deployment enforces. Every value here comes from
+      the environment or a mounted file, so changing one is a deploy — a change
+      to what an agent may do leaves a trace in your own change management, and
+      cannot be made by anyone who merely reaches this console.</p>
+
+    <div class="panel">
+      <h4>Action classes<span class="aside">${esc(reg.version || "")} · ${
+        esc(reg.source || "not configured")}</span></h4>
+      <div class="tw"><table>
+        <thead><tr><th>Action</th><th>Blast radius</th><th>Changes the world</th>
+          <th>Description</th></tr></thead>
+        <tbody>${(reg.actions || []).map(a => `<tr>
+          <td class="mono">${esc(a.name)}</td>
+          <td><span class="stamp ${a.blast_radius === "high" ? "deny"
+            : a.blast_radius === "medium" ? "step_up" : "allow"}">${
+            esc(a.blast_radius.toUpperCase())}</span></td>
+          <td>${a.side_effect ? "yes" : "no"}</td>
+          <td>${esc(a.description || "")}</td></tr>`).join("")
+          || `<tr><td colspan="4" class="empty"><b>No action classes configured</b>
+                Every side-effect call fails closed until one is.</td></tr>`}
+        </tbody></table></div>
+    </div>
+
+    <div class="panel">
+      <h4>Who may call this service</h4>
+      <div class="tw"><table>
+        <thead><tr><th>Credential</th><th>May</th><th>Purpose</th></tr></thead>
+        <tbody>${(g.caller_auth?.clients || []).map(cl => `<tr>
+          <td class="mono">${esc(cl.client_id)}</td>
+          <td>${(cl.scopes || []).map(esc).join(", ")}</td>
+          <td>${esc(cl.description || "")}</td></tr>`).join("")
+          || `<tr><td colspan="3" class="empty"><b>Caller authentication is off</b></td></tr>`}
+        </tbody></table></div>
+    </div>
+
+    <div class="panel"><h4>Identity, tokens and step-up</h4><div class="pad">
+      <div class="tw"><table><tbody>
+        <tr><td><b>End-user identity</b></td><td>${g.subject_identity?.enabled
+          ? `verified against ${esc(g.subject_identity.issuer)}, audience
+             <span class="mono">${esc(g.subject_identity.audience)}</span>,
+             ${esc((g.subject_identity.algorithms || []).join(", "))}`
+          : "not verified — the subject is whatever the caller says"}</td></tr>
+        <tr><td><b>Task tokens</b></td><td>${g.task_tokens?.required
+          ? `required · ${g.task_tokens.ttl_seconds}s lifetime · DPoP proof window
+             ${g.task_tokens.dpop_window_seconds}s`
+          : "not required — an agent key may assert any node"}</td></tr>
+        <tr><td><b>Step-up</b></td><td>requests expire after ${
+          c.step_up?.ttl_seconds ?? "—"}s · delivered via
+          ${esc((c.step_up?.channels || []).join(", ") || "nothing")}</td></tr>
+        <tr><td><b>Decision journal</b></td><td class="num">${
+          c.journal?.stored ?? 0} of ${c.journal?.capacity ?? 0} held in memory</td></tr>
+      </tbody></table></div>
+    </div></div>`;
+}
+
+function renderScenarios() {
+  const run = S.scenarios;
+  const el = document.getElementById("v-scenarios");
+  if (!run) { el.innerHTML = `<div class="empty">Loading…</div>`; return; }
+  const cur = run.scenarios.find(s => s.key === S.scenario) ||
+              run.scenarios.find(s => s.key === run.open_on) || run.scenarios[0];
+  S.scenario = cur.key;
+
+  const lane = (step, side) => {
+    const gone = side === "r" && step.outcome !== "executed";
+    return `<div class="cell ${gone ? "struck" : ""}">
+      <div class="act2">${esc(step.narrative)}${step.amount
+        ? ` <b class="num">${esc(step.amount)}</b>` : ""}</div>
+      ${step.counterparty || step.resource ? `<div class="meta">
+        ${step.counterparty ? `<span>${esc(step.counterparty)}</span>` : ""}
+        ${step.resource ? `<span>${esc(step.resource)}</span>` : ""}</div>` : ""}
+    </div>`;
+  };
+
+  el.innerHTML = `
+    <p class="note">${esc(run.decided_by ? "Decided by the " + run.decided_by + "." : "")}
+      ${esc(run.identity_from ? " The operator's identity was verified against "
+        + run.identity_from + ", not asserted by the agent." : "")}</p>
+    <div class="scnpick">${run.scenarios.map(s =>
+      `<button type="button" data-s="${esc(s.key)}" aria-current="${s.key === cur.key}">${
+        esc(s.key)}</button>`).join("")}</div>
+
+    <h3 class="sec">${esc(cur.title)}</h3>
+    <p class="note">${esc(cur.question)}</p>
+
+    <div class="panel">
       <div class="lane-heads">
         <div class="hL">No control on the call path</div>
         <div class="mid">Decision</div>
         <div class="hR">Through Warrant</div>
       </div>
-      <div id="rows"></div>
-      <div class="tally" id="tally"></div>
-    </section>
-    <div class="outcomes">
-      <div class="l"><span class="k">What happens today</span><span id="story-u"></span></div>
-      <div class="r"><span class="k">What Warrant does</span><span id="story-g"></span></div>
+      ${cur.lanes.governed.steps.map((g, i) => {
+        const u = cur.lanes.ungoverned.steps[i] || g;
+        return `<div class="srow ${esc(g.effect)}">
+          ${lane(u, "l")}
+          <div class="gate"><span class="stamp ${esc(g.effect)}">${
+            esc(STAMP[g.effect] || "—")}</span></div>
+          ${lane(g, "r")}
+          ${g.effect !== "allow" && g.detail ? `<div class="swhy">
+            <b>${g.effect === "step_up" ? "Sent to the operator." : "Why it stopped."}</b>
+            ${esc(g.detail)}</div>` : ""}
+        </div>`;
+      }).join("")}
     </div>
-    <details class="ev" id="ev" open>
-      <summary>What the agent acted on, and every control that ran</summary>
-      <div class="evbody" id="evbody"></div>
-    </details>
 
-    <div class="totals" id="totals"></div>
-    <p class="foot" id="foot"></p>
-  </main>
-</div>
+    <div class="panel"><div class="pad" style="display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
+      <div><b style="color:var(--bad)">What happens today</b>
+        <p class="why">${esc(cur.ungoverned_story)}</p></div>
+      <div><b style="color:var(--ok)">What Warrant does</b>
+        <p class="why">${esc(cur.governed_story)}</p></div>
+    </div></div>`;
 
-<script>
-/* One file, two hosts. When results are baked in (a shared link) use them;
-   otherwise ask the local demo server, which runs the scenarios for real. */
-const boot = async () => {
-  if (window.__RUN__) return window.__RUN__;
-  const r = await fetch("/api/results");
-  if (!r.ok) throw new Error("demo server did not answer");
-  return r.json();
-};
-
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
-  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const STAMP = {allow:"RELEASED", deny:"DENIED", step_up:"HELD"};
-
-let RUN, current;
-
-function drawRail() {
-  const groups = [];
-  RUN.scenarios.forEach(s => {
-    let g = groups.find(x => x.name === s.group);
-    if (!g) groups.push(g = {name: s.group, items: []});
-    g.items.push(s);
-  });
-  document.getElementById("rail").innerHTML = groups.map(g => `
-    <div class="grp"><h2>${esc(g.name)}</h2>${g.items.map(s =>
-      `<button type="button" data-key="${esc(s.key)}">${esc(s.title)}</button>`
-    ).join("")}</div>`).join("");
-  document.querySelectorAll("#rail button").forEach(b =>
-    b.addEventListener("click", () => select(b.dataset.key)));
+  el.querySelectorAll("[data-s]").forEach(b =>
+    b.onclick = () => { S.scenario = b.dataset.s; renderScenarios(); });
 }
 
-function laneCell(step, side) {
-  const gone = side === "right" && step.outcome !== "executed";
-  const bits = [];
-  if (step.counterparty) bits.push(esc(step.counterparty));
-  if (step.resource) bits.push(esc(step.resource));
-  return `<div class="cell ${side} ${gone ? "struck" : ""}">
-    <div class="act">${esc(step.narrative)}${
-      step.amount ? ` <span class="amt num">${esc(step.amount)}</span>` : ""}</div>
-    ${bits.length ? `<div class="meta">${bits.map(b => `<span>${b}</span>`).join("")}</div>` : ""}
-  </div>`;
-}
-
-function select(key) {
-  current = RUN.scenarios.find(s => s.key === key) || RUN.scenarios[0];
-  document.querySelectorAll("#rail button").forEach(b =>
-    b.setAttribute("aria-current", String(b.dataset.key === current.key)));
-
-  document.getElementById("sc-title").textContent = current.title;
-  document.getElementById("sc-question").textContent = current.question;
-  document.getElementById("story-u").textContent = current.ungoverned_story;
-  document.getElementById("story-g").textContent = current.governed_story;
-
-  const U = current.lanes.ungoverned.steps, G = current.lanes.governed.steps;
-  document.getElementById("rows").innerHTML = G.map((g, i) => {
-    const u = U[i] || g;
-    const why = g.effect !== "allow" && g.detail
-      ? `<div class="why"><b>Why it stopped.</b> ${esc(g.detail)}
-           ${g.reasons.length ? `<div class="codes">${g.reasons.map(esc).join(" · ")}</div>` : ""}
-         </div>` : "";
-    return `<div class="row ${g.effect}">
-      ${laneCell(u, "left")}
-      <div class="gate"><span class="stamp">${STAMP[g.effect] || "—"}</span></div>
-      ${laneCell(g, "right")}
-      ${why}
-    </div>`;
-  }).join("");
-
-  const lu = current.lanes.ungoverned, lg = current.lanes.governed;
-  document.getElementById("tally").innerHTML = `
-    <div class="t"><div class="big num bad">${esc(lu.cash_moved)}</div>
-      <div class="lbl">released${lu.unauthorized !== "$0.00"
-        ? ` · <b class="bad">${esc(lu.unauthorized)} unauthorised</b>` : ""}</div></div>
-    <div class="t mid"></div>
-    <div class="t"><div class="big num good">${esc(lg.cash_moved)}</div>
-      <div class="lbl">released${lg.held ? ` · ${lg.held} held for the operator` : ""}${
-        lg.blocked ? ` · ${lg.blocked} stopped` : ""}</div></div>`;
-
-  const last = G.find(s => s.effect !== "allow") || G[G.length - 1];
-  document.getElementById("evbody").innerHTML = `
-    <p style="margin:0 0 10px;font-size:13px;color:var(--ink-soft)">
-      Sources the agent derived <b style="color:var(--ink)">${esc(last.narrative)}</b> from:</p>
-    ${last.sources.map(s => `<div class="src ${esc(s.origin)}">
-      <span class="tag">${esc(s.origin.replace("_", "-"))}</span>
-      <span class="loc">${esc(s.locator)}</span>
-      <p>${esc(s.excerpt)}</p></div>`).join("") ||
-      `<p style="font-size:13px;color:var(--ink-faint)">No sources cited.</p>`}
-    <p style="margin:16px 0 6px;font-size:13px;color:var(--ink-soft)">
-      Controls that ran on this call — all of them, every time:</p>
-    <div class="checks">${last.checks.map(c => `<div class="chk ${esc(c.status)}">
-      <i>${c.status === "satisfied" ? "✓" : c.status === "violated" ? "✕" : "?"}</i>
-      <span>${esc(c.check_id.replace("pds.", "").replace(/_/g, " "))}</span></div>`).join("")}</div>`;
-}
-
-function drawChrome() {
-  const m = RUN.mission;
-  document.getElementById("instruction").innerHTML =
-    `<b>${esc(m.operator)}</b> approved, once: “${esc(m.instruction)}”`;
-  document.getElementById("bounds").innerHTML = [
-    ["may", m.actions.length + " actions"],
-    ["with", m.counterparties.join(", ")],
-    ["up to", m.budget],
-    ["between", m.window],
-    ["sub-agents", m.max_depth + " deep"],
-  ].map(([k, v]) => `<span>${esc(k)} <b>${esc(v)}</b></span>`).join("");
-
-  const t = RUN.summary;
-  document.getElementById("totals").innerHTML = `
-    <div class="t"><div class="big num good">${esc(t.prevented)}</div>
-      <div class="lbl">stopped before it left the building, across ${t.scenarios} situations</div></div>
-    <div class="t"><div class="big num">${t.incidents_ungoverned} → ${t.incidents_governed}</div>
-      <div class="lbl">situations that cost money — without the control, then with it</div></div>
-    <div class="t"><div class="big num">${t.held_for_approval}</div>
-      <div class="lbl">sent to the operator instead of being refused outright</div></div>`;
-  document.getElementById("foot").textContent =
-    "Every decision on this page was produced by the enforcement engine itself — the outcomes, "
-    + "the reason codes and the control list are its output, not a script. The agent is scripted "
-    + "so the run is identical every time; the decisions are not."
-    + (RUN.decided_by ? " Decided by the " + RUN.decided_by + "." : "")
-    + (RUN.identity_from ? " The operator's identity was verified against "
-        + RUN.identity_from + ", not asserted by the agent." : "");
-}
-
-boot().then(run => {
-  RUN = run;
+function render() {
   drawChrome();
-  drawRail();
-  select(RUN.open_on || RUN.scenarios[0].key);
-}).catch(e => {
-  document.querySelector("main").innerHTML =
-    `<div class="head"><h3>The demo server is not answering</h3>
-     <p class="q">Start it with <b>python server.py</b> from <b>warrant-demo/</b>, then reload.
-     (${esc(e.message)})</p></div>`;
-});
+  ({overview: renderOverview, approvals: renderApprovals, decisions: renderDecisions,
+    tasks: renderTasks, missions: renderMissions, policy: renderPolicy,
+    scenarios: renderScenarios})[S.view]();
+
+  document.querySelectorAll("tr.row").forEach(tr => tr.onclick = () => {
+    const seq = Number(tr.dataset.seq);
+    S.open = S.open === seq ? null : seq;
+    render();
+  });
+}
+
+/* --- data ----------------------------------------------------------------- */
+
+async function refreshJournal() {
+  const q = new URLSearchParams();
+  if (S.filter.effect) q.set("effect", S.filter.effect);
+  if (S.filter.action) q.set("action", S.filter.action);
+  if (S.filter.reason) q.set("reason", "pds." + S.filter.reason.replace(/^pds\./, ""));
+  q.set("limit", "200");
+  S.journal = (await api("/v1/journal?" + q)).entries || [];
+}
+
+async function refreshAll() {
+  const [config, stats, approvals, trees, missions] = await Promise.all([
+    api("/v1/config"), api("/v1/journal/stats"), api("/v1/approvals"),
+    api("/v1/trees"), api("/v1/missions"),
+  ]);
+  S.config = config; S.stats = stats;
+  S.approvals = approvals.approvals || [];
+  S.trees = trees.trees || []; S.missions = missions.missions || [];
+  // Taken from the estate rather than configured: the currency is a property
+  // of the tasks running, and the engine has no opinion about it.
+  S.currency = (S.trees.find(t => t.budget?.currency) || {}).budget?.currency || "";
+  await refreshJournal();
+  drawNav(); render();
+}
+
+async function boot() {
+  try {
+    S.scenarios = await fetch("/api/scenarios").then(r => r.json());
+  } catch (e) { S.scenarios = null; }
+  try {
+    await refreshAll();
+  } catch (e) {
+    document.getElementById("v-overview").innerHTML = `
+      <div class="warn"><b>Cannot reach the enforcement service</b>
+        ${esc(e.message)}. Start the stack with
+        <code>docker compose -f docker-compose.warrant.yml up -d</code> and reload.</div>`;
+  }
+  go("overview");
+  // A control plane that needs a manual refresh is a dashboard, not a console.
+  setInterval(() => refreshAll().catch(() => {}), 5000);
+}
+
+boot();
 </script>

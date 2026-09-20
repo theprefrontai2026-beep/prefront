@@ -67,6 +67,12 @@ def test_a_mission_from_another_issuer_is_refused(ma):
         ma.verify(issue(other))
 
 
+def test_an_authority_can_be_enumerated(ma):
+    issue(ma, "m1")
+    issue(ma, "m2")
+    assert ma.issued_ids() == ("m1", "m2")
+
+
 # --- supersession -----------------------------------------------------------
 
 

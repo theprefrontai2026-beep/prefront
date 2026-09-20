@@ -32,6 +32,7 @@ things Phase 1 still needs.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Request
@@ -55,8 +56,15 @@ from warrant import (
 from warrant.tree import BudgetExceeded, TreeError
 
 from . import codec
+from .approvals import (
+    ApprovalError,
+    ApprovalService,
+    LogDelivery,
+    WebhookDelivery,
+)
 from .auth import Forbidden, Unauthenticated
 from .config import ConfigError, Settings, from_env
+from .journal import Journal
 from .dpop import DpopError, ProofVerifier
 from .oidc import SubjectError, SubjectVerifier
 from .tokens import TokenError, TokenService
@@ -74,6 +82,18 @@ def _problem(status: int, detail: str, kind: str = "invalid_request") -> JSONRes
     first time the prose improves.
     """
     return JSONResponse({"error": kind, "detail": detail}, status_code=status)
+
+
+# Check ids produced by THIS layer rather than by the engine. Namespaced so a
+# reader — and the parity suite — can tell at a glance which component decided.
+# The engine has no concept of a token or an approval, so these could not come
+# from it; returning them in the same `Decision` shape means a gateway has one
+# thing to handle and an audit record has one form.
+SERVICE_CHECK_PREFIXES = ("token.", "approval.")
+
+
+def is_service_check(check_id: str) -> bool:
+    return check_id.startswith(SERVICE_CHECK_PREFIXES)
 
 
 def _refuse(attestation, check_id: str, detail: str, mission_id: str = "") -> Decision:
@@ -120,6 +140,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         ttl_seconds=settings.token_ttl_seconds,
     ) if settings.token_key else None
     proofs = ProofVerifier(settings.dpop_window_seconds)
+
+    channels = [LogDelivery()]
+    if settings.approval_webhook_url:
+        channels.append(WebhookDelivery(settings.approval_webhook_url))
+    journal = Journal(settings.journal_capacity)
+    approvals = ApprovalService(
+        ttl_seconds=settings.approval_ttl_seconds,
+        channels=channels,
+        link_base=settings.approval_link_base,
+    )
 
     def scope(name: str):
         """Require a scope on a route.
@@ -174,6 +204,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.settings = settings
     app.state.authenticator = authenticator
     app.state.subjects = subjects
+    app.state.approvals = approvals
+    app.state.journal = journal
 
     @app.exception_handler(Unauthenticated)
     async def _unauthenticated(_: Request, exc: Unauthenticated):
@@ -202,6 +234,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             status_code=401,
             headers={"WWW-Authenticate": "DPoP"},
         )
+
+    @app.exception_handler(ApprovalError)
+    async def _approval(_: Request, exc: ApprovalError):
+        return JSONResponse({"error": "approval_refused", "detail": str(exc)},
+                            status_code=409)
 
     @app.exception_handler(SubjectError)
     async def _subject(_: Request, exc: SubjectError):
@@ -235,6 +272,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             # Posture, reported for as long as it lasts. An operator should be
             # able to see an open door in one request rather than infer it.
             "caller_auth": "required" if authenticator.enabled else "DISABLED",
+            "approvals_pending": len(approvals.list(status="pending")),
+            "approval_delivery": [c.name for c in channels],
             "task_tokens": (
                 "required" if settings.task_tokens_required
                 else "disabled (an agent key may assert any node)"
@@ -701,6 +740,233 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _problem(409, str(exc), kind="exchange_refused")
         return _token_response(raw, child)
 
+    # -- what this deployment has decided ----------------------------------
+
+    @app.get("/v1/journal", dependencies=[scope("read")])
+    def read_journal(effect: str = "", action: str = "", tree_id: str = "",
+                     subject: str = "", reason: str = "", since: int = 0,
+                     limit: int = 100):
+        """Recent decisions, newest first.
+
+        The surface an operator investigates from and an evidence pack is
+        generated out of. Bounded by construction — see `journal.py` on why the
+        newest end is the one worth keeping in a decision service.
+        """
+        return {
+            "entries": [e.to_wire() for e in journal.query(
+                effect=effect, action=action, tree_id=tree_id, subject=subject,
+                reason=reason, since=since, limit=limit)],
+            "capacity": journal.capacity,
+            "stored": len(journal),
+        }
+
+    @app.get("/v1/journal/stats", dependencies=[scope("read")])
+    def journal_stats():
+        return journal.stats()
+
+    # -- the estate --------------------------------------------------------
+
+    @app.get("/v1/trees", dependencies=[scope("read")])
+    def list_trees():
+        """Every task this replica holds.
+
+        Deliberately a summary rather than the full node list: an operations
+        view needs to scan a hundred tasks, and the detail is one click away at
+        /v1/trees/{id}.
+        """
+        out = []
+        for tree_id in trees.tree_ids():
+            tree = trees.get(tree_id)
+            out.append({
+                "tree_id": tree.tree_id,
+                "mission_id": tree.mission.mission_id,
+                "subject": tree.mission.subject,
+                "revoked": tree.revoked,
+                "revoked_reason": tree.revoked_reason,
+                "nodes": len(tree.nodes()),
+                "calls": tree.call_count,
+                "budget": {
+                    "amount_minor": tree.budget.amount_minor,
+                    "currency": tree.budget.currency,
+                    "committed": tree.spend_committed,
+                    "outstanding": tree.spend_outstanding,
+                    "remaining": tree.remaining_minor(),
+                },
+                "created_at": tree.created_at,
+            })
+        return {"trees": sorted(out, key=lambda t: t["created_at"], reverse=True)}
+
+    @app.get("/v1/missions", dependencies=[scope("read")])
+    def list_missions():
+        """Every consent this Authority has issued, and whether it still counts."""
+        out = []
+        for mission_id in authority.issued_ids():
+            signed = authority.get(mission_id)
+            mission = signed.mission
+            out.append({
+                "mission_id": mission_id,
+                "subject": mission.subject,
+                "current": authority.is_current(mission_id),
+                "superseded_by": authority.superseded_by(mission_id) or "",
+                "action_classes": list(mission.action_classes),
+                "resources": list(mission.resources),
+                "counterparties": list(mission.counterparties),
+                "budget": mission.budget.to_payload(),
+                "not_before": mission.not_before,
+                "not_after": mission.not_after,
+                "max_depth": mission.max_depth,
+                "issued_at": mission.issued_at,
+                "instruction_hash": mission.instruction_hash,
+            })
+        return {"missions": sorted(out, key=lambda m: m["issued_at"], reverse=True)}
+
+    @app.get("/v1/config", dependencies=[scope("read")])
+    def read_config():
+        """What this deployment enforces, in one request.
+
+        READ ONLY, and that is the design rather than an omission. Every value
+        here comes from the process environment or a mounted file, so changing
+        one is a deploy — which means a change to what an agent may do leaves a
+        trace in the customer's own change management, and cannot be made by
+        anyone who merely reaches this API. An enforcement plane whose policy
+        could be edited through its own web surface would be an enforcement
+        plane an attacker edits through its own web surface.
+        """
+        return {
+            "deployment": settings.deployment_name or settings.issuer,
+            "issuer": settings.issuer,
+            "policy_version": settings.policy_version,
+            "guards": {
+                "caller_auth": {
+                    "enabled": authenticator.enabled,
+                    "clients": [
+                        {"client_id": c.client_id, "scopes": sorted(c.scopes),
+                         "description": c.description}
+                        for c in authenticator.clients.values()
+                    ],
+                    "source": authenticator.source,
+                },
+                "subject_identity": {
+                    "enabled": subjects.enabled,
+                    "issuer": settings.oidc.issuer,
+                    "audience": settings.oidc.audience,
+                    "algorithms": list(settings.oidc.algorithms),
+                },
+                "task_tokens": {
+                    "required": settings.task_tokens_required,
+                    "ttl_seconds": settings.token_ttl_seconds,
+                    "audience": settings.token_audience,
+                    "dpop_window_seconds": settings.dpop_window_seconds,
+                },
+            },
+            "action_registry": {
+                "version": settings.registry.version,
+                "source": settings.registry_path,
+                "actions": [
+                    {"name": n,
+                     "blast_radius": settings.registry.get(n).blast_radius,
+                     "side_effect": settings.registry.get(n).side_effect,
+                     "description": settings.registry.get(n).description}
+                    for n in settings.registry.names()
+                ],
+            },
+            "step_up": {
+                "ttl_seconds": settings.approval_ttl_seconds,
+                "channels": [c.name for c in channels],
+                "link_base": settings.approval_link_base,
+            },
+            "journal": {"capacity": journal.capacity, "stored": len(journal)},
+            "warnings": [
+                w for w in (
+                    "caller authentication is DISABLED" if not authenticator.enabled else "",
+                    "end-user identity is NOT verified against an identity provider"
+                    if not subjects.enabled else "",
+                    "task tokens are not required: an agent key may assert any node"
+                    if not settings.task_tokens_required else "",
+                    "the Mission Authority key was generated at startup and will "
+                    "change on restart" if not settings.authority_key_supplied else "",
+                ) if w
+            ],
+        }
+
+    # -- step-up: approvals ------------------------------------------------
+
+    def approver_of(request: Request, approval) -> tuple[str, str]:
+        """Who is answering, and may they.
+
+        With an IdP configured the approver presents their OWN token and the
+        subject must match the Mission's — so the agent, which cannot mint one,
+        cannot approve its own request. That is the entire point of asking.
+
+        Without an IdP, a service credential holding `approval:decide` stands
+        in. It is genuinely weaker: it says a trusted component answered, not
+        which person did. Offered so a deployment can adopt step-up before it
+        adopts OIDC, and named in the README as the compromise it is.
+        """
+        body_token = getattr(request.state, "approval_subject_token", "")
+        if subjects.enabled:
+            subject = subjects.subject_of(body_token)
+            if subject != approval.approver:
+                raise Forbidden(
+                    f"this request belongs to {approval.approver!r}; a step-up "
+                    "may only be answered by the person whose instruction the "
+                    "task is executing"
+                )
+            return subject, f"idp:{subject}"
+        # Authenticated HERE rather than by a route dependency: these routes
+        # deliberately carry no blanket scope, because who may answer depends
+        # on the approval itself, and a scope on the route would let any
+        # credential holding it answer for anyone.
+        client = authenticator.authenticate(request.headers.get("authorization"))
+        authenticator.require(client, "approval:decide")
+        # The credential stands IN FOR the operator, so the answer is recorded
+        # against them with the credential noted beside it. Conflating the two
+        # would either break the service's approver invariant or lose the fact
+        # that a component, not a person, pressed the button.
+        via = f"credential:{client.client_id}" if client else "unauthenticated"
+        return approval.approver, via
+
+    @app.get("/v1/approvals", dependencies=[scope("read")])
+    def list_approvals(status: str = "", tree_id: str = "", approver: str = ""):
+        """The inbox. What is waiting, and on whom."""
+        return {"approvals": [a.to_wire() for a in
+                              approvals.list(status=status, tree_id=tree_id,
+                                             approver=approver)]}
+
+    @app.get("/v1/approvals/{approval_id}", dependencies=[scope("read")])
+    def get_approval(approval_id: str):
+        return approvals.get(approval_id).to_wire()
+
+    async def _answer(approval_id: str, request: Request, approved: bool):
+        approval = approvals.get(approval_id)
+        try:
+            raw = await request.body()
+            body = codec._require(await body_of(request), where="body") if raw else {}
+            codec._only(body, {"note", "subject_token"}, where="body")
+        except codec.WireError as exc:
+            return _problem(400, str(exc))
+        request.state.approval_subject_token = codec._str(body, "subject_token", where="body")
+        who, via = approver_of(request, approval)
+        decided = approvals.decide(
+            approval_id, approved=approved, by=who, via=via,
+            note=codec._str(body, "note", where="body"),
+        )
+        return decided.to_wire()
+
+    @app.post("/v1/approvals/{approval_id}/approve")
+    async def approve(approval_id: str, request: Request):
+        """Let the paused call proceed — that call, once.
+
+        No service-credential scope on the route itself: who may answer depends
+        on the approval (see `approver_of`), and a blanket scope here would let
+        any credential holding it answer for anyone.
+        """
+        return await _answer(approval_id, request, approved=True)
+
+    @app.post("/v1/approvals/{approval_id}/deny")
+    async def deny_approval(approval_id: str, request: Request):
+        return await _answer(approval_id, request, approved=False)
+
     # -- the hot path ------------------------------------------------------
 
     @app.post("/v1/decisions", dependencies=[scope("decide")])
@@ -760,15 +1026,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     # concept of tokens. Returned as a Decision rather than an
                     # error so the record looks like every other refusal, with
                     # a `token.` check id saying which layer produced it.
-                    return codec.decision_to_wire(_refuse(
+                    refusal = _refuse(
                         att, "token.node_binding",
                         f"attestation claims {att.tree_id}/{att.node_id} but the "
                         f"task token holds {task.tree_id}/{task.node_id}: an agent "
                         "cannot act as a node it was not issued",
                         task.mission_id,
-                    ))
+                    )
+                    journal.record(decision=refusal, attestation=att,
+                                   subject=task.subject, actor_chain=task.actor_chain)
+                    return codec.decision_to_wire(refusal)
                 subject = task.subject
                 node_id = task.node_id
+                actor_chain = task.actor_chain
             else:
                 if "task_token" in body:
                     raise codec.WireError(
@@ -779,6 +1049,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     )
                 subject = resolve_subject(body, where="body")
                 node_id = codec._str(body, "node_id", where="body")
+                actor_chain = ()
             observed = body.get("observed_args")
             if not isinstance(observed, dict):
                 raise codec.WireError("observed_args must be an object of the arguments the tool received")
@@ -793,7 +1064,91 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
         except codec.WireError as exc:
             return _problem(400, str(exc))
+
+        decision = _resolve_step_up(decision, signed_att, subject)
+        journal.record(
+            decision=decision, attestation=signed_att.attestation, subject=subject,
+            actor_chain=actor_chain,
+            approval_id=next((c.detail.split("approval ")[-1].split(")")[0]
+                              for c in decision.checks
+                              if c.check_id == "approval.pending"), ""),
+        )
         return codec.decision_to_wire(decision)
+
+    def _resolve_step_up(decision, signed_att, subject: str):
+        """Turn a step-up into a pending request, or spend an answered one.
+
+        Two directions, and the asymmetry between them is the safety property.
+        An APPROVED request lifts a `step_up` to `allow`; nothing here can lift
+        a `deny`. A forged signature, an injected instruction driving a
+        transfer, a sub-agent past its grant — none of those are things a human
+        should be offered a button for, and offering it would eventually get it
+        pressed.
+        """
+        att = signed_att.attestation
+        if decision.effect == "deny":
+            return decision
+
+        existing = approvals.find_for_call(
+            att.tree_id, att.node_id, att.action, att.args_hash
+        )
+
+        if decision.effect == "allow":
+            # Nothing to do, and deliberately no cleanup: an approval left
+            # unspent expires on its own, and consuming one here would spend it
+            # on a call that never needed it.
+            return decision
+
+        if existing is not None and existing.status == "approved":
+            spent = approvals.consume(existing)
+            lifted = CheckResult(
+                check_id="approval.granted",
+                status="satisfied",
+                detail=(
+                    f"{spent.decided_by} approved this call at {spent.decided_at}"
+                    + (f": {spent.note}" if spent.note else "")
+                ),
+                on_violation="step_up",
+            )
+            # The step-up checks stay in the record exactly as they fired. An
+            # auditor must be able to see that this call was allowed BY A
+            # HUMAN over a control that objected, not that no control objected.
+            return replace(
+                decision,
+                effect="allow",
+                checks=decision.checks + (lifted,),
+                reasons=decision.reasons + ("approval.granted",),
+            )
+
+        pending = approvals.request(
+            tree_id=att.tree_id, node_id=att.node_id,
+            mission_id=decision.mission_id,
+            approver=subject,
+            action=att.action, args_hash=att.args_hash,
+            delta=decision.step_up_delta, reasons=decision.reasons,
+            counterparty=att.counterparty, amount_minor=att.amount_minor,
+            currency=_currency_of(att.tree_id),
+        )
+        waiting = CheckResult(
+            check_id="approval.pending",
+            status="indeterminate",
+            detail=(
+                f"waiting on {pending.approver} (approval {pending.approval_id}); "
+                f"expires at {pending.expires_at}"
+            ),
+            on_violation="step_up",
+        )
+        return replace(
+            decision,
+            checks=decision.checks + (waiting,),
+            reasons=decision.reasons + ("approval.pending",),
+        )
+
+    def _currency_of(tree_id: str) -> str:
+        try:
+            return trees.get(tree_id).budget.currency
+        except Exception:
+            return ""
 
     return app
 

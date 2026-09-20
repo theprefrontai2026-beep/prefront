@@ -79,6 +79,29 @@ class NodeAwarePDS:
     def decide(self, request):
         return self._by_node.get(request.node_id, self._default).decide(request)
 
+    def pending_approval(self, attestation) -> Optional[dict]:
+        """The step-up request this held call is waiting on.
+
+        Read AFTER the decision, off the call path, purely so the console can
+        show a reviewer who was asked and what they were shown.
+        """
+        try:
+            found = self._default._call(
+                "GET", f"/v1/approvals?tree_id={attestation.tree_id}"
+            )["approvals"]
+        except Exception:
+            return None
+        for item in found:
+            if item["args_hash"] == attestation.args_hash and item["status"] == "pending":
+                return {
+                    "approval_id": item["approval_id"],
+                    "approver": item["approver"],
+                    "delta": item["delta"],
+                    "delivery": item["delivery"],
+                    "expires_at": item["expires_at"],
+                }
+        return None
+
     def __getattr__(self, name):
         # Setup calls (tree, reserve, settle, …) belong to the root client.
         return getattr(self._default, name)

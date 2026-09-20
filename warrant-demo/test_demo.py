@@ -159,31 +159,9 @@ def test_every_amount_in_the_world_is_integer_cents():
             assert isinstance(call.amount_cents, int)
 
 
-def test_the_console_and_the_server_agree_on_the_payload_shape():
-    """The page reads specific keys; a rename here is invisible until a demo."""
-    import server
-
-    payload = server.build_payload()
-    assert payload["open_on"] in scenarios.BY_KEY
-    assert set(payload["mission"]) >= {
-        "operator", "instruction", "actions", "counterparties", "budget", "window", "max_depth"
-    }
-    first = payload["scenarios"][0]
-    assert set(first) >= {"key", "group", "title", "question", "lanes", "matched"}
-    assert set(first["lanes"]["governed"]) >= {"steps", "executed", "blocked", "held", "cash_moved"}
-    step = first["lanes"]["governed"]["steps"][0]
-    assert set(step) >= {"narrative", "outcome", "effect", "reasons", "checks", "sources"}
-
-
-def test_the_console_reads_only_keys_the_server_sends():
-    """Guards the pair from the other side: every `RUN.x` / `.lanes.x` the page
-    dereferences must exist in the payload."""
-    import server
-
-    payload = server.build_payload()
-    html = (HERE / "console.html").read_text()
-    for key in re.findall(r"\bRUN\.(\w+)", html):
-        assert key in payload, f"console.html reads RUN.{key}, which the server does not send"
+# The console/service payload contract moved to `test_console.py` when the
+# console became a BFF over the live API rather than a page with a baked data
+# file — there is now a whole API surface to agree on, not one payload.
 
 
 def test_the_generated_action_registry_matches_world_actions():

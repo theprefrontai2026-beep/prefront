@@ -868,6 +868,21 @@ curl :8150/.well-known/jwks.json  # verify a Mission offline
   honest posture. Set but unreadable ⇒ **hard startup failure**, never a silent
   degrade. A generated authority key is announced, because Missions signed
   under it stop verifying after a restart.
+- **The decision JOURNAL is what makes an operator surface possible**
+  (`journal.py`, `GET /v1/journal`, `/v1/journal/stats`). The PDS decided and
+  forgot, which is fine for a component on a 2ms budget and useless for
+  everyone else. Bounded deque, newest kept, decision-only — arguments are
+  already a hash by the time they arrive and nothing here reaches for more.
+- **`GET /v1/config` is the one-request answer to "what is this deployment
+  enforcing?"**, including a `warnings` list that names missing controls.
+  It exposes which credentials exist and what they may do, never a secret or
+  its hash.
+- **`GET /v1/trees` and `/v1/missions` needed enumeration on the engine's
+  stores** (`TreeStore.tree_ids`, `MissionAuthority.issued_ids`). Judged
+  inside the "don't modify core for the demo" rule: a store that cannot be
+  listed is an incomplete store, it names no domain, and any second
+  application hits the gap identically. `tree_ids()` deliberately excludes
+  denylisted trees this replica never saw — those are revocations, not tasks.
 - **`tests/test_demo_parity.py` is the load-bearing test**: it starts a real
   uvicorn server and runs the entire Arcadia catalogue through it, asserting
   identical effects, reason codes and per-control results against the embedded
@@ -931,6 +946,27 @@ docker compose -f warrant-demo/docker-compose.yml up --build -d
   `window.__RUN__` when results are baked in (a shared static link) and
   otherwise fetches `/api/results` from the local server. Two tests keep the
   page and the server agreeing on the payload shape in BOTH directions.
+- **The console is a PRODUCT surface, not a scenario walkthrough.** Seven
+  views over the live service — Overview, Approvals, Decisions, Tasks,
+  Missions, Policy, Evidence — with the twelve-situation blotter now one view
+  among them. Approve/Decline and Stop-this-task are real controls that mutate
+  the running deployment.
+- **It is a BFF.** `server.py` holds the service credential so the browser
+  never does, and proxies only a named allow-list (`PROXY_GET`,
+  `PROXY_POST_PREFIXES`) — minting consent, publishing an agent key and
+  issuing a token are unreachable from the page. Answering a step-up attaches
+  the OPERATOR's IdP token, fetched server-side per answer: the agent cannot
+  mint one, which is what stops an agent approving its own request.
+- **Policy is READ-ONLY by design.** Every value comes from the environment or
+  a mounted file, so changing one is a deploy and leaves a trace in the
+  customer's own change management. An enforcement plane editable through its
+  own web surface is one an attacker edits through its own web surface.
+- **The Overview names the deployment's gaps** (`/v1/config`'s `warnings`)
+  rather than showing green when a control is simply absent.
+- **`run_catalogue(results)` takes results rather than running them.** Running
+  the catalogue twice in one process fails — each run mints Missions and opens
+  trees whose ids the service rightly refuses to reuse. That regression has
+  landed twice; the signature is what stops a third.
 - **Two modes, one catalogue.** `WARRANT_PDS_URL` unset ⇒ decisions from the
   engine embedded in the console's process; set ⇒ decisions from
   `warrant-service` over HTTP (`remote.py` is the adapter — same attributes,
@@ -1017,7 +1053,9 @@ Eight Python test suites exist: `warrant/tests/` (the enforcement plane —
 see that section above; organised by the ATTACK each case stops rather than by
 method, and including a domain-independence guard), `warrant-demo/test_demo.py`
 (the Arcadia demo as a regression suite), `warrant-service/tests/`
-(the HTTP surface, plus the service-vs-library parity suite), `skill-builder/tests/`, `eval-engine/tests/`
+(the HTTP surface, the service-vs-library parity suite, auth, OIDC, task
+tokens, step-up and the operator views), `warrant-demo/test_console.py` (the
+console's contract with the service it renders), `skill-builder/tests/`, `eval-engine/tests/`
 (includes a domain-independence guard and, for `family1/temporal.py`'s
 precondition automaton, a Hypothesis property-based suite against generated
 step streams — `test_family1_temporal_properties.py`), `semantic-mcp-server/

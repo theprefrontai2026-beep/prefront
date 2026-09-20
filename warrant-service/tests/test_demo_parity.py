@@ -35,7 +35,7 @@ for p in (ROOT / "warrant", ROOT / "warrant-service", ROOT / "warrant-demo"):
 import remote  # noqa: E402  (warrant-demo)
 import runner  # noqa: E402  (warrant-demo)
 import scenarios  # noqa: E402  (warrant-demo)
-from warrantservice.app import create_app  # noqa: E402
+from warrantservice.app import create_app, is_service_check  # noqa: E402
 from warrantservice.config import Settings, load_registry  # noqa: E402
 
 from warrant import SigningKey  # noqa: E402
@@ -100,6 +100,19 @@ def _by_key(results):
     return {r.scenario.key: r for r in results}
 
 
+def _engine_only(values):
+    """Drop the service layer's own records.
+
+    Parity means the ENGINE's decision is identical over the wire. The service
+    layer legitimately adds records the library has no concept of — a task
+    token's node binding, a step-up's pending approval — and they are
+    namespaced (`token.`, `approval.`) precisely so this distinction is
+    mechanical rather than a judgement call. What must never differ is any
+    check the engine itself produced.
+    """
+    return tuple(v for v in values if not is_service_check(v))
+
+
 @pytest.mark.parametrize("key", [s.key for s in scenarios.CATALOGUE])
 def test_every_situation_decides_identically_over_http(both_runs, key):
     embedded = _by_key(both_runs["embedded"])[key]
@@ -109,9 +122,26 @@ def test_every_situation_decides_identically_over_http(both_runs, key):
         s.effect for s in embedded.governed.steps
     ], f"{key} decides differently through the service"
 
-    assert [s.reasons for s in remote_result.governed.steps] == [
-        s.reasons for s in embedded.governed.steps
-    ], f"{key} gives different reason codes through the service"
+    assert [_engine_only(s.reasons) for s in remote_result.governed.steps] == [
+        [_engine_only(s.reasons) for s in embedded.governed.steps][i]
+        for i in range(len(embedded.governed.steps))
+    ], f"{key} gives different engine reason codes through the service"
+
+
+@pytest.mark.parametrize("key", [s.key for s in scenarios.CATALOGUE])
+def test_the_service_never_removes_or_rewrites_an_engine_check(both_runs, key):
+    """The other half of the contract: the service may ADD, never subtract.
+
+    A layer that could drop an engine check would be a layer that could quietly
+    remove a control, which is the one thing this separation exists to prevent.
+    """
+    embedded = _by_key(both_runs["embedded"])[key]
+    remote_result = _by_key(both_runs["remote"])[key]
+
+    for e_step, r_step in zip(embedded.governed.steps, remote_result.governed.steps):
+        engine_side = [(c.check_id, c.status) for c in r_step.checks
+                       if not is_service_check(c.check_id)]
+        assert engine_side == [(c.check_id, c.status) for c in e_step.checks]
 
 
 @pytest.mark.parametrize("key", [s.key for s in scenarios.CATALOGUE])
@@ -122,7 +152,8 @@ def test_every_control_result_survives_the_wire(both_runs, key):
     remote_result = _by_key(both_runs["remote"])[key]
 
     for e_step, r_step in zip(embedded.governed.steps, remote_result.governed.steps):
-        assert [(c.check_id, c.status, c.on_violation) for c in r_step.checks] == [
+        assert [(c.check_id, c.status, c.on_violation) for c in r_step.checks
+                if not is_service_check(c.check_id)] == [
             (c.check_id, c.status, c.on_violation) for c in e_step.checks
         ]
 

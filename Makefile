@@ -47,7 +47,11 @@ test:
 	# The registry drift guard needs pyyaml, which the demo deliberately does
 	# NOT depend on (it runs from the stdlib + cryptography so it starts on any
 	# machine). Run that one check from the service's venv, which has it.
+	# Needs FastAPI to stand the service up for the contract check, which the
+	# demo deliberately does not depend on — so it runs from the service venv
+	# alongside the registry drift guard.
 	cd warrant-demo && ../warrant-service/.venv/bin/python -m pytest -q -k registry
+	cd warrant-demo && ../warrant-service/.venv/bin/python -m pytest -q test_console.py
 	cd skill-builder && VIRTUAL_ENV=.venv .venv/bin/python -m pytest -q \
 		../loanpro-demo/test_grading_harness.py ../loanpro-demo/test_preflight_import.py
 	sh eval-engine/sync.sh --check

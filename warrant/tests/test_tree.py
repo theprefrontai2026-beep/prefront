@@ -210,6 +210,25 @@ def test_a_store_can_revoke_a_tree_it_has_never_seen():
     assert store.is_denied("tree-we-never-created")
 
 
+def test_a_store_can_be_enumerated():
+    """A store that cannot be listed forces every consumer to keep a parallel
+    index, which drifts the first time something is created by another path."""
+    store = TreeStore()
+    store.create("a", mission(), "root")
+    store.create("b", mission(), "root")
+    assert store.tree_ids() == ("a", "b")
+
+
+def test_enumeration_excludes_trees_this_replica_never_saw():
+    """A denylisted id is a revocation, not a task. Listing it would show an
+    operator a task that never ran here."""
+    store = TreeStore()
+    store.create("a", mission(), "root")
+    store.revoke("never-seen-here", NOW)
+    assert store.tree_ids() == ("a",)
+    assert "never-seen-here" in store.denylist()
+
+
 def test_a_revoked_tree_id_is_never_reused():
     """Otherwise revocation could be undone by starting the task again."""
     store = TreeStore()

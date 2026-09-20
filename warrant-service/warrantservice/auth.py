@@ -56,6 +56,8 @@ SCOPES = {
     "tree:revoke": "press stop on a task",
     "denylist:merge": "accept revocations replicated from a peer",
     "token:issue": "mint a task tree's ROOT token — the start of a delegation chain",
+    "approval:decide": "answer a step-up on an operator's behalf — see the README "
+                       "on why this is a fallback for deployments with no IdP",
 }
 
 

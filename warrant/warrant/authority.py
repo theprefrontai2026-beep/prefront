@@ -168,6 +168,17 @@ class MissionAuthority:
                 f"Mission {mission.mission_id!r} was revoked at {revoked_at}"
             )
 
+    def issued_ids(self) -> tuple[str, ...]:
+        """Every Mission id this Authority has signed, in issue order.
+
+        A store that cannot be enumerated is an incomplete store: an operations
+        view, an evidence export and a migration all need to ask "what is in
+        here?", and each would otherwise keep its own parallel index that
+        drifts the first time something is created by another path.
+        """
+        with self._lock:
+            return tuple(self._issued)
+
     def get(self, mission_id: str) -> SignedMission:
         with self._lock:
             signed = self._issued.get(mission_id)
