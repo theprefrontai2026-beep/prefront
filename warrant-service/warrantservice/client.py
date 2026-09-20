@@ -17,7 +17,13 @@ one, twelve scenarios would stop matching their documented outcomes.
 returned "allow" on a timeout — or let a caller mistake `None` for a decision —
 would turn an outage into a blanket authorization, which is the single worst
 thing this file could do. The spec settles the open question the same way:
-fail closed.
+fail closed. A 401 or 403 raises through the same path, so a misconfigured
+credential fails closed rather than quietly degrading.
+
+Two credentials travel here and they answer different questions. The SERVICE
+credential (`Authorization: Bearer <client_id>.<secret>`) says which component
+is calling and which scopes it holds. The SUBJECT token says on whose behalf —
+and comes from the customer's IdP, never from this library.
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from warrant import Decision, DecisionRequest
 
@@ -44,8 +50,39 @@ class ServiceError(RuntimeError):
 class RemotePolicyDecisionService:
     """The PDS, over HTTP, with the engine's own interface."""
 
-    def __init__(self, base_url: str, *, timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        credential: str = "",
+        subject_token: str = "",
+        subject_token_provider: Optional[Callable[[str], str]] = None,
+        timeout: float = 5.0,
+    ) -> None:
+        """`credential` is `<client_id>.<secret>`, as minted by
+        `python -m warrantservice.credentials new`.
+
+        `subject_token` is the END USER's token from the customer's IdP, and is
+        a different thing entirely: the credential says which COMPONENT is
+        calling, the subject token says on whose behalf. A deployment with an
+        identity provider configured must send the second, and the service
+        refuses the old unverified `token_subject` field outright.
+
+        Held on the client rather than passed per call because an agent process
+        holds one of each for the life of a task, and threading them through
+        every call site is how one gets forgotten.
+
+        A GATEWAY serves many users, so it cannot hold one fixed subject token.
+        For that, pass `subject_token_provider`: a callable taking the subject
+        named on a `DecisionRequest` and returning that user's token. It takes
+        precedence over `subject_token`, and its results are cached per subject
+        so a busy gateway does not re-ask the IdP on every call.
+        """
         self.base_url = base_url.rstrip("/")
+        self.credential = credential
+        self.subject_token = subject_token
+        self.subject_token_provider = subject_token_provider
+        self._subject_tokens: dict[str, str] = {}
         self.timeout = timeout
 
     # -- transport --------------------------------------------------------
@@ -53,10 +90,10 @@ class RemotePolicyDecisionService:
     def _call(self, method: str, path: str, body: Optional[dict] = None) -> Any:
         url = f"{self.base_url}{path}"
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(
-            url, data=data, method=method,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if self.credential:
+            headers["Authorization"] = f"Bearer {self.credential}"
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read() or b"null")
@@ -70,6 +107,21 @@ class RemotePolicyDecisionService:
             ) from exc
 
     # -- the hot path -----------------------------------------------------
+
+    def _subject_token_for(self, subject: str) -> str:
+        """The token to present for `subject`, or "" to use the legacy field.
+
+        Never invents one. If no provider and no fixed token are configured,
+        the caller is talking to a deployment with no identity provider, and
+        the unverified `token_subject` field is the honest thing to send — the
+        service refuses it outright when an issuer IS configured, so the two
+        cannot be confused.
+        """
+        if self.subject_token_provider is not None:
+            if subject not in self._subject_tokens:
+                self._subject_tokens[subject] = self.subject_token_provider(subject)
+            return self._subject_tokens[subject]
+        return self.subject_token
 
     def decide(self, request: DecisionRequest) -> Decision:
         """Identical in signature and return type to the embedded engine."""
@@ -86,7 +138,12 @@ class RemotePolicyDecisionService:
                 "observed_args": request.observed_args,
                 "node_id": request.node_id,
                 "now": request.now,
-                "token_subject": request.token_subject,
+                # Exactly one of these, matching how the service is configured.
+                # Sending both is refused, and so is sending the unverified one
+                # to a deployment that verifies identity.
+                **({"subject_token": token}
+                   if (token := self._subject_token_for(request.token_subject))
+                   else {"token_subject": request.token_subject}),
             },
         )
         return codec.decision_from_wire(body)
@@ -106,6 +163,18 @@ class RemotePolicyDecisionService:
         return self._call("POST", "/v1/agent-keys", jwk)
 
     def issue_mission(self, **fields: Any) -> dict:
+        """Mint a Mission. When this client holds a subject token, the
+        APPROVING user is taken from it rather than from a name in `fields` —
+        the caller cannot mint consent on behalf of someone they have not
+        authenticated."""
+        token = self.subject_token or (
+            self._subject_token_for(fields["subject"]) if "subject" in fields else ""
+        )
+        if token and "subject" in fields:
+            fields = {k: v for k, v in fields.items() if k != "subject"}
+            fields["subject_token"] = token
+        elif token:
+            fields = {**fields, "subject_token": token}
         return self._call("POST", "/v1/missions", fields)
 
     def open_tree(self, tree_id: str, mission_id: str, root_actor: str) -> dict:

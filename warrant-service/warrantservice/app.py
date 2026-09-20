@@ -15,6 +15,14 @@ from "service broken" by reading an HTTP status will eventually get it wrong in
 the permissive direction. 4xx is reserved for a malformed request — a body the
 service could not interpret at all — and even then the body names the field.
 
+Two things guard the socket itself, and they answer different questions.
+`auth.py` decides whether the CALLER may ask — without it, anyone who could
+reach the port could mint a Mission naming any subject and collect an allow,
+because the Mission Authority is the one component that can widen permissions.
+`oidc.py` decides who the END USER is — before it, the subject was a string in
+the request body, so the PDS's subject check read like an identity control and
+was not one.
+
 State is in-memory and dies with the process. That is a real limit, stated
 plainly rather than hidden behind a store interface that implies otherwise:
 `warrant/README.md` lists the Task Control Plane's persistence among the
@@ -26,7 +34,7 @@ from __future__ import annotations
 import time
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from warrant import (
@@ -45,7 +53,9 @@ from warrant import (
 from warrant.tree import BudgetExceeded, TreeError
 
 from . import codec
+from .auth import Forbidden, Unauthenticated
 from .config import ConfigError, Settings, from_env
+from .oidc import SubjectError, SubjectVerifier
 
 
 def _now() -> int:
@@ -75,6 +85,50 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         ),
     )
 
+    authenticator = settings.authenticator
+    subjects = SubjectVerifier(settings.oidc)
+
+    def scope(name: str):
+        """Require a scope on a route.
+
+        Written as a FastAPI dependency so the requirement sits in the route
+        DECORATOR, where it is visible next to the path, rather than as a
+        line inside a handler that a new route can forget to copy.
+        """
+
+        async def guard(request: Request):
+            client = authenticator.authenticate(request.headers.get("authorization"))
+            authenticator.require(client, name)
+            # Stashed for handlers that want to attribute an action to a caller.
+            request.state.client = client
+            return client
+
+        return Depends(guard)
+
+    def resolve_subject(body: dict, *, where: str) -> str:
+        """The end user, from the IdP when one is configured.
+
+        The two paths are mutually exclusive on purpose. With an issuer
+        configured, a body carrying `token_subject` is REFUSED rather than
+        ignored: leaving the unverified path open beside the verified one means
+        the weakest link is still there for whoever finds it first.
+        """
+        if subjects.enabled:
+            if "token_subject" in body:
+                raise codec.WireError(
+                    f"{where}.token_subject is not accepted: this deployment "
+                    "verifies the end user against an identity provider. Send "
+                    "the IdP's token as `subject_token` instead"
+                )
+            return subjects.subject_of(body.get("subject_token") or "")
+        if "subject_token" in body:
+            raise codec.WireError(
+                f"{where}.subject_token was sent but no identity provider is "
+                "configured (WARRANT_OIDC_ISSUER is unset), so it cannot be "
+                "verified. Refusing rather than accepting a token nobody checked"
+            )
+        return codec._str(body, "token_subject", where=where)
+
     authority = MissionAuthority(settings.issuer, settings.authority_key)
     trees = TreeStore()
     agent_keys = KeySet()
@@ -85,6 +139,29 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         policy_version=settings.policy_version,
     )
     app.state.settings = settings
+    app.state.authenticator = authenticator
+    app.state.subjects = subjects
+
+    @app.exception_handler(Unauthenticated)
+    async def _unauthenticated(_: Request, exc: Unauthenticated):
+        # 401 with a WWW-Authenticate header, so a client knows what to present
+        # rather than guessing from a bare status.
+        return JSONResponse(
+            {"error": "unauthenticated", "detail": str(exc)},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.exception_handler(Forbidden)
+    async def _forbidden(_: Request, exc: Forbidden):
+        return JSONResponse({"error": "forbidden", "detail": str(exc)}, status_code=403)
+
+    @app.exception_handler(SubjectError)
+    async def _subject(_: Request, exc: SubjectError):
+        # 401, not 400: the request was well formed, the identity was not
+        # established. A gateway retrying a 400 would retry forever.
+        return JSONResponse({"error": "subject_not_verified", "detail": str(exc)},
+                            status_code=401)
     app.state.authority = authority
     app.state.trees = trees
     app.state.agent_keys = agent_keys
@@ -105,11 +182,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "issuer": settings.issuer,
             "policy_version": settings.policy_version,
             "actions": len(settings.registry),
-            "trees": len(trees.denylist()) + 0,
+            # Was mislabelled "trees"; it has always been the denylist size.
+            "revoked_trees": len(trees.denylist()),
             "agent_keys": len(agent_keys),
+            # Posture, reported for as long as it lasts. An operator should be
+            # able to see an open door in one request rather than infer it.
+            "caller_auth": "required" if authenticator.enabled else "DISABLED",
+            "subject_identity": (
+                f"verified against {settings.oidc.issuer}" if subjects.enabled
+                else "UNVERIFIED (no identity provider configured)"
+            ),
         }
 
-    @app.get("/v1/registry")
+    @app.get("/v1/registry", dependencies=[scope("read")])
     def registry() -> dict:
         """What this deployment's vocabulary actually is.
 
@@ -146,7 +231,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # -- agent keys --------------------------------------------------------
 
-    @app.post("/v1/agent-keys")
+    @app.post("/v1/agent-keys", dependencies=[scope("agent-key:register")])
     async def add_agent_key(request: Request):
         """Register an agent process's public key.
 
@@ -165,13 +250,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _problem(409, str(exc), kind="key_conflict")
         return {"key_id": key.key_id, "registered": True}
 
-    @app.get("/v1/agent-keys")
+    @app.get("/v1/agent-keys", dependencies=[scope("read")])
     def list_agent_keys() -> dict:
         return agent_keys.to_jwks()
 
     # -- missions ----------------------------------------------------------
 
-    @app.post("/v1/missions")
+    @app.post("/v1/missions", dependencies=[scope("mission:issue")])
     async def issue_mission(request: Request):
         """Turn one human approval into a signed Mission.
 
@@ -184,14 +269,32 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             body = codec._require(await body_of(request), where="body")
             codec._only(
                 body,
-                {"mission_id", "subject", "instruction", "action_classes", "resources",
-                 "counterparties", "budget", "not_before", "not_after", "max_depth",
-                 "issued_at", "supersedes"},
+                {"mission_id", "subject", "subject_token", "instruction", "action_classes",
+                 "resources", "counterparties", "budget", "not_before", "not_after",
+                 "max_depth", "issued_at", "supersedes"},
                 where="body",
             )
+            # The Mission's subject is WHO APPROVED. With an IdP configured it
+            # comes from their verified token; minting consent on behalf of a
+            # name someone typed was the hole this closes.
+            if subjects.enabled:
+                if "subject" in body:
+                    raise codec.WireError(
+                        "body.subject is not accepted: this deployment verifies "
+                        "the approving user against an identity provider. Send "
+                        "their IdP token as `subject_token`"
+                    )
+                subject = subjects.subject_of(body.get("subject_token") or "")
+            else:
+                if "subject_token" in body:
+                    raise codec.WireError(
+                        "body.subject_token was sent but no identity provider is "
+                        "configured, so it cannot be verified"
+                    )
+                subject = codec._str(body, "subject", where="body")
             signed = authority.issue(
                 mission_id=codec._str(body, "mission_id", where="body"),
-                subject=codec._str(body, "subject", where="body"),
+                subject=subject,
                 instruction=codec._str(body, "instruction", where="body"),
                 action_classes=codec._strs(body, "action_classes", where="body"),
                 resources=codec._strs(body, "resources", where="body"),
@@ -207,7 +310,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _problem(400, str(exc))
         return codec.signed_mission_to_wire(signed)
 
-    @app.get("/v1/missions/{mission_id}")
+    @app.get("/v1/missions/{mission_id}", dependencies=[scope("read")])
     def get_mission(mission_id: str):
         try:
             signed = authority.get(mission_id)
@@ -219,12 +322,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "superseded_by": authority.superseded_by(mission_id) or None,
         }
 
-    @app.post("/v1/missions/{mission_id}/revoke")
+    @app.post("/v1/missions/{mission_id}/revoke", dependencies=[scope("mission:issue")])
     def revoke_mission(mission_id: str):
         authority.revoke(mission_id, _now())
         return {"mission_id": mission_id, "current": authority.is_current(mission_id)}
 
-    @app.post("/v1/missions/verify")
+    @app.post("/v1/missions/verify", dependencies=[scope("read")])
     async def verify_mission(request: Request):
         """What a resource server calls if it would rather not verify locally.
 
@@ -276,7 +379,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             },
         }
 
-    @app.post("/v1/trees")
+    @app.post("/v1/trees", dependencies=[scope("tree:manage")])
     async def open_tree(request: Request):
         try:
             body = codec._require(await body_of(request), where="body")
@@ -304,14 +407,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _problem(409, str(exc), kind="tree_conflict")
         return _tree_state(tree)
 
-    @app.get("/v1/trees/{tree_id}")
+    @app.get("/v1/trees/{tree_id}", dependencies=[scope("read")])
     def get_tree(tree_id: str):
         try:
             return _tree_state(trees.get(tree_id))
         except TreeError as exc:
             return _problem(404, str(exc), kind="not_found")
 
-    @app.post("/v1/trees/{tree_id}/nodes")
+    @app.post("/v1/trees/{tree_id}/nodes", dependencies=[scope("tree:manage")])
     async def spawn_node(tree_id: str, request: Request):
         """Mint a sub-agent's node — the only way one gets a token.
 
@@ -356,7 +459,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             },
         }
 
-    @app.post("/v1/trees/{tree_id}/revoke")
+    @app.post("/v1/trees/{tree_id}/revoke", dependencies=[scope("tree:revoke")])
     async def revoke_tree(tree_id: str, request: Request):
         """The stop button. Works for a tree this replica has never seen."""
         try:
@@ -369,7 +472,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # -- the budget ledger -------------------------------------------------
 
-    @app.post("/v1/trees/{tree_id}/reservations")
+    @app.post("/v1/trees/{tree_id}/reservations", dependencies=[scope("tree:manage")])
     async def reserve(tree_id: str, request: Request):
         """Hold budget for a call that is about to execute.
 
@@ -390,7 +493,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _problem(409, str(exc), kind="tree_conflict")
         return {"handle": handle, "remaining": tree.remaining_minor()}
 
-    @app.post("/v1/trees/{tree_id}/reservations/{handle}/settle")
+    @app.post("/v1/trees/{tree_id}/reservations/{handle}/settle", dependencies=[scope("tree:manage")])
     async def settle(tree_id: str, handle: str, request: Request):
         try:
             raw = await request.body()
@@ -405,7 +508,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"handle": handle, "committed": tree.spend_committed,
                 "remaining": tree.remaining_minor()}
 
-    @app.post("/v1/trees/{tree_id}/reservations/{handle}/release")
+    @app.post("/v1/trees/{tree_id}/reservations/{handle}/release", dependencies=[scope("tree:manage")])
     def release(tree_id: str, handle: str):
         try:
             tree = trees.get(tree_id)
@@ -416,7 +519,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # -- revocation replication -------------------------------------------
 
-    @app.get("/v1/denylist")
+    @app.get("/v1/denylist", dependencies=[scope("read")])
     def get_denylist() -> dict:
         """The replicable set: tree id to revocation time.
 
@@ -426,7 +529,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """
         return {"entries": trees.denylist()}
 
-    @app.post("/v1/denylist")
+    @app.post("/v1/denylist", dependencies=[scope("denylist:merge")])
     async def merge_denylist(request: Request):
         try:
             body = codec._require(await body_of(request), where="body")
@@ -443,7 +546,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     # -- the hot path ------------------------------------------------------
 
-    @app.post("/v1/decisions")
+    @app.post("/v1/decisions", dependencies=[scope("decide")])
     async def decide(request: Request):
         """Allow, deny or step up. The only route on a tool call's path.
 
@@ -456,9 +559,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             body = codec._require(await body_of(request), where="body")
             codec._only(
                 body,
-                {"signed_attestation", "observed_args", "node_id", "now", "token_subject"},
+                {"signed_attestation", "observed_args", "node_id", "now",
+                 "token_subject", "subject_token"},
                 where="body",
             )
+            subject = resolve_subject(body, where="body")
             observed = body.get("observed_args")
             if not isinstance(observed, dict):
                 raise codec.WireError("observed_args must be an object of the arguments the tool received")
@@ -468,7 +573,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     observed_args=observed,
                     node_id=codec._str(body, "node_id", where="body"),
                     now=codec._int(body, "now", where="body", default=_now()),
-                    token_subject=codec._str(body, "token_subject", where="body"),
+                    token_subject=subject,
                 )
             )
         except codec.WireError as exc:

@@ -67,6 +67,10 @@ def build_payload(results=None) -> dict:
         },
         "summary": runner.summary(results),
         "decided_by": f"warrant-service at {PDS_URL}" if PDS_URL else "embedded engine",
+        "identity_from": (
+            os.environ.get("WARRANT_IDP_NAME", "the identity provider")
+            if os.environ.get("WARRANT_IDP_TOKEN_URL") else ""
+        ),
         "scenarios": [runner.result_json(r) for r in results],
     }
 

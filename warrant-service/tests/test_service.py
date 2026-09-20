@@ -306,7 +306,10 @@ def test_an_unconfigured_registry_starts_and_denies(tmp_path):
     from warrantservice.app import create_app
     from warrantservice.config import from_env
 
-    app = create_app(from_env({}))
+    # The opt-out is explicit because a missing credentials file is now a hard
+    # startup failure — see test_auth.py. What is under test here is the
+    # REGISTRY being unconfigured, not the credentials.
+    app = create_app(from_env({"WARRANT_ALLOW_UNAUTHENTICATED": "1"}))
     c = TestClient(app)
     assert c.get("/v1/registry").json()["configured"] is False
     assert c.get("/v1/registry").json()["actions"] == []

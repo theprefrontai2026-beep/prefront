@@ -798,6 +798,26 @@ curl :8150/v1/registry            # what vocabulary this deployment has
 curl :8150/.well-known/jwks.json  # verify a Mission offline
 ```
 
+- **Two guards, answering different questions.** `auth.py` decides whether the
+  CALLER may ask — scoped service credentials (`Bearer <client_id>.<secret>`,
+  SHA-256 in the file, secret printed once). `oidc.py` decides who the END USER
+  is — an IdP token verified against the issuer's JWKS with issuer, audience
+  and expiry checked. Before these, four unauthenticated calls produced an
+  `allow`: register your own key, mint a Mission naming any subject, open a
+  tree, ask.
+- **A missing credentials file is a HARD startup failure**, not a degraded
+  mode — an unauthenticated PDS is an open door in front of the one component
+  that can widen permissions. `WARRANT_ALLOW_UNAUTHENTICATED=1` is the
+  deliberate opt-out, and `/healthz` reports the posture while it lasts.
+- **Setting `WARRANT_OIDC_ISSUER` CLOSES the unverified path**: a body carrying
+  `token_subject` is refused outright rather than ignored, on `/v1/decisions`
+  and on `/v1/missions` alike. Leaving the weak path open beside the strong one
+  protects nobody. Algorithms are an asymmetric-only allow-list, refused at
+  startup if symmetric — with HMAC the verification key is the signing key.
+- **Scopes are split by blast radius.** A gateway holds `decide` and nothing
+  else; `mission:issue` belongs to a control plane that never touches a tool
+  call. One credential for everything would be the same hole with a password
+  on it.
 - **`POST /v1/decisions` is the only route on a call's path.** Everything else
   (issuing Missions, spawning nodes, reserving budget) is setup and allowed to
   be ordinary.
@@ -830,8 +850,8 @@ curl :8150/.well-known/jwks.json  # verify a Mission offline
   rather than `TestClient` because half of what it checks is that the wire
   format survives a round trip.
 - **State is in-memory and dies with the process** — said plainly rather than
-  hidden behind a store interface. There is also no authN on these routes; the
-  PDS trusts its caller to be the gateway, so it must not be exposed further.
+  hidden behind a store interface. Still missing: task-tree TOKENS (the OAuth
+  2.1 service, PoP binding), step-up delivery, and credential rotation/lockout.
 - **`docker-compose.warrant.yml` sets `name: prefront-warrant` and must.** It
   lives at the repo root, so Compose would otherwise derive the project name
   `prefront` — the ENGINE stack's project — and the two would share a network
@@ -881,6 +901,11 @@ docker compose -f warrant-demo/docker-compose.yml up --build -d
   engine embedded in the console's process; set ⇒ decisions from
   `warrant-service` over HTTP (`remote.py` is the adapter — same attributes,
   backed by calls, no decision logic). Identical results either way, asserted.
+  The demo runs authenticated end to end: a scoped credential in
+  `policy/credentials.yaml` (hashes only; the demo secret is public in the
+  compose file by construction) and `dev_idp.py`, a loudly-labelled TEST DOUBLE
+  for Okta that runs as its own container so the PDS verifies its tokens
+  exactly as it would a real issuer's.
   `policy/action_registry.yaml` carries Arcadia's verbs into the service and is
   GENERATED from `world.ACTIONS` by `gen_registry.py`, with a drift guard in
   `test_demo.py` — a service enforcing a different verb list than the embedded

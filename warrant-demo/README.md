@@ -22,6 +22,14 @@ open http://localhost:8140      # the console
 open http://localhost:8150/docs # the PDS it is deciding through
 ```
 
+Three containers, because three things are genuinely separate: the console, the
+PDS, and `dev-idp` — a **test double** standing in for Okta or Entra. It mints
+a token for anyone who asks and must never run anywhere real, but the PDS
+treats it exactly as it would treat a genuine issuer: a published JWKS, with
+issuer and audience checked. The console holds a scoped service credential, and
+the operator's identity arrives as a verified token rather than as a name the
+agent asserted — the page footer says so.
+
 This is the more interesting way to run it. `WARRANT_PDS_URL` moves every
 governed decision out of the console's process and onto `warrant-service` over
 HTTP — the same API an integrator calls. The twelve situations decide

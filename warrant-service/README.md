@@ -73,6 +73,53 @@ are separate routes rather than folded into the decision.
 error rather than returning a decision. Fail closed; the spec settles the same
 open question the same way.
 
+## Authentication
+
+Two different questions, answered by two different parties. Conflating them is
+how a system ends up with a control that looks like identity and is not.
+
+**Who may call this service** — `auth.py`. Scoped service credentials, presented
+as `Authorization: Bearer <client_id>.<secret>`. Scopes exist because the routes
+are not equally dangerous: a gateway on the hot path needs `decide` and nothing
+else, while minting consent is the highest privilege in the system and belongs
+to a control plane that never touches a tool call. One credential for everything
+would mean every gateway could issue Missions — the same hole with a password
+on it.
+
+```bash
+python -m warrantservice.credentials scopes                    # what each opens
+python -m warrantservice.credentials new gateway     --scopes decide,read --append-to credentials.yaml
+```
+
+The file stores SHA-256 of each secret and the secret is printed once, so a
+leaked config is a list of hashes rather than of working keys. Plaintext
+secrets are refused.
+
+**A missing credentials file is a hard startup failure.** Not a degraded mode:
+an unauthenticated PDS is an open door in front of the one component that can
+*widen* permissions. Before this existed, four unauthenticated calls — register
+your own signing key, mint a Mission naming any subject with any budget, open a
+tree, ask — produced an `allow`. `WARRANT_ALLOW_UNAUTHENTICATED=1` still gets
+you that, but you have to write it down, and `/healthz` reports it for as long
+as it lasts.
+
+**Who the end user is** — `oidc.py`. The subject used to be a string in the
+request body, so the PDS's subject check read like an identity control and was
+not one. Now, with an issuer configured, the caller presents the IdP's own
+token and it is verified: signature against the published JWKS, plus issuer,
+audience and expiry. `sub` from the verified claims is the subject.
+
+The unverified path is then **closed, not deprecated**: a body carrying
+`token_subject` is refused outright. Leaving the weak path open beside the
+strong one protects nobody. The same applies to `POST /v1/missions` — with an
+IdP configured, the approving user comes from their token, not from a name
+someone typed.
+
+Verification uses PyJWT rather than anything hand-rolled, and the algorithm
+allow-list is asymmetric only: with HMAC the verification key is the signing
+key, so anything able to verify could also mint. A symmetric or `none`
+algorithm is refused at startup, not per token.
+
 ## Configuration
 
 | | |
@@ -82,6 +129,12 @@ open question the same way.
 | `WARRANT_POLICY_VERSION` | stamped on every decision, so one can be replayed against the rules that were live |
 | `WARRANT_AUTHORITY_KEY` | base64url 32-byte Ed25519 private key |
 | `WARRANT_AUTHORITY_KEY_ID` · `WARRANT_HOST` · `WARRANT_PORT` | |
+| `WARRANT_CREDENTIALS_PATH` | who may call this service, and with which scopes |
+| `WARRANT_ALLOW_UNAUTHENTICATED` | `1` to run with no caller authentication — deliberate only |
+| `WARRANT_OIDC_ISSUER` | the customer's IdP; setting it closes the unverified subject path |
+| `WARRANT_OIDC_AUDIENCE` | strongly advised — a token for another app at the same issuer is still a valid token |
+| `WARRANT_OIDC_JWKS_URL` | defaults to `<issuer>/.well-known/jwks.json` |
+| `WARRANT_OIDC_ALGORITHMS` · `WARRANT_OIDC_LEEWAY` · `WARRANT_OIDC_CACHE_SECONDS` · `WARRANT_OIDC_REFRESH_COOLDOWN` | |
 
 Two states the service announces at startup because both are legitimate and
 both silently change what it does:
@@ -101,9 +154,17 @@ both silently change what it does:
 ```python
 from warrantservice import RemotePolicyDecisionService
 
-pds = RemotePolicyDecisionService("http://warrant-pds:8150")
-decision = pds.decide(request)          # same DecisionRequest, same Decision
+pds = RemotePolicyDecisionService(
+    "http://warrant-pds:8150",
+    credential="gateway.<secret>",       # which component is calling
+    subject_token=users_idp_token,       # on whose behalf
+)
+decision = pds.decide(request)           # same DecisionRequest, same Decision
 ```
+
+A gateway serves many users, so it cannot hold one fixed subject token; pass
+`subject_token_provider=` instead — a callable from the subject named on a
+`DecisionRequest` to that user's token, cached per subject.
 
 Standard library only. `decide()` takes and returns exactly what the in-process
 engine does, so moving the PDS in or out of your own process is a one-line
@@ -132,7 +193,15 @@ replicas share nothing but whatever denylist you replicate between them.
 the spec's Phase 1 still needs, along with the gateway, the token service, the
 consent screen and the evidence store.
 
-**There is no authentication on these routes.** The PDS trusts its caller to be
-the gateway. That is the right shape — the spec's identity comes from the
-customer's IdP, and the token service is a separate component — but it means
-this service must not be exposed beyond the call path it serves.
+**There are still no task-tree tokens.** Callers are authenticated and the end
+user is verified, but the spec's OAuth 2.1 token service — tokens stamped with
+`mission`/`tree_id`/`node_id` and the actor chain, proof-of-possession bound so
+a stolen one is useless — does not exist. Today a caller with the `decide`
+scope may ask about any tree.
+
+**Step-up has no delivery.** `step_up` is returned with the delta that caused
+it, and nothing carries it to a human, captures their answer, or resumes the
+branch.
+
+**Credentials have no rotation window or lockout.** Rotating means editing the
+file and restarting; there is no rate limiting on failed attempts.

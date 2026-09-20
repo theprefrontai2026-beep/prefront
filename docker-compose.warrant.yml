@@ -19,6 +19,13 @@
 # The console talks to the PDS over HTTP rather than embedding it, which is the
 # point of running it this way: it exercises the same API an integrator uses,
 # so a break in the service surface shows up here rather than in production.
+#
+# Three services, because three things are genuinely separate. `dev-idp` is a
+# TEST DOUBLE standing in for Okta or Entra — it mints a token for anyone who
+# asks and must never run anywhere real — but the PDS treats it exactly as it
+# would treat a genuine issuer: a published JWKS, with issuer and audience
+# checked. That is the point of running it as its own container rather than
+# faking identity inside the console.
 name: prefront-warrant
 
 services:
@@ -34,12 +41,53 @@ services:
       # registry and denies every side-effect call — running and refusing,
       # which is the honest posture for a service nobody configured.
       WARRANT_ACTION_REGISTRY_PATH: /policy/action_registry.yaml
+
+      # WHO MAY CALL THIS SERVICE. Without it the service refuses to start:
+      # an unauthenticated PDS is an open door in front of the one component
+      # that can widen permissions, so reaching that state has to be a
+      # deliberate act (WARRANT_ALLOW_UNAUTHENTICATED=1), never a forgotten
+      # variable. The file holds SHA-256 of each secret, not the secret.
+      WARRANT_CREDENTIALS_PATH: /policy/credentials.yaml
+
+      # WHO THE END USER IS. The subject now comes from a verified IdP token
+      # rather than a string in the request body, and with this set the old
+      # unverified `token_subject` field is REFUSED rather than ignored —
+      # leaving the weak path open beside the strong one protects nobody.
+      WARRANT_OIDC_ISSUER: http://dev-idp:8160
+      WARRANT_OIDC_AUDIENCE: warrant-pds
+      WARRANT_OIDC_JWKS_URL: http://dev-idp:8160/.well-known/jwks.json
+
       # WARRANT_AUTHORITY_KEY: <base64url 32 bytes>
       #   Left unset here so the demo needs no secret. The service says so at
       #   startup: a generated key means Missions stop verifying after a
       #   restart, which is fine for a demo and wrong for anything else.
     volumes:
       - ./warrant-demo/policy:/policy:ro
+    depends_on:
+      dev-idp:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ==========================================================================
+  # TEST DOUBLE. Mints a token for any subject, with no authentication at all.
+  # It stands in for the customer's Okta/Entra/Google so the demo can show the
+  # identity chain end to end. Never run this anywhere that matters.
+  # ==========================================================================
+  dev-idp:
+    build:
+      context: .
+      dockerfile: warrant-demo/Dockerfile
+    command: ["python", "dev_idp.py", "--port", "8160"]
+    ports: ["${WARRANT_IDP_PORT:-8160}:8160"]
+    environment:
+      DEV_IDP_ISSUER: http://dev-idp:8160
+      DEV_IDP_AUDIENCE: warrant-pds
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8160/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   warrant-console:
@@ -51,7 +99,17 @@ services:
       # Setting this is what moves the decisions out of process. Remove it and
       # the console falls back to the embedded engine with identical results.
       WARRANT_PDS_URL: http://warrant-pds:8150
+      # The console's SERVICE credential — which component is calling. Public
+      # by construction: its hash is committed in policy/credentials.yaml, so
+      # this value is exactly as secret as this repository is.
+      WARRANT_CREDENTIAL: arcadia-console.demo-console-secret-not-for-real-use
+      # Where the console gets the OPERATOR's identity. A different question
+      # from the credential above, answered by a different party.
+      WARRANT_IDP_TOKEN_URL: http://dev-idp:8160/token
+      WARRANT_IDP_NAME: the identity provider
     depends_on:
       warrant-pds:
+        condition: service_healthy
+      dev-idp:
         condition: service_healthy
     restart: unless-stopped

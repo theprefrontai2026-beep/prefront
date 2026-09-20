@@ -24,6 +24,7 @@ which ships no PyYAML, died on startup importing a client that needs none.
 from __future__ import annotations
 
 __all__ = [
+    "AuthConfigError",
     "ConfigError",
     "Settings",
     "from_env",
@@ -35,6 +36,7 @@ __all__ = [
 # name -> the submodule that defines it. Kept as data so adding a symbol is one
 # line and cannot accidentally reintroduce an eager import.
 _LAZY = {
+    "AuthConfigError": "auth",
     "ConfigError": "config",
     "Settings": "config",
     "from_env": "config",

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +29,9 @@ import yaml
 
 from warrant import ActionClass, ActionRegistry, SigningKey
 from warrant.signing import b64u_decode
+
+from . import auth as _auth
+from . import oidc as _oidc
 
 
 class ConfigError(RuntimeError):
@@ -43,6 +46,15 @@ class Settings:
     authority_key: SigningKey
     registry_path: str
     authority_key_supplied: bool
+    # Who may call this service at all, and with which scopes. Never None:
+    # an unauthenticated deployment is an explicit `Authenticator(open_access
+    # =True)`, so nothing downstream has to decide what absence means.
+    authenticator: "_auth.Authenticator" = field(
+        default_factory=lambda: _auth.Authenticator(open_access=True)
+    )
+    # Where the END USER's identity comes from. Disabled leaves the legacy
+    # unverified `token_subject` path open; enabled closes it.
+    oidc: "_oidc.OidcSettings" = field(default_factory=lambda: _oidc.OidcSettings())
 
 
 def load_registry(path: Optional[str]) -> tuple[ActionRegistry, str]:
@@ -119,6 +131,15 @@ def from_env(env: Optional[dict] = None) -> Settings:
     env = dict(os.environ if env is None else env)
     registry, registry_path = load_registry(env.get("WARRANT_ACTION_REGISTRY_PATH"))
     key, supplied = load_authority_key(env.get("WARRANT_AUTHORITY_KEY"))
+    try:
+        authenticator = _auth.load(
+            env.get("WARRANT_CREDENTIALS_PATH"),
+            allow_unauthenticated=env.get("WARRANT_ALLOW_UNAUTHENTICATED", "") == "1",
+        )
+    except _auth.AuthConfigError as exc:
+        # Re-raised as ConfigError so `__main__` has one failure type to report
+        # and an operator sees one consistent message shape at startup.
+        raise ConfigError(str(exc)) from exc
     return Settings(
         issuer=env.get("WARRANT_ISSUER", "warrant.local"),
         policy_version=env.get("WARRANT_POLICY_VERSION", registry.version),
@@ -126,4 +147,6 @@ def from_env(env: Optional[dict] = None) -> Settings:
         authority_key=key,
         registry_path=registry_path,
         authority_key_supplied=supplied,
+        authenticator=authenticator,
+        oidc=_oidc.from_env(env),
     )

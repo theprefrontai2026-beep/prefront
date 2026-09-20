@@ -20,6 +20,9 @@ agent's signing key, which is exactly the split a real deployment has.
 
 from __future__ import annotations
 
+import json
+import os
+import urllib.request
 import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -118,6 +121,28 @@ class RemoteDeployment:
     agent_key: SigningKey
 
 
+def subject_token_for(operator: str) -> str:
+    """Get the operator's token from the identity provider, if one is wired.
+
+    In the demo that is `dev_idp.py`, a test double standing in for Okta. The
+    PDS does not know the difference and should not: it verifies the token
+    against a published JWKS with the issuer and audience checked, exactly as
+    it would verify a real one. Unset, the demo falls back to the older
+    unverified subject path and the console footer says so.
+    """
+    idp = os.environ.get("WARRANT_IDP_TOKEN_URL", "")
+    if not idp:
+        return ""
+    request = urllib.request.Request(
+        idp,
+        data=json.dumps({"subject": operator}).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read())["subject_token"]
+
+
 def build(base_url: str, tree_id: str = "arcadia-run-1",
           subject: str = deployment.OPERATOR) -> RemoteDeployment:
     """Set the deployment up through the service's own API.
@@ -130,7 +155,20 @@ def build(base_url: str, tree_id: str = "arcadia-run-1",
     the service. That is not a detail: the whole reason the PDS is a separate
     party is that it does not trust whatever holds that key.
     """
-    client = RemotePolicyDecisionService(base_url)
+    client = RemotePolicyDecisionService(
+        base_url,
+        # The SERVICE credential: which component is calling, and with which
+        # scopes. Distinct from the subject token below, which says on whose
+        # behalf. Without it the PDS answers 401 — it refuses to start
+        # unauthenticated unless a deployment says so deliberately.
+        credential=os.environ.get("WARRANT_CREDENTIAL", ""),
+        # A PROVIDER rather than one fixed token, because the catalogue includes
+        # a situation where a different operator's consent is presented. That
+        # case has to reach the service as another real user's genuine token —
+        # correctly denied on subject binding — rather than as a string this
+        # process asserted, which is precisely the control being demonstrated.
+        subject_token_provider=subject_token_for if os.environ.get("WARRANT_IDP_TOKEN_URL") else None,
+    )
     client.wait_until_ready()
     tree_id = run_scoped(tree_id)
 
@@ -151,6 +189,9 @@ def build(base_url: str, tree_id: str = "arcadia-run-1",
     mission_id = f"{tree_id}-mission"  # already run-scoped via tree_id
     client.issue_mission(
         mission_id=mission_id,
+        # When an IdP is wired, `issue_mission` swaps this for that user's
+        # verified token, so the APPROVING user is whoever the IdP says it is
+        # rather than a name this process typed.
         subject=subject,
         instruction=deployment.INSTRUCTION,
         action_classes=[

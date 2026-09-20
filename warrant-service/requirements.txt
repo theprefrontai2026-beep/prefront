@@ -10,3 +10,8 @@ uvicorn[standard]>=0.29
 pydantic>=2.6
 pyyaml>=6.0
 cryptography>=42.0
+# JWT verification for subject tokens (oidc.py). Deliberately a library rather
+# than hand-rolled: algorithm confusion, unverified `alg`, `none` and key-type
+# substitution are all live foot-guns, and this is the canonical place not to
+# be clever.
+pyjwt[crypto]>=2.8
